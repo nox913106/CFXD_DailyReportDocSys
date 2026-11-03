@@ -25,14 +25,14 @@
 </section>
 {% endif %}
 
-{% if current_user.role in ('file_manager', 'admin') %}
+{% if (current_user.role == 'file_manager' or current_user.is_admin) %}
 <section class="card">
-  <h2>{{ '所有代理授權' if current_user.role == 'admin' else '我授權的代理人' }}</h2>
+  <h2>{{ '所有代理授權' if current_user.is_admin else '我授權的代理人' }}</h2>
   <table class="list">
-    <tr>{% if current_user.role == 'admin' %}<th>檔案管理員</th>{% endif %}<th>代理人</th><th>期間</th><th>備註</th><th>狀態</th><th></th></tr>
+    <tr>{% if current_user.is_admin %}<th>檔案管理員</th>{% endif %}<th>代理人</th><th>期間</th><th>備註</th><th>狀態</th><th></th></tr>
     {% for d in mine %}
     <tr>
-      {% if current_user.role == 'admin' %}<td>{{ d.principal.name }}</td>{% endif %}
+      {% if current_user.is_admin %}<td>{{ d.principal.name }}</td>{% endif %}
       <td>{{ d.delegate.name }}</td><td>{{ d.start_date }} ～ {{ d.end_date or '撤銷為止' }}</td>
       <td>{{ d.note }}</td><td>{{ d.state_label }}</td>
       <td>{% if not d.revoked_at %}

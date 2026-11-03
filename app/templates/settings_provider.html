@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}AI 服務 - CFXD{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('settings.index') }}#providers">← 系統設定</a></p>
+<section class="card">
+  <h2>{{ '編輯' if p.id else '新增' }} AI 服務：{{ preset.label or p.name }}</h2>
+  {% if preset.hint %}<p class="hint">{{ preset.hint }}</p>{% endif %}
+  <form method="post" data-provider-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="preset" value="{{ p.preset }}">
+    <h3>連線</h3>
+    <div class="form-grid">
+      <label>名稱<input name="name" value="{{ p.name }}" required></label>
+      <label>呼叫協定
+        <select name="kind" data-kind>
+          {% for k, v in kinds.items() %}<option value="{{ k }}" {{ 'selected' if k == p.kind }}>{{ v }}</option>{% endfor %}
+        </select></label>
+      <label data-for="openai azure_openai anthropic gemini bedrock" class="wide">
+        <span data-label-for="openai">API 網址（到 /v1 為止）</span><span data-label-for="azure_openai">Azure 端點（https://資源名稱.openai.azure.com）</span>
+        <span data-label-for="anthropic">API 網址（留空 = 官方 Claude API；公司閘道才需填）</span><span data-label-for="gemini">API 網址（留空 = 官方）</span>
+        <span data-label-for="bedrock">端點（留空 = 依區域自動產生）</span>
+        <input name="base_url" value="{{ p.base_url }}"></label>
+      <label data-for="openai anthropic gemini bedrock azure_openai"><span data-label-for="bedrock">模型 ID / ARN</span><span data-label-for="openai anthropic gemini">模型名稱</span><span data-label-for="azure_openai">模型名稱（顯示用，可留空）</span>
+        <input name="model" value="{{ p.model }}"></label>
+      <label data-for="azure_openai">部署名稱（deployment）<input name="deployment" value="{{ p.deployment }}"></label>
+      <label data-for="azure_openai">API 版本<input name="api_version" value="{{ p.api_version }}"></label>
+      <label data-for="bedrock">AWS 區域<input name="region" value="{{ p.region }}"></label>
+      <label class="wide">API 金鑰
+        <input name="api_key" type="password" autocomplete="new-password"
+               placeholder="{% if p.api_key_hint %}已設定（末 4 碼 {{ p.api_key_hint }}），留空不變更{% elif p.external %}請輸入金鑰{% else %}地端服務通常不需要{% endif %}">
+        {% if key_broken %}<span class="fail">目前的金鑰無法解密（SECRET_KEY 可能已變更），請重新輸入。</span>{% endif %}
+        {% if p.api_key_hint %}<span class="inline"><input type="checkbox" name="clear_key" value="1"> 清除已儲存的金鑰</span>{% endif %}
+      </label>
+    </div>
+    <div class="checks-col">
+      <label class="inline"><input type="checkbox" name="enabled" value="1" {{ 'checked' if p.enabled }}> 啟用</label>
+      <label class="inline"><input type="checkbox" name="external" value="1" {{ 'checked' if p.external }}> 外部服務（資料會送到公司外部；需在一般設定允許才會使用）</label>
+    </div>
+
+    <h3>計費</h3>
+    <div class="form-grid">
+      <label>計費方式
+        <select name="billing" data-billing>
+          {% for k, v in billing.items() %}<option value="{{ k }}" {{ 'selected' if k == p.billing }}>{{ v }}</option>{% endfor %}
+        </select></label>
+      <label>幣別<input name="currency" value="{{ p.currency or 'USD' }}" maxlength="8"></label>
+      <label>每期起算日（每月幾號，1–28）<input name="reset_day" type="number" min="1" max="28" value="{{ p.reset_day or 1 }}"></label>
+      <label data-billing-for="token">input 單價（每 100 萬 token）<input name="price_in" type="number" step="any" min="0" value="{{ p.price_in or 0 }}"></label>
+      <label data-billing-for="token">output 單價（每 100 萬 token）<input name="price_out" type="number" step="any" min="0" value="{{ p.price_out or 0 }}"></label>
+      <label data-billing-for="token">每期預算上限（0 = 不限；用完改用下一個服務）<input name="monthly_budget" type="number" step="any" min="0" value="{{ p.monthly_budget or 0 }}"></label>
+      <label data-billing-for="monthly self_hosted"><span data-billing-label="monthly">每月費用</span><span data-billing-label="self_hosted">每月攤提成本（硬體、電費，供比較）</span>
+        <input name="monthly_fee" type="number" step="any" min="0" value="{{ p.monthly_fee or 0 }}"></label>
+      <label data-billing-for="monthly">每期 token 額度（0 = 不限；用完改用下一個服務）<input name="monthly_token_quota" type="number" min="0" value="{{ p.monthly_token_quota or 0 }}"></label>
+    </div>
+
+    <details>
+      <summary>進階</summary>
+      <div class="form-grid">
+        <label data-for="openai azure_openai">輸出上限參數名稱
+          <select name="token_param">
+            {% for k, v in token_params.items() %}<option value="{{ k }}" {{ 'selected' if k == p.token_param }}>{{ v }}</option>{% endfor %}
+          </select></label>
+        <label class="inline"><input type="checkbox" name="send_temperature" value="1" {{ 'checked' if p.send_temperature }}> 傳送 temperature（推理模型與目前的 Claude 模型不接受，請關閉）</label>
+        <label class="wide">額外參數（JSON，併入請求內容，例如 {"top_p": 0.9}）<textarea name="extra_body" rows="3">{{ p.extra_body or '' }}</textarea></label>
+        <label class="wide">備註（合約編號、聯絡窗口…）<textarea name="note" rows="2">{{ p.note or '' }}</textarea></label>
+      </div>
+    </details>
+    <div class="actions">
+      <button type="submit">儲存</button>
+      <a class="button secondary" href="{{ url_for('settings.index') }}#providers">取消</a>
+    </div>
+  </form>
+  {% if p.id %}
+  <form method="post" action="{{ url_for('settings.delete_provider', pid=p.id) }}" onsubmit="return confirm('刪除 {{ p.name }}？用量紀錄會保留。')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="danger">刪除這個服務</button>
+  </form>
+  {% endif %}
+</section>
+<script>
+  (function () {
+    var form = document.querySelector('[data-provider-form]');
+    var kind = form.querySelector('[data-kind]'), bill = form.querySelector('[data-billing]');
+    function has(attr, v) { return attr.split(' ').indexOf(v) >= 0; }
+    function sync() {
+      form.querySelectorAll('[data-for]').forEach(function (el) { el.hidden = !has(el.dataset.for, kind.value); });
+      form.querySelectorAll('[data-label-for]').forEach(function (el) { el.hidden = !has(el.dataset.labelFor, kind.value); });
+      form.querySelectorAll('[data-billing-for]').forEach(function (el) { el.hidden = !has(el.dataset.billingFor, bill.value); });
+      form.querySelectorAll('[data-billing-label]').forEach(function (el) { el.hidden = el.dataset.billingLabel !== bill.value; });
+    }
+    kind.addEventListener('change', sync); bill.addEventListener('change', sync); sync();
+  })();
+</script>
+{% endblock %}

@@ -14,8 +14,8 @@
     </div>
   </div>
   {% if not ai_enabled %}
-  <p class="hint">尚未啟用。設定地端 AI 服務（<code>AI_BASE_URL</code>）並啟動 <code>dailyreport-ai</code> 後，
-    送審時會依據這份日報的檢查結果.md 自動產生建議與提醒。</p>
+  <p class="hint">尚未啟用。系統管理員在{% if current_user.is_admin %}<a href="{{ url_for('settings.index') }}">「系統設定」</a>{% else %}「系統設定」{% endif %}
+    新增 AI 服務（按量、包月或地端）並打開總開關後，送審時會依據這份日報的檢查結果.md 自動產生建議與提醒。</p>
   {% elif not ai_snap %}
   <p class="hint">送審時會依據檢查結果.md 自動產生{% if can.ai %}，也可以先按「產生 AI 建議」做送審前的自我檢查{% endif %}。</p>
   {% elif ai_snap.ai_status in ('pending', 'running') %}

@@ -58,7 +58,7 @@ def _principal_for(user, report, assigned_only):
 def _manager_action(user, report, assigned_only, what):
     """檔案管理員類動作（審核 / 退件 / 作廢 / 指派 / 核定作廢申請）。
     assigned_only=True：指定了核准人時，只有該核准人或其代理人可以做（審核、退件）。"""
-    if user.role == "admin":
+    if user.is_admin:
         # 系統管理員可做任何事；文件上的簽核者仍是指定的核准人
         principal = report.approver if report.approver_id and report.approver_id != user.id else None
         return Decision(True, principal)
@@ -103,6 +103,7 @@ def can_review(user, report):
     """核准 / 退件。"""
     if report.status != "submitted":
         return Decision(False, None, "此日報不是待審核狀態。")
+    # 職責分離適用於所有實際使用的帳號（含被指派的系統管理員）；只有平時不用的本機緊急帳號例外
     if report.author_id == user.id and user.role != "admin":
         return Decision(False, None, "不能審核自己撰寫的日報。")
     if report.submitted_by_id == user.id and user.role != "admin":
@@ -138,11 +139,15 @@ def can_decide_void_request(user, report):
 
 
 def can_manage_delegations(user):
-    return user.role in ("admin", "file_manager")
+    return user.is_admin or user.role == "file_manager"
 
 
 def can_manage_users(user):
-    return user.role == "admin"
+    return user.is_admin
+
+
+def can_manage_settings(user):
+    return user.is_admin
 
 
 # ---------------------------------------------------------------- 清單

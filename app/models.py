@@ -6,17 +6,22 @@ from . import db, login_manager
 
 
 ROLE_LABELS = {
-    "admin": "系統管理員",
+    "admin": "系統管理員（本機緊急帳號）",
     "file_manager": "檔案管理員",
     "second_line": "二線管理員",
     "first_line": "一線使用者",
 }
-ASSIGNABLE_ROLES = ("file_manager", "second_line", "first_line")  # 系統管理員只能用指令建立
+ASSIGNABLE_ROLES = ("file_manager", "second_line", "first_line")  # 本機緊急帳號只能用指令建立
+ADMIN_ELIGIBLE_ROLES = ("file_manager", "second_line")  # 可被指派為系統管理員的角色；一線使用者強制排除
 
 
 class User(UserMixin, db.Model):
     """AD 帳號首次登入時建立（預設一線使用者），角色由系統管理員在「帳號管理」調整。
-    系統管理員是本機帳號：密碼雜湊存在 password_hash，不經 AD 驗證。"""
+
+    系統管理員有兩種：
+    - 指派：檔案管理員或二線管理員被勾選 sys_admin（一線使用者強制排除）。AD 帳號也可以。
+    - 本機緊急帳號（role=admin）：密碼雜湊存在 password_hash，不經 AD，AD 無法驗證時仍可登入。
+    """
 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(128), unique=True, nullable=False)
@@ -24,7 +29,8 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(256))
     is_approver = db.Column(db.Boolean, default=False, nullable=False)  # 舊欄位，與 role 同步
     role = db.Column(db.String(16), default="first_line")
-    password_hash = db.Column(db.String(256))  # 僅本機帳號（系統管理員）
+    password_hash = db.Column(db.String(256))  # 僅本機帳號（系統管理員緊急帳號）
+    sys_admin = db.Column(db.Boolean, default=False)  # 指派的系統管理員權限（只對檔案 / 二線管理員有效）
     created_at = db.Column(db.DateTime, default=datetime.now)
     last_login = db.Column(db.DateTime)
 
@@ -39,10 +45,17 @@ class User(UserMixin, db.Model):
     def set_role(self, role):
         self.role = role
         self.is_approver = role in ("file_manager", "admin")
+        if role not in ADMIN_ELIGIBLE_ROLES:
+            self.sys_admin = False  # 改成一線使用者：系統管理員權限一併移除
+
+    @property
+    def is_local_admin(self):
+        return self.role == "admin"
 
     @property
     def is_admin(self):
-        return self.role == "admin"
+        """系統管理員：本機緊急帳號，或被指派的檔案 / 二線管理員（一線使用者即使旗標殘留也無效）。"""
+        return self.role == "admin" or bool(self.sys_admin and self.role in ADMIN_ELIGIBLE_ROLES)
 
     @property
     def is_file_manager(self):
@@ -388,3 +401,69 @@ class CheckReport(db.Model):
     @property
     def ai_state_label(self):
         return AI_STATE_LABELS.get(self.ai_status, "")
+
+
+class AppSetting(db.Model):
+    """系統設定（前端「系統設定」頁維護）：key -> JSON 值。"""
+
+    key = db.Column(db.String(64), primary_key=True)
+    value = db.Column(db.Text)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    updated_by_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+
+
+class AIProvider(db.Model):
+    """一個可呼叫的 AI 服務。依 priority 由小到大嘗試，失敗或額度用完就換下一個。"""
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(128), nullable=False)
+    preset = db.Column(db.String(32), nullable=False)  # ai_providers.PRESETS 的 key
+    kind = db.Column(db.String(24), nullable=False)  # 呼叫協定：openai / azure_openai / anthropic / gemini / bedrock
+    enabled = db.Column(db.Boolean, default=True, nullable=False)
+    priority = db.Column(db.Integer, default=100, nullable=False)
+    base_url = db.Column(db.String(512), default="")
+    model = db.Column(db.String(256), default="")
+    deployment = db.Column(db.String(256), default="")  # Azure OpenAI
+    api_version = db.Column(db.String(32), default="")  # Azure OpenAI
+    region = db.Column(db.String(32), default="")  # AWS Bedrock
+    api_key_enc = db.Column(db.Text)  # 加密後的金鑰，畫面上只顯示末 4 碼
+    api_key_hint = db.Column(db.String(8), default="")
+    external = db.Column(db.Boolean, default=True, nullable=False)  # 資料會送到公司外部
+    send_temperature = db.Column(db.Boolean, default=True, nullable=False)
+    token_param = db.Column(db.String(32), default="max_tokens")  # max_tokens / max_completion_tokens / none
+    extra_body = db.Column(db.Text, default="")  # 進階：併入請求內容的 JSON
+    # 計費：token（按量）/ monthly（包月）/ self_hosted（自建，固定成本）
+    billing = db.Column(db.String(16), default="token", nullable=False)
+    currency = db.Column(db.String(8), default="USD")
+    price_in = db.Column(db.Float, default=0.0)  # 每 100 萬 input token
+    price_out = db.Column(db.Float, default=0.0)  # 每 100 萬 output token
+    monthly_budget = db.Column(db.Float, default=0.0)  # 按量：每期費用上限，0 = 不限
+    monthly_fee = db.Column(db.Float, default=0.0)  # 包月 / 自建：每月固定費用
+    monthly_token_quota = db.Column(db.Integer, default=0)  # 包月：每期 token 額度，0 = 不限
+    reset_day = db.Column(db.Integer, default=1)  # 每期起算日（1–28）
+    note = db.Column(db.Text, default="")
+    last_test_at = db.Column(db.DateTime)
+    last_test_ok = db.Column(db.Boolean)
+    last_test_msg = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class AIUsage(db.Model):
+    """每一次 AI 呼叫（含失敗與連線測試），用於費用與額度計算。"""
+
+    id = db.Column(db.Integer, primary_key=True)
+    provider_id = db.Column(db.Integer, db.ForeignKey("ai_provider.id", ondelete="SET NULL"), index=True)
+    provider = db.relationship("AIProvider")
+    provider_name = db.Column(db.String(128), default="")  # 服務刪除後仍看得到
+    check_report_id = db.Column(db.Integer, db.ForeignKey("check_report.id", ondelete="SET NULL"))
+    purpose = db.Column(db.String(16), default="suggest")  # suggest / test
+    created_at = db.Column(db.DateTime, default=datetime.now, nullable=False, index=True)
+    ok = db.Column(db.Boolean, default=False, nullable=False)
+    model = db.Column(db.String(256), default="")
+    input_tokens = db.Column(db.Integer, default=0)
+    output_tokens = db.Column(db.Integer, default=0)
+    cost = db.Column(db.Float, default=0.0)  # 按量計費才有；幣別同服務設定
+    currency = db.Column(db.String(8), default="")
+    latency_ms = db.Column(db.Integer, default=0)
+    error = db.Column(db.Text)

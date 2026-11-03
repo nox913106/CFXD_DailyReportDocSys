@@ -77,13 +77,15 @@ def register_cli(app):
     @app.cli.command("import-check-md")
     @click.argument("folder", type=click.Path(exists=True, file_okay=False))
     def import_check_md(folder):
-        """把 DDoc_compare 產生的 <DocNo>_比對報告.md 複製到 CHECK_MD_DIR/ddoc_compare/（保留子資料夾結構）。"""
+        """把 DDoc_compare 產生的 <DocNo>_比對報告.md 複製到檢查結果.md 匯出位置的 ddoc_compare/ 下（保留子資料夾結構）。"""
         import os
         import shutil
 
-        root = app.config.get("CHECK_MD_DIR")
+        from .ai_providers import get_setting
+
+        root = get_setting("check_md_dir")
         if not root:
-            raise click.ClickException("沒有設定 CHECK_MD_DIR。")
+            raise click.ClickException("「系統設定」沒有設定檢查結果.md 匯出位置。")
         dest_root = os.path.join(root, "ddoc_compare")
         n = skipped = 0
         for base, _, files in os.walk(folder):
@@ -99,6 +101,23 @@ def register_cli(app):
                 shutil.copy2(src, dest)
                 n += 1
         click.echo(f"已匯入 {n} 份，略過 {skipped} 份已存在的檔案 → {dest_root}")
+
+    @app.cli.command("grant-admin")
+    @click.option("--username", required=True, help="要指派為系統管理員的帳號（檔案管理員或二線管理員）")
+    def grant_admin(username):
+        """指派系統管理員（初次設定用；平常請在「帳號管理」頁操作）。一線使用者不能指派。"""
+        from . import db
+        from .models import ADMIN_ELIGIBLE_ROLES, AuditLog, User
+
+        user = User.query.filter_by(username=username.strip().lower()).first()
+        if user is None:
+            raise click.ClickException("找不到這個帳號（AD 帳號要先登入一次）。")
+        if user.role not in ADMIN_ELIGIBLE_ROLES:
+            raise click.ClickException("一線使用者不能成為系統管理員，請先改為檔案管理員或二線管理員。")
+        user.sys_admin = True
+        db.session.add(AuditLog(action="set_admin", target=user.username, detail="指派為系統管理員（指令）"))
+        db.session.commit()
+        click.echo(f"{user.username} 已指派為系統管理員。")
 
     @app.cli.command("create-admin")
     @click.option("--username", default="sysadmin", show_default=True, help="本機系統管理員帳號")

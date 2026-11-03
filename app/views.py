@@ -10,11 +10,13 @@ from flask import current_app
 
 from . import approval as perm
 from .approval import approvers, pending_for
+from .ai_providers import ai_enabled
 from .check_report import render as render_check_md
 from .check_report import snapshot
 from .checks import run_checks
 from .helpers import get_report
 from .models import (
+    ADMIN_ELIGIBLE_ROLES,
     ASSIGNABLE_ROLES,
     ROLE_LABELS,
     AlarmSummaryRow,
@@ -135,7 +137,7 @@ def detail(report_id):
         "report_detail.html", report=report, can_review=review.allowed, principal=review.principal,
         checks=run_checks(report) if report.status != "voided" else None,
         snaps=snaps, ai_snap=next((s for s in snaps if s.ai_status), None),
-        ai_enabled=bool(current_app.config.get("AI_BASE_URL")),
+        ai_enabled=ai_enabled(),
         can={
             "ai": _can_request_ai(u, report),
             "edit": perm.can_edit(u, report), "submit": perm.can_submit(u, report),
@@ -214,9 +216,9 @@ def review(report_id):
 
 def _can_request_ai(u, report):
     """AI 建議：撰寫中（送審前自我檢查）或送審中，可編輯或可審核的人才能要求重新產生。"""
-    if not current_app.config.get("AI_BASE_URL") or report.status not in ("draft", "rejected", "submitted"):
+    if not ai_enabled() or report.status not in ("draft", "rejected", "submitted"):
         return False
-    return bool(perm.can_edit(u, report) or perm.can_review(u, report) or u.role in ("admin", "file_manager"))
+    return bool(perm.can_edit(u, report) or perm.can_review(u, report) or u.is_admin or u.role == "file_manager")
 
 
 @bp.route("/reports/<int:report_id>/ai", methods=["POST"])
@@ -406,15 +408,24 @@ def delete(report_id):
 def users():
     if not perm.can_manage_users(current_user):
         abort(403)
+    if request.method == "POST" and request.form.get("sys_admin") is not None:
+        return _set_sys_admin()
     if request.method == "POST":
         user = db.session.get(User, request.form.get("user_id", type=int) or 0) or abort(404)
         role = request.form.get("role")
+        if user.id == current_user.id and user.is_admin and role not in ADMIN_ELIGIBLE_ROLES:
+            flash("不能把自己改成一線使用者（會失去系統管理員權限）。請由其他系統管理員操作。", "error")
+            return redirect(url_for("views.users"))
         if user.role == "admin" or role not in ASSIGNABLE_ROLES:
             abort(400)
         if user.role != role:
             db.session.add(AuditLog(action="set_role", actor_id=current_user.id, target=user.username,
                                     detail=f"{ROLE_LABELS.get(user.role)} → {ROLE_LABELS[role]}"))
+            was_admin = user.is_admin
             user.set_role(role)
+            if was_admin and not user.is_admin:
+                db.session.add(AuditLog(action="set_admin", actor_id=current_user.id, target=user.username,
+                                        detail="改為一線使用者，系統管理員權限自動移除"))
             if role != "second_line":
                 # 不再是二線管理員：撤銷其所有代理授權
                 for dl in ApprovalDelegation.query.filter_by(delegate_id=user.id, revoked_at=None):
@@ -424,7 +435,29 @@ def users():
         return redirect(url_for("views.users"))
     all_users = User.query.order_by(User.role, User.display_name, User.username).all()
     logs = AuditLog.query.order_by(AuditLog.id.desc()).limit(50).all()
-    return render_template("users.html", users=all_users, roles=ASSIGNABLE_ROLES, role_labels=ROLE_LABELS, logs=logs)
+    return render_template("users.html", users=all_users, roles=ASSIGNABLE_ROLES, role_labels=ROLE_LABELS, logs=logs,
+                           admin_roles=ADMIN_ELIGIBLE_ROLES)
+
+
+def _set_sys_admin():
+    """指派 / 移除系統管理員。一線使用者強制排除；不能移除自己的權限（避免把自己鎖在外面）。"""
+    user = db.session.get(User, request.form.get("user_id", type=int) or 0) or abort(404)
+    on = request.form.get("sys_admin") == "1"
+    if user.is_local_admin:
+        abort(400)
+    if on and user.role not in ADMIN_ELIGIBLE_ROLES:
+        flash("一線使用者不能成為系統管理員，請先改為檔案管理員或二線管理員。", "error")
+        return redirect(url_for("views.users"))
+    if not on and user.id == current_user.id:
+        flash("不能移除自己的系統管理員權限，請由其他系統管理員操作。", "error")
+        return redirect(url_for("views.users"))
+    if bool(user.sys_admin) != on:
+        user.sys_admin = on
+        db.session.add(AuditLog(action="set_admin", actor_id=current_user.id, target=user.username,
+                                detail="指派為系統管理員" if on else "移除系統管理員"))
+        db.session.commit()
+        flash(f"{user.name} {'已指派為' if on else '已移除'}系統管理員。", "success")
+    return redirect(url_for("views.users"))
 
 
 @bp.route("/reports/<int:report_id>/pdf")

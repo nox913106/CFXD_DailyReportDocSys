@@ -21,7 +21,6 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setenv("CHECK_MD_DIR", str(tmp_path / "check_reports"))
-    monkeypatch.delenv("AI_BASE_URL", raising=False)
     monkeypatch.setenv("APPROVER_USERS", "boss,boss2")
     from app import create_app
 
@@ -714,12 +713,9 @@ def test_alarm_history(app):
 
 def test_check_report_and_ai(app, tmp_path):
     """檢查結果.md：送審 / 退回 / 核准各存一份並匯出；AI 依據檢查結果.md 產生建議（背景服務、輸出跳脫）。"""
-    import http.server
-    import json
-    import threading
-
     from app import ai, db
-    from app.models import CheckReport, ReportImage
+    from app import ai_providers as prov
+    from app.models import AIProvider, AIUsage, CheckReport, ReportImage
 
     boss, alice = Browser(app), Browser(app)
     boss.login("boss")
@@ -743,8 +739,14 @@ def test_check_report_and_ai(app, tmp_path):
         rej = CheckReport.query.filter_by(report_id=rid, stage="reject").one()
         assert "## 三、審核結果" in rej.markdown and "Alarm 計數錯誤" in rej.markdown
 
-    # 啟用 AI，再送審 -> 排入 AI；截圖還在辨識時先等
-    app.config["AI_BASE_URL"] = "http://ai.invalid/v1"
+    # 啟用 AI：兩個服務，第一個失敗時改用第二個
+    with app.app_context():
+        prov.set_setting("ai_enabled", True)
+        db.session.add_all([AIProvider(name="Local", preset="ollama", kind="openai", base_url="http://x/v1",
+                                       model="qwen3", billing="self_hosted", external=False, priority=10),
+                            AIProvider(name="Backup", preset="ollama", kind="openai", base_url="http://y/v1",
+                                       model="llama", billing="self_hosted", external=False, priority=20)])
+        db.session.commit()
     alice.get(f"/reports/{rid}")
     alice.post(f"/reports/{rid}/submit")
     with app.app_context():
@@ -759,23 +761,27 @@ def test_check_report_and_ai(app, tmp_path):
 
         seen = {}
 
-        def fake_llm(messages):
-            seen["messages"] = messages
-            return "## 建議\n- **建議退回修正** <script>alert(1)</script>\n- [一-2] 告警計數不符", "test-model"
+        def fake(p, key, system, user, opts):
+            if p.name == "Local":
+                raise RuntimeError("connection refused")
+            seen["user"] = user
+            return prov.Reply("## 建議\n- **建議退回修正** <script>alert(1)</script>\n- [一-2] 告警計數不符",
+                              "llama-3", 1200, 80)
 
-        assert ai.process_one(db, llm=fake_llm)
+        assert ai.process_one(db, caller=fake)
         snap = db.session.get(CheckReport, snap.id)
-        assert snap.ai_status == "done" and snap.ai_model == "test-model"
-        user_msg = seen["messages"][1]["content"]
-        assert "檢查結果.md" in user_msg and "## 總覽" in user_msg
-        assert "<details>" not in user_msg  # 逐張明細不送
-        assert "先前被退回時的檢查結果" in user_msg and "Alarm 計數錯誤" in user_msg  # RAG：先前退回的版本
+        assert snap.ai_status == "done" and snap.ai_model == "Backup / llama-3"
+        assert "檢查結果.md" in seen["user"] and "## 總覽" in seen["user"] and "<details>" not in seen["user"]
+        assert "先前被退回時的檢查結果" in seen["user"] and "Alarm 計數錯誤" in seen["user"]  # RAG
         assert "1 張截圖辨識失敗" in snap.markdown  # AI 產生前依最新 OCR 狀態更新 .md
-        assert not ai.process_one(db, llm=fake_llm)
+        uses = AIUsage.query.order_by(AIUsage.id).all()
+        assert [(u.provider_name, u.ok) for u in uses] == [("Local", False), ("Backup", True)]
+        assert uses[1].input_tokens == 1200 and uses[1].check_report_id == snap.id
+        assert not ai.process_one(db, caller=fake)
 
     html = boss.get(f"/reports/{rid}")
     assert "<strong>建議退回修正</strong>" in html and "&lt;script&gt;" in html and "<script>alert" not in html
-    assert "模型 test-model" in html and "歷次檢查結果.md（3 份）" in html
+    assert "Backup / llama-3" in html and "歷次檢查結果.md（3 份）" in html
 
     # 手動重新產生、下載 .md
     boss.post(f"/reports/{rid}/ai")
@@ -783,31 +789,188 @@ def test_check_report_and_ai(app, tmp_path):
         assert CheckReport.query.filter_by(report_id=rid, stage="manual", ai_status="pending").count() == 1
     r = boss.c.get(f"/reports/{rid}/checks.md")
     assert r.status_code == 200 and r.mimetype == "text/markdown" and "日報檢查結果" in r.get_data(as_text=True)
+    alice.post(f"/reports/{rid}/ai", status=403)  # 撰寫人：送審中不能編輯也不能審核
 
-    # 一線使用者不能替送審中、別人審的日報要求 AI（不能編輯也不能審核）
-    alice.post(f"/reports/{rid}/ai", status=403)
 
-    # 真正的 HTTP 呼叫：OpenAI 相容 API，推理模型的 <think> 會被移除
+def test_ai_billing_and_external(app):
+    """按量預算、包月額度用完就跳過；外部服務需明確允許；金鑰加密保存。"""
+    from app import db
+    from app import ai_providers as prov
+    from app.models import AIProvider, AIUsage
+
+    with app.app_context():
+        tok = AIProvider(name="Cloud", preset="openai", kind="openai", base_url="https://api.example/v1", model="m",
+                         billing="token", price_in=2.0, price_out=10.0, monthly_budget=0.05, external=True, priority=1)
+        mon = AIProvider(name="PTU", preset="azure_ptu", kind="azure_openai", base_url="https://r.openai.azure.com",
+                         deployment="d", billing="monthly", monthly_fee=1000, monthly_token_quota=5000,
+                         external=True, priority=2)
+        db.session.add_all([tok, mon])
+        tok.api_key_enc, tok.api_key_hint = prov.encrypt_key("sk-secret-1234"), "1234"
+        db.session.commit()
+        assert "sk-secret" not in tok.api_key_enc and prov.decrypt_key(tok) == "sk-secret-1234"
+
+        assert all("外部服務" in prov.blocked_reason(p, False) for p in (tok, mon))
+        prov.set_setting("ai_allow_external", True)
+        db.session.commit()
+        assert [p.name for p in prov.available_providers()] == ["Cloud", "PTU"]
+
+        def fake(p, key, system, user, opts):
+            assert key == ("sk-secret-1234" if p.name == "Cloud" else "")
+            return prov.Reply("OK", "m", 10_000, 3_000)
+
+        prov.call(tok, "s", "u", caller=fake)  # 10k*2 + 3k*10 = 0.05 USD
+        assert AIUsage.query.one().cost == 0.05
+        assert "預算上限" in prov.blocked_reason(tok, True)
+        prov.call(mon, "s", "u", caller=fake)
+        assert "額度" in prov.blocked_reason(mon, True)
+        assert prov.available_providers() == []
+
+
+def test_ai_adapters(app):
+    """五種呼叫協定的實際 HTTP 請求格式與 token 計算（本機假伺服器）。"""
+    import http.server
+    import json
+    import threading
+
+    from app import db
+    from app import ai_providers as prov
+    from app.models import AIProvider
+
+    seen = []
+
     class H(http.server.BaseHTTPRequestHandler):
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            seen["auth"] = self.headers.get("Authorization")
-            seen["path"] = self.path
-            out = json.dumps({"model": body["model"], "choices": [
-                {"message": {"role": "assistant", "content": "<think>...</think>\n## 建議\n可核准"}}]}).encode()
+            seen.append((self.path, {k.lower(): v for k, v in self.headers.items()}, body))
+            if "/v1/messages" in self.path:
+                out = {"id": "msg_1", "type": "message", "role": "assistant", "model": body["model"],
+                       "content": [{"type": "text", "text": "claude ok"}], "stop_reason": "end_turn",
+                       "stop_sequence": None, "usage": {"input_tokens": 11, "output_tokens": 3}}
+            elif "generateContent" in self.path:
+                out = {"candidates": [{"content": {"parts": [{"text": "gemini ok"}]}}],
+                       "usageMetadata": {"promptTokenCount": 12, "candidatesTokenCount": 4}}
+            elif "/converse" in self.path:
+                out = {"output": {"message": {"content": [{"text": "bedrock ok"}]}},
+                       "usage": {"inputTokens": 13, "outputTokens": 5}}
+            else:
+                out = {"model": body.get("model", "dep"), "usage": {"prompt_tokens": 14, "completion_tokens": 6},
+                       "choices": [{"message": {"content": "<think>x</think>openai ok"}}]}
+            data = json.dumps(out).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
             self.end_headers()
-            self.wfile.write(out)
+            self.wfile.write(data)
 
         def log_message(self, *a):
             pass
 
-    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
-    threading.Thread(target=srv.handle_request, daemon=True).start()
-    app.config.update(AI_BASE_URL=f"http://127.0.0.1:{srv.server_port}/v1", AI_MODEL="qwen3", AI_API_KEY="k")
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_port}"
+    cases = [
+        (dict(kind="openai", base_url=base + "/v1", model="qwen3", token_param="max_completion_tokens"), "openai ok", 14),
+        (dict(kind="azure_openai", base_url=base, deployment="gpt-dep", api_version="2024-10-21"), "openai ok", 14),
+        (dict(kind="anthropic", base_url=base, model="claude-opus-5-5", send_temperature=False), "claude ok", 11),
+        (dict(kind="gemini", base_url=base, model="gemini-x"), "gemini ok", 12),
+        (dict(kind="bedrock", base_url=base, region="ap-northeast-1", model="anthropic.claude-opus-5-5"), "bedrock ok", 13),
+    ]
+    try:
+        with app.app_context():
+            for fields, want, tin in cases:
+                p = AIProvider(name=fields["kind"], preset="custom_local", billing="self_hosted", external=False,
+                               **fields)
+                p.api_key_enc = prov.encrypt_key("key-" + fields["kind"])
+                db.session.add(p)
+                db.session.commit()
+                r = prov.call(p, "SYS", "USER", purpose="test")
+                assert (r.text, r.input_tokens) == (want, tin), fields["kind"]
+    finally:
+        srv.shutdown()
+    by = {path.split("?")[0]: (h, b) for path, h, b in seen}
+    h, b = by["/v1/chat/completions"]
+    assert h["authorization"] == "Bearer key-openai" and b["max_completion_tokens"] == 16000
+    assert b["messages"][0] == {"role": "system", "content": "SYS"}
+    h, b = by["/openai/deployments/gpt-dep/chat/completions"]
+    assert h["api-key"] == "key-azure_openai" and "model" not in b
+    h, b = by["/v1/messages"]
+    assert h["authorization"] == "Bearer key-anthropic" and b["system"] == "SYS" and "temperature" not in b
+    h, b = by["/v1beta/models/gemini-x:generateContent"]
+    assert h["x-goog-api-key"] == "key-gemini" and b["systemInstruction"]["parts"][0]["text"] == "SYS"
+    h, b = by["/model/anthropic.claude-opus-5-5/converse"]
+    assert h["authorization"] == "Bearer key-bedrock" and b["system"] == [{"text": "SYS"}]
+
+
+def test_settings_page_and_admin_assignment(app):
+    """系統設定只有系統管理員看得到；系統管理員可指派（AD 帳號可、一線使用者強制排除）；本機緊急帳號保留。"""
+    from app import db
+    from app.models import AIProvider, AuditLog, User
+
+    runner = app.test_cli_runner()
+    assert runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "a-very-long-pass"]).exit_code == 0
+    root, bob, carl = Browser(app), Browser(app), Browser(app)
+    root.get("/login")
+    root.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
+    bob.login("bob")
+    carl.login("carl")
+    bob.get("/admin/settings/", status=403)
     with app.app_context():
-        text, model = ai.chat([{"role": "user", "content": "hi"}])
-    srv.server_close()
-    assert text == "## 建議\n可核准" and model == "qwen3"
-    assert seen["path"] == "/v1/chat/completions" and seen["auth"] == "Bearer k"
+        bid = User.query.filter_by(username="bob").one().id
+        cid = User.query.filter_by(username="carl").one().id
+
+    # 一線使用者不能被指派
+    html = root.post("/admin/users", {"user_id": str(bid), "sys_admin": "1"})
+    assert "一線使用者不能成為系統管理員" in html
+    with app.app_context():
+        assert not db.session.get(User, bid).is_admin
+        u = db.session.get(User, bid)
+        u.sys_admin = True  # 旗標殘留也無效
+        db.session.commit()
+        assert not db.session.get(User, bid).is_admin
+    root.post("/admin/users", {"user_id": str(bid), "role": "second_line"})
+    with app.app_context():
+        assert db.session.get(User, bid).is_admin  # 二線 + 旗標 -> 系統管理員
+        db.session.get(User, bid).sys_admin = False
+        db.session.commit()
+    root.post("/admin/users", {"user_id": str(bid), "sys_admin": "1"})
+    html = bob.get("/admin/settings/")
+    assert "系統設定" in html and "AI 服務" in html and "系統管理員" in bob.get("/")
+
+    # 指派的系統管理員可以再指派別人、不能移除自己；改成一線使用者時自動移除
+    root.post("/admin/users", {"user_id": str(cid), "role": "file_manager"})
+    bob.get("/admin/users")
+    bob.post("/admin/users", {"user_id": str(cid), "sys_admin": "1"})
+    assert "不能移除自己" in bob.post("/admin/users", {"user_id": str(bid), "sys_admin": "0"})
+    assert "不能把自己改成一線使用者" in bob.post("/admin/users", {"user_id": str(bid), "role": "first_line"})
+    bob.post("/admin/users", {"user_id": str(cid), "role": "first_line"})
+    with app.app_context():
+        assert not db.session.get(User, cid).is_admin and not db.session.get(User, cid).sys_admin
+        assert AuditLog.query.filter_by(action="set_admin").count() >= 3
+
+    # 指令指派（初次設定）
+    assert runner.invoke(args=["grant-admin", "--username", "carl"]).exit_code != 0  # 一線使用者
+
+    # 新增服務：從範本帶入、金鑰加密、畫面不顯示金鑰
+    bob.get("/admin/settings/providers/new?preset=anthropic")
+    html = bob.post("/admin/settings/providers/new", {
+        "preset": "anthropic", "name": "Claude", "kind": "anthropic", "model": "claude-opus-5-5", "base_url": "",
+        "api_key": "sk-ant-secret-9876", "billing": "token", "currency": "usd", "price_in": "4", "price_out": "20",
+        "monthly_budget": "50", "reset_day": "1", "enabled": "1", "external": "1", "token_param": "max_tokens"})
+    assert "已儲存 Claude" in html and "sk-ant-secret" not in html
+    with app.app_context():
+        p = AIProvider.query.filter_by(name="Claude").one()
+        assert p.api_key_hint == "9876" and p.currency == "USD" and "sk-ant" not in p.api_key_enc
+        pid = p.id
+    assert "末 4 碼 9876" in bob.get(f"/admin/settings/providers/{pid}")
+    assert "外部服務，尚未允許" in bob.get("/admin/settings/")
+    assert "請先在一般設定允許" in bob.post(f"/admin/settings/providers/{pid}/test")
+
+    # 允許外部服務必須勾選確認
+    form = {"ai_enabled": "1", "ai_auto_on_submit": "1", "ai_allow_external": "1", "ai_context_reports": "3",
+            "ai_max_chars": "24000", "ai_timeout": "180", "ai_max_output_tokens": "16000", "ai_temperature": "0.2",
+            "check_md_dir": ""}
+    assert "請勾選確認" in bob.post("/admin/settings/general", form)
+    assert "已儲存設定" in bob.post("/admin/settings/general", {**form, "external_ack": "1"})
+    assert "運作中：1 個服務可用" in bob.get("/admin/settings/")
+    assert "已儲存提示詞" in bob.post("/admin/settings/prompt", {"ai_system_prompt": "自訂規則"})
+    assert "自訂規則" in bob.get("/admin/settings/")

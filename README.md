@@ -47,7 +47,8 @@ CheckList 的圓餅圖數值由範本公式（COUNTIFS、Qty / SUM）依日報�
 
 | 角色 | 可執行的動作 |
 |---|---|
-| 系統管理員 | 所有動作。本機帳號（不經 AD），平時不使用；在「帳號管理」設定其他人的角色 |
+| 系統管理員 | 所有動作，另可管理帳號與「系統設定」。由檔案管理員或二線管理員兼任（AD 帳號可），在「帳號管理」指派；**一線使用者強制排除** |
+| 本機緊急帳號 | 系統管理員權限的本機帳號（不經 AD），AD 無法驗證時使用，平時不使用 |
 | 檔案管理員 | 指派（撰寫人、核准人）、審核、退件、作廢、送審、新增、編輯、刪除；授權二線管理員代理 |
 | 二線管理員 | 送審、新增、編輯、刪除；經檔案管理員授權後可代審核、代指派、代退件、代作廢 |
 | 一線使用者 | 送審、新增、編輯（含別人的草稿 / 退回）、申請作廢 |
@@ -56,15 +57,18 @@ CheckList 的圓餅圖數值由範本公式（COUNTIFS、Qty / SUM）依日報�
   之後角色一律由系統管理員在右上角「帳號管理」調整，登入時不會再變更。
 - 核准人：每份日報在「基本資料」指定一位檔案管理員為核准人（新日報沿用前一份；只有一位檔案管理員時自動指定）。
   只有該核准人或其授權的二線管理員能核准 / 退件；未指定時任何檔案管理員都可以審核。
-- 職責分離：日報的撰寫人與送審人都不能核准該份日報（系統管理員除外）。
+- 職責分離：日報的撰寫人與送審人都不能核准該份日報。被指派的系統管理員同樣受限，只有本機緊急帳號例外。
+- 系統管理員：一線使用者不能被指派；把系統管理員改成一線使用者時，權限自動移除。不能移除自己的系統管理員權限，
+  也不能把自己改成一線使用者（避免沒有人能管理）。指派、移除都寫入稽核紀錄。
 - **作廢**：保留日期與文件編號（流水號不會被後續日報沖掉），內容唯讀，處理紀錄保留原因。
   一線使用者送出「申請作廢」，由檔案管理員（或其代理人）核定或駁回。
 - **刪除**：移除整份日報與截圖，該日期可重新建立；需輸入文件編號確認，並寫入稽核紀錄。
 
-系統管理員帳號（本機密碼，至少 12 字元）：
+本機緊急帳號（密碼至少 12 字元）與初次指派：
 
 ```bash
-flask --app wsgi create-admin --username sysadmin      # 建立或重設密碼
+flask --app wsgi create-admin --username sysadmin      # 建立或重設本機緊急帳號的密碼
+flask --app wsgi grant-admin --username <AD帳號>       # 初次設定時指派系統管理員（之後在「帳號管理」操作）
 ```
 
 ### 代理（二線管理員代檔案管理員）
@@ -111,38 +115,49 @@ flask --app wsgi create-admin --username sysadmin      # 建立或重設密碼
 ### 檢查結果.md 與 AI 建議
 
 **檢查結果.md**：送審、核准、退回時，系統把當下的檢查結果存成一份 Markdown（資料庫一份，並匯出到
-`CHECK_MD_DIR/<年>/<月>/<文件編號>_R<版次>_<時機>_<時間>_檢查結果.md`）。結構與 DDoc_compare 的
+`<匯出位置>/<年>/<月>/<文件編號>_R<版次>_<時機>_<時間>_檢查結果.md`）。結構與 DDoc_compare 的
 `<DocNo>_比對報告.md` 相同（一-1 ～ 一-8 今日文件內部一致性、二-1 ～ 二-4 跨日比對，另加二-6 告警歷程），
 所以兩邊的檔案可以放進同一個 RAG 知識庫：
 
 - 檔案開頭有 YAML front matter（文件編號、日期、時機、錯誤 / 警告 / 提醒數、比對基準），RAG 可依此過濾。
 - 核准 / 退回的檔案多一節「三、審核結果」（決定、簽核者、代簽、意見），AI 可以學到哪些問題會被退回。
 - 檔案先寫成 `.part` 再改名，收錄程式不會讀到寫一半的檔案；匯出失敗不影響審核。
-- 日報頁可下載任一版本的檢查結果.md；`CHECK_MD_DIR` 可設成 NAS 路徑。
+- 日報頁可下載任一版本的檢查結果.md；匯出位置在「系統設定」設定（預設 `instance/check_reports`，可設成 NAS 路徑）。
 - `flask --app wsgi check-md-backfill [--since YYYY-MM-DD]`：替舊的已核准日報補產生檢查結果.md。
-- `flask --app wsgi import-check-md <資料夾>`：把 DDoc_compare 產生的比對報告.md 複製到 `CHECK_MD_DIR/ddoc_compare/`。
+- `flask --app wsgi import-check-md <資料夾>`：把 DDoc_compare 產生的比對報告.md 複製到 `<匯出位置>/ddoc_compare/`。
   DDoc_compare 的 .md 是每次比對的輸出，存在它設定的 NAS 資料夾，不在 DDoc_compare 的程式庫裡，因此要從 NAS 匯入。
 
 **AI 建議與提醒**：檢查結果最上方保留一個區塊。依據只有檢查結果.md：
 
 - 送審時自動排入；撰寫人也可以在送審前按「產生 AI 建議」自我檢查，審核者可「重新產生」。
-- 背景服務 `dailyreport-ai` 呼叫地端 AI（OpenAI 相容的 Chat Completions API：Ollama、LM Studio、llama.cpp、vLLM），
-  網頁不等 AI 回應。截圖還在 OCR 時先等辨識完成（最多 30 分鐘），並在產生前依最新辨識結果更新檢查結果.md。
-- 送給 AI 的內容：本次檢查結果.md（不含截圖逐張明細），加上 RAG 參考：同一份日報先前被退回時的檢查結果、
+- 背景服務 `dailyreport-ai` 呼叫 AI，網頁不等 AI 回應。截圖還在 OCR 時先等辨識完成（最多 30 分鐘），
+  並在產生前依最新辨識結果更新檢查結果.md。
+- 送給 AI 的內容：提示詞、本次檢查結果.md（不含截圖逐張明細），加上 RAG 參考：同一份日報先前被退回時的檢查結果、
   最近 60 天其他日報被退回時的檢查結果（`app/ai.py` 的 `retrieve_context()`，日後改用向量檢索只需替換這個函式）。
 - AI 必須標出依據的步驟編號（一-2、二-6…），不可編造檢查結果裡沒有的內容；回覆一律跳脫 HTML 後才顯示。
 - 產生後檢查結果若有變化（數量不同），區塊會提示重新產生。AI 建議僅供參考，不會自動核准或退回。
-- 沒有設定 `AI_BASE_URL` 時區塊顯示「尚未啟用」，其他功能不受影響。
 
-| 變數 | 說明 | 預設 |
+### 系統設定（只有系統管理員）
+
+右上角「系統設定」。所有 AI 相關設定都在這裡，存在資料庫，背景服務每次產生前重新讀取，不需要改 `.env` 或重啟。
+
+- **一般設定**：總開關、送審時自動產生、是否允許公司外部的 AI 服務（開啟時必須勾選確認資料會送到外部）、
+  RAG 參考份數、最大字數、逾時、輸出上限、temperature、檢查結果.md 匯出位置（可設 NAS 路徑）。
+- **AI 服務**：可設定多個，依順序嘗試；前一個失敗、停用、本期預算或額度用完時，自動改用下一個（例如地端主機為主、雲端備援）。
+  每個服務可「測試連線」；金鑰加密後存在資料庫（以 `SECRET_KEY` 衍生的金鑰加密，畫面只顯示末 4 碼；更換 `SECRET_KEY` 後需重新輸入）。
+- **提示詞**：AI 的審核規則，可修改或還原預設。
+- **用量**：每個服務本期的呼叫次數、token、費用（按量）或額度使用率（包月），以及最近 30 次呼叫紀錄。
+
+| 計費方式 | 範本 | 額度控制 |
 |---|---|---|
-| `CHECK_MD_DIR` | 檢查結果.md 匯出資料夾（空字串 = 只存資料庫） | `instance/check_reports` |
-| `AI_BASE_URL` | 地端 AI 的 OpenAI 相容 API，例如 `http://ai-host:11434/v1`（Ollama） | 空（不啟用） |
-| `AI_MODEL` | 模型名稱，例如 `qwen3:32b` | |
-| `AI_API_KEY` | 選填，API 需要時才設定 | |
-| `AI_TIMEOUT` | 單次呼叫逾時秒數 | 180 |
-| `AI_CONTEXT_REPORTS` | RAG 參考的過去檢查結果份數（0 = 不參考） | 3 |
-| `AI_MAX_CHARS` | 本次檢查結果.md 送給 AI 的最大字數 | 24000 |
+| 按量計費（token） | OpenAI、Anthropic Claude（預設 Claude Opus 5.5，每百萬 token US$4 / US$20）、Google Gemini、Azure OpenAI、AWS Bedrock、Mistral、DeepSeek、xAI、OpenRouter、Groq、Together、其他 OpenAI 相容服務 | 填 input / output 單價，可設每期預算上限 |
+| 包月（固定月費） | Azure OpenAI PTU、AWS Bedrock Provisioned Throughput、Anthropic 企業包月 / 預付、公司 AI 閘道（LiteLLM 等） | 填月費，可設每期 token 額度 |
+| 自建主機（地端） | Ollama、LM Studio、vLLM、llama.cpp、LocalAI、其他 OpenAI 相容服務 | 可填每月攤提成本供比較，資料不離開公司 |
+
+呼叫協定共五種：OpenAI 相容 Chat Completions、Azure OpenAI、Anthropic Claude API（官方 SDK；Claude Opus 5.5 等模型啟用伺服器端 fallback，
+被安全機制拒絕時自動改用其他 Claude 模型）、Google Gemini API、AWS Bedrock Converse API（Bedrock API 金鑰）。
+進階欄位可選輸出上限參數名稱（`max_tokens` / `max_completion_tokens`）、是否傳送 temperature，以及併入請求的額外 JSON 參數。
+ChatGPT Plus、Claude Pro 這類個人訂閱不提供 API，不能接入。
 
 ### 檢查表主檔
 
@@ -193,7 +208,7 @@ sudo .venv/bin/python -c "from rapidocr import RapidOCR; RapidOCR()"   # 預先�
 
 sudo cp deploy/dailyreport.service deploy/dailyreport-ocr.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now dailyreport dailyreport-ocr
-# 有地端 AI 主機時（.env 設定 AI_BASE_URL、AI_MODEL）：
+# AI 建議背景服務（服務本身在「系統設定」頁設定；沒有啟用時只會待命）
 sudo cp deploy/dailyreport-ai.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now dailyreport-ai
 

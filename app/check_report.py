@@ -258,9 +258,12 @@ def export_path(snap):
                         f"{_safe(r.doc_no)}_R{r.revision}_{snap.stage}_{snap.created_at:%Y%m%d%H%M%S}_檢查結果.md")
 
 
-def export(snap):
+def export(snap, root=None):
     """寫到 CHECK_MD_DIR（先寫 .part 再改名，RAG 收錄程式不會讀到寫一半的檔案）。失敗不影響審核流程。"""
-    root = current_app.config.get("CHECK_MD_DIR")
+    if root is None:
+        from .ai_providers import get_setting
+
+        root = get_setting("check_md_dir")
     if not root:
         return None
     rel = export_path(snap)
@@ -279,16 +282,18 @@ def export(snap):
 
 def snapshot(report, stage, user=None, review=None, ai=False):
     """建立檢查結果快照並匯出；ai=True 時排入 AI 建議。呼叫端負責 commit。"""
+    from .ai_providers import ai_enabled, get_setting
+
+    queue = ai and ai_enabled() and (stage != "submit" or get_setting("ai_auto_on_submit"))
+    root = get_setting("check_md_dir")
     chk = run_checks(report)
     now = datetime.now()
     c = chk.counts()
     snap = CheckReport(report=report, stage=stage, created_at=now, created_by_id=user.id if user else None,
                        markdown=render(report, chk, stage, review, now),
-                       errors=c["錯誤"], warnings=c["警告"], infos=c["提醒"])
-    if ai and current_app.config.get("AI_BASE_URL"):
-        snap.ai_status = "pending"
+                       errors=c["錯誤"], warnings=c["警告"], infos=c["提醒"], ai_status="pending" if queue else None)
     db.session.add(snap)
-    export(snap)
+    export(snap, root)
     return snap
 
 

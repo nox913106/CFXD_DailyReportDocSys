@@ -160,3 +160,7 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .ai-box .ai-body ul { margin: 4px 0 4px 20px; padding: 0; }
 .ai-box .ai-wait { color: #3730a3; }
 button.small, .button.small { padding: 3px 10px; font-size: 13px; }
+.checks-col { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 14px; }
+tr.muted td { color: var(--muted); }
+td.nw { white-space: nowrap; }
+[hidden] { display: none !important; }

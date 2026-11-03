@@ -11,3 +11,5 @@ openpyxl==3.1.5
 rapidocr==3.10.0
 onnxruntime==1.31.1
 numpy==2.5.4
+anthropic==2.4.0
+cryptography==50.0.2

@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}系統設定 - CFXD{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>
+<h2>系統設定</h2>
+<p class="hint">只有系統管理員看得到這一頁。設定存在資料庫，背景服務每次產生 AI 建議前都會重新讀取，不需要重啟。所有變更都記錄在「帳號管理」的稽核紀錄。</p>
+
+<section class="card">
+  <div class="row-between">
+    <h3>AI 建議與提醒</h3>
+    <div>
+      {% if s.ai_enabled and usable %}<span class="sev sev-ok">運作中：{{ usable }} 個服務可用</span>
+      {% elif s.ai_enabled %}<span class="sev sev-warn">總開關已開，但沒有可用的服務</span>
+      {% else %}<span class="sev sev-info">未啟用</span>{% endif %}
+    </div>
+  </div>
+  <form method="post" action="{{ url_for('settings.general') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="checks-col">
+      <label class="inline"><input type="checkbox" name="ai_enabled" value="1" {{ 'checked' if s.ai_enabled }}> 啟用 AI 建議（總開關）</label>
+      <label class="inline"><input type="checkbox" name="ai_auto_on_submit" value="1" {{ 'checked' if s.ai_auto_on_submit }}> 送審時自動產生（關閉時只能在日報頁手動產生）</label>
+      <label class="inline"><input type="checkbox" name="ai_allow_external" value="1" {{ 'checked' if s.ai_allow_external }} data-external-toggle>
+        允許使用公司外部的 AI 服務（雲端按量 / 包月）</label>
+      <div class="flash {{ '' if s.ai_allow_external else 'error' }}" data-external-warning {{ 'hidden' if s.ai_allow_external }}>
+        外部服務會收到日報的檢查結果.md（設備名稱、告警內容、人員姓名）。請確認合約與資安規範允許後再開啟。
+        <label class="inline"><input type="checkbox" name="external_ack" value="1"> 我確認可以把檢查結果送到公司外部</label>
+      </div>
+    </div>
+    <div class="form-grid">
+      <label>參考的過去檢查結果份數（RAG，0 = 不參考）<input name="ai_context_reports" type="number" min="0" max="10" value="{{ s.ai_context_reports }}"></label>
+      <label>本次檢查結果送給 AI 的最大字數<input name="ai_max_chars" type="number" min="2000" value="{{ s.ai_max_chars }}"></label>
+      <label>單次呼叫逾時（秒）<input name="ai_timeout" type="number" min="10" max="900" value="{{ s.ai_timeout }}"></label>
+      <label>輸出 token 上限（含推理模型的思考）<input name="ai_max_output_tokens" type="number" min="256" max="128000" value="{{ s.ai_max_output_tokens }}"></label>
+      <label>temperature（服務設定為「傳送」時才會送出）<input name="ai_temperature" type="number" step="0.1" min="0" max="2" value="{{ s.ai_temperature }}"></label>
+      <label class="wide">檢查結果.md 匯出位置（絕對路徑，可為 NAS；空白 = 只存資料庫）<input name="check_md_dir" value="{{ s.check_md_dir or '' }}"></label>
+    </div>
+    <button type="submit">儲存</button>
+  </form>
+</section>
+
+<section class="card" id="providers">
+  <div class="row-between">
+    <h3>AI 服務</h3>
+    <form method="get" action="{{ url_for('settings.provider') }}" class="inline">
+      <select name="preset">
+        {% for g, glabel in groups.items() %}
+        <optgroup label="{{ glabel }}">
+          {% for k, d in presets.items() if d.group == g %}<option value="{{ k }}">{{ d.label }}</option>{% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+      <button type="submit">新增服務</button>
+    </form>
+  </div>
+  <p class="hint">依優先順序由上往下嘗試：前一個失敗、停用、本期預算或額度用完時，自動改用下一個。可以同時設定地端主機與雲端服務互為備援。
+    ChatGPT Plus、Claude Pro 這類個人訂閱不提供 API，不能接入；「包月」指預留容量（Azure PTU、Bedrock Provisioned Throughput）、企業合約或公司 AI 閘道。</p>
+  {% if rows %}
+  <table class="list">
+    <tr><th>順序</th><th>名稱</th><th>類型</th><th>計費</th><th>模型</th><th>本期用量</th><th>狀態</th><th>上次測試</th><th></th></tr>
+    {% for p, u, blocked in rows %}
+    <tr class="{{ 'muted' if blocked }}">
+      <td class="nw">
+        <form method="post" action="{{ url_for('settings.move_provider', pid=p.id) }}" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button name="dir" value="up" class="secondary small" {{ 'disabled' if loop.first }} title="上移">↑</button>
+          <button name="dir" value="down" class="secondary small" {{ 'disabled' if loop.last }} title="下移">↓</button>
+        </form> {{ loop.index }}</td>
+      <td><a href="{{ url_for('settings.provider', pid=p.id) }}">{{ p.name }}</a>
+        {% if p.external %}<span class="sev sev-warn">外部</span>{% else %}<span class="sev sev-ok">內部</span>{% endif %}</td>
+      <td>{{ presets[p.preset].label if p.preset in presets else kinds[p.kind] }}</td>
+      <td>{{ billing[p.billing] }}<br><span class="hint">
+        {% if p.billing == 'token' %}in {{ p.price_in|round(4) }} / out {{ p.price_out|round(4) }} {{ p.currency }} 每百萬
+        {% else %}月費 {{ '{:,.0f}'.format(p.monthly_fee or 0) }} {{ p.currency }}{% endif %}</span></td>
+      <td>{{ p.model or p.deployment }}</td>
+      <td class="nw">{{ u.ok }}/{{ u.calls }} 次 · {{ '{:,}'.format(u.tokens) }} token
+        {% if p.billing == 'token' %}<br>{{ '%.2f'|format(u.cost) }}{% if p.monthly_budget %} / {{ p.monthly_budget|round(2) }}{% endif %} {{ p.currency }}
+        {% elif p.billing == 'monthly' and p.monthly_token_quota %}<br>額度 {{ (100 * u.tokens / p.monthly_token_quota)|round(1) }}%{% endif %}
+        {% if p.billing != 'token' and p.monthly_fee and u.ok %}<br><span class="hint">每次約 {{ '%.2f'|format(p.monthly_fee / u.ok) }} {{ p.currency }}</span>{% endif %}</td>
+      <td>{% if blocked %}<span class="hint">{{ blocked }}</span>{% else %}<span class="sev sev-ok">可用</span>{% endif %}</td>
+      <td>{% if p.last_test_at %}<span class="{{ '' if p.last_test_ok else 'fail' }}">{{ '成功' if p.last_test_ok else '失敗' }}</span>
+        <span class="hint">{{ p.last_test_at.strftime('%m/%d %H:%M') }}</span><br><span class="hint">{{ (p.last_test_msg or '')[:80] }}</span>{% endif %}</td>
+      <td class="nw">
+        <form method="post" action="{{ url_for('settings.test_provider', pid=p.id) }}" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="secondary small">測試連線</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="hint">尚未設定任何 AI 服務。從右上角選擇範本新增。</p>{% endif %}
+</section>
+
+<section class="card" id="prompt">
+  <h3>提示詞（AI 的審核規則）</h3>
+  <p class="hint">送給 AI 的系統提示詞。AI 收到的內容只有：這段提示詞、本次檢查結果.md、參考用的過去檢查結果.md。</p>
+  <form method="post" action="{{ url_for('settings.prompt') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <textarea name="ai_system_prompt" rows="14">{{ s.ai_system_prompt }}</textarea>
+    <div class="actions">
+      <button type="submit">儲存提示詞</button>
+      <button type="submit" name="reset" value="1" class="secondary" onclick="return confirm('還原成預設提示詞？')">還原預設</button>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h3>最近的 AI 呼叫（30 筆）</h3>
+  <table class="list">
+    <tr><th>時間</th><th>服務</th><th>用途</th><th>模型</th><th>token（in + out）</th><th>費用</th><th>耗時</th><th>結果</th></tr>
+    {% for r in recent %}
+    <tr><td class="nw">{{ r.created_at.strftime('%m/%d %H:%M:%S') }}</td><td>{{ r.provider_name }}</td>
+      <td>{{ '連線測試' if r.purpose == 'test' else 'AI 建議' }}</td><td>{{ r.model }}</td>
+      <td>{{ '{:,}'.format(r.input_tokens or 0) }} + {{ '{:,}'.format(r.output_tokens or 0) }}</td>
+      <td>{% if r.cost %}{{ '%.4f'|format(r.cost) }} {{ r.currency }}{% else %}—{% endif %}</td><td>{{ '%.1f'|format((r.latency_ms or 0) / 1000) }} 秒</td>
+      <td>{% if r.ok %}成功{% else %}<span class="fail">失敗</span> <span class="hint">{{ (r.error or '')[:120] }}</span>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="8" class="hint">尚無紀錄。</td></tr>{% endfor %}
+  </table>
+</section>
+<script>
+  document.querySelectorAll('[data-external-toggle]').forEach(function (cb) {
+    var warn = document.querySelector('[data-external-warning]');
+    cb.addEventListener('change', function () { warn.hidden = false; warn.classList.toggle('error', !cb.checked); });
+  });
+</script>
+{% endblock %}
