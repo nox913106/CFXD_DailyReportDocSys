@@ -187,37 +187,48 @@ pytest -q
 
 `tests/test_flow.py` 涵蓋登入、建立日報、各分頁編輯、檢查表、截圖上傳、送審、退回、核准，以及隔天日報沿用前日資料。測試使用暫存資料庫，不會動到 `instance/`。
 
-## 部署到 Ubuntu 24.04
+## 部署（一行指令）
+
+介紹首頁：<https://nox913106.github.io/CFXD_DailyReportDocSys/>（`docs/index.html`，GitHub Pages）
+
+支援 Ubuntu 24.04 / 26.04、Debian 13（x86_64 / aarch64，Python 3.12 以上；已實測 Ubuntu 24.04，其餘未實測）；建議 2 核心、4 GB 記憶體、20 GB 磁碟。
+主機需要能連到 GitHub、PyPI 與 OCR 模型下載站（公司有 Proxy 時先設定 `https_proxy`；私有 PyPI 鏡像用 `PIP_INDEX_URL`）。
 
 ```bash
-sudo apt update && sudo apt install -y python3-venv nginx git \
-    fonts-crosextra-carlito fonts-liberation fonts-dejavu-core
-sudo useradd --system --home /opt/dailyreport --shell /usr/sbin/nologin dailyreport
-sudo git clone https://github.com/nox913106/CFXD_DailyReportDocSys.git /opt/dailyreport
-cd /opt/dailyreport
-sudo python3 -m venv .venv
-sudo .venv/bin/pip install -r requirements.txt
-sudo cp .env.example .env && sudo nano .env      # 填入 SECRET_KEY 與 AD 設定
-sudo mkdir -p instance/templates                  # 放入 CheckList 範本（見「PDF 輸出」）
-sudo cp "/path/to/CFXD SLA - SCADA Daily Inspection CheckList.xlsx" instance/templates/checklist.xlsx
-sudo chown -R dailyreport:www-data /opt/dailyreport
-sudo chmod 640 .env
-sudo -u dailyreport .venv/bin/flask --app wsgi create-admin --username sysadmin   # 本機系統管理員
+# 安裝：所有步驟自動完成（可重跑，不會覆蓋 .env、資料庫、憑證與緊急帳號密碼）
+curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash
 
-sudo .venv/bin/python -c "from rapidocr import RapidOCR; RapidOCR()"   # 預先下載 OCR 模型（需要網路）
+# 也可以一次帶入 AD、主機名稱與範本（都可以之後再補）
+curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash -s -- install \
+  --hostname report.corp.local \
+  --ldap-url ldaps://dc01.corp.local:636 --ad-domain corp.local --base-dn DC=corp,DC=local \
+  --template "/tmp/CFXD SLA - SCADA Daily Inspection CheckList.xlsx"
 
-sudo cp deploy/dailyreport.service deploy/dailyreport-ocr.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now dailyreport dailyreport-ocr
-# AI 建議背景服務（服務本身在「系統設定」頁設定；沒有啟用時只會待命）
-sudo cp deploy/dailyreport-ai.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now dailyreport-ai
+# 檢查部署結果（失敗項目會印出修正指令；有失敗時結束代碼為 1）
+curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash -s -- doctor
 
-sudo cp deploy/nginx-dailyreport.conf /etc/nginx/sites-available/dailyreport
-sudo ln -s /etc/nginx/sites-available/dailyreport /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
+# 升級（先備份，再更新程式、相依套件、重啟並健檢）
+curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash -s -- upgrade
 ```
 
-產生 SECRET_KEY：`python3 -c "import secrets; print(secrets.token_hex(32))"`
+安裝腳本（`scripts/dailyreport.sh install`）會：檢查作業系統、記憶體與磁碟 → 安裝 Python、nginx、SQLite、字型與相依套件 →
+建立系統帳號 `dailyreport` 與虛擬環境 → 產生 `.env`（隨機 `SECRET_KEY`）→ 建立本機緊急帳號 `sysadmin`（密碼只在結束時印一次，
+也存在 `/etc/dailyreport/.admin-initial-password`，僅 root 可讀）→ 下載 OCR 模型 → 自簽 HTTPS 憑證（`--tls custom --cert … --key …`
+可換公司 CA 憑證）→ nginx（HTTP 轉 HTTPS、安全標頭）→ 網頁、OCR、AI 三個服務與每日 02:30 備份排程 → 等服務啟動後執行健檢。
+
+| 指令（`sudo bash /opt/dailyreport/scripts/dailyreport.sh …`） | 做什麼 |
+|---|---|
+| `doctor` | 檢查系統、版本、權限、設定、資料庫、PDF 範本與字型、OCR / AI 佇列、服務、HTTPS、備份 |
+| `upgrade` | 備份 → 更新程式 → 相依套件 → 重啟 → 健檢 |
+| `backup` | 線上備份資料庫、截圖、`.env`（`/var/backups/dailyreport`，保留 14 份，`DR_BACKUP_KEEP` 可調） |
+| `restore <資料夾>` | 驗證檢查碼後還原；還原前先備份目前的資料 |
+| `template <xlsx>` | 放入或更新 CheckList 範本 |
+| `restart` / `status` | 重新啟動 / 查看狀態 |
+
+安裝後：設定 AD（若安裝時沒帶，編輯 `/opt/dailyreport/.env` 後 `restart`）→ 放入 CheckList 範本 → 用 AD 帳號登入一次 →
+用緊急帳號在「帳號管理」把檔案管理員指派為系統管理員 →（選用）在「系統設定」設定 AI 服務。
+
+`/healthz` 不需登入，只回報資料庫是否可用（`{"status": "ok"}`），可給監控使用。
 
 ## AD 驗證設定 (.env)
 

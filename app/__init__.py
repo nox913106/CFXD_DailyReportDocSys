@@ -54,9 +54,17 @@ def create_app():
         # 檢查結果.md 匯出位置的預設值；實際位置在「系統設定」頁設定
         CHECK_MD_DIR=os.environ.get("CHECK_MD_DIR", os.path.join(app.instance_path, "check_reports")),
         SESSION_COOKIE_HTTPONLY=True,
+        # 部署在 HTTPS（nginx）後方時，cookie 只經 HTTPS 傳送
+        SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE") == "1",
+        REMEMBER_COOKIE_SECURE=os.environ.get("COOKIE_SECURE") == "1",
         SESSION_COOKIE_SAMESITE="Lax",
     )
     os.makedirs(app.config["UPLOAD_DIR"], exist_ok=True)
+    if os.environ.get("BEHIND_PROXY") == "1":
+        # nginx 反向代理：信任一層 X-Forwarded-For / X-Forwarded-Proto（取得真實 IP 與 https）
+        from werkzeug.middleware.proxy_fix import ProxyFix
+
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
     # dev 模式會讓任何帳號登入，正式環境必須用 ldap
     if app.config["AUTH_MODE"] == "dev" and not app.debug and os.environ.get("FLASK_DEBUG") != "1":
@@ -94,6 +102,17 @@ def create_app():
         _add_missing_columns()
         _migrate_roles()
         seed_master_data()
+
+    @app.get("/healthz")
+    def healthz():
+        """部署檢查用：不需登入，只回報資料庫是否可用，不含任何資料。"""
+        from sqlalchemy import text
+
+        try:
+            db.session.execute(text("SELECT 1"))
+            return {"status": "ok"}
+        except Exception:
+            return {"status": "error"}, 503
 
     from .cli import register_cli
 

@@ -102,6 +102,15 @@ def register_cli(app):
                 n += 1
         click.echo(f"已匯入 {n} 份，略過 {skipped} 份已存在的檔案 → {dest_root}")
 
+    @app.cli.command("doctor-json")
+    def doctor_json():
+        """部署健檢（應用程式內部項目），輸出 JSON 給 scripts/dailyreport.sh doctor。"""
+        import json
+
+        from .doctor import run
+
+        click.echo(json.dumps(run(), ensure_ascii=False))
+
     @app.cli.command("grant-admin")
     @click.option("--username", required=True, help="要指派為系統管理員的帳號（檔案管理員或二線管理員）")
     def grant_admin(username):
@@ -121,12 +130,16 @@ def register_cli(app):
 
     @app.cli.command("create-admin")
     @click.option("--username", default="sysadmin", show_default=True, help="本機系統管理員帳號")
-    @click.password_option(help="密碼（至少 12 個字元）")
-    def create_admin(username, password):
+    @click.password_option(help="密碼（至少 12 個字元）；也可用環境變數 DR_ADMIN_PASSWORD 傳入", envvar="DR_ADMIN_PASSWORD")
+    @click.option("--if-missing", is_flag=True, help="已經有本機緊急帳號時不做任何事（安裝腳本用）")
+    def create_admin(username, password, if_missing):
         """建立或重設本機系統管理員帳號。"""
         from . import db
         from .models import AuditLog, User
 
+        if if_missing and User.query.filter_by(role="admin").filter(User.password_hash.isnot(None)).first():
+            click.echo("已有本機緊急帳號，略過。")
+            return
         if len(password) < 12:
             raise click.ClickException("密碼至少需要 12 個字元。")
         username = username.strip().lower()

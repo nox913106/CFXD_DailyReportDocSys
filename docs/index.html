@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CFXD 日報系統</title>
+<meta name="description" content="CFXD SLA 每日維運日報系統：線上填寫、自動檢查、截圖日期辨識、AI 建議，輸出與原範本相同排版的 PDF。一行指令完成部署。">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<style>
+  :root{
+    --brand:#0f8b80; --brand-h:#14a396; --brand-d:#0b6b62; --cyan:#22d3ee;
+    --ink:#0f172a; --body:#334155; --muted:#64748b;
+    --bg:#eef4f3; --card:#ffffff; --line:#dde7e5; --code:#0f172a; --code-ink:#e2e8f0;
+    --err:#b42318; --warn:#b54708; --ok:#067647; --radius:14px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ink:#f1f5f9; --body:#cbd5e1; --muted:#94a3b8; --bg:#0b1220; --card:#111a2b; --line:#22314a;
+      --brand-d:#5eead4; --code:#020617;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#f1f5f9; --body:#cbd5e1; --muted:#94a3b8; --bg:#0b1220; --card:#111a2b; --line:#22314a;
+    --brand-d:#5eead4; --code:#020617;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC","Microsoft JhengHei",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--body);background:var(--bg);line-height:1.7;-webkit-font-smoothing:antialiased}
+  a{color:var(--brand-d);text-decoration:none} a:hover{text-decoration:underline}
+  h1,h2,h3{color:var(--ink);line-height:1.3;margin:0 0 .5em}
+  .zh,.en{display:none} body.lang-zh .zh{display:initial} body.lang-en .en{display:initial}
+  body.lang-zh div.zh,body.lang-zh p.zh,body.lang-zh li.zh,body.lang-zh ul.zh,body.lang-zh table.zh{display:block}
+  body.lang-en div.en,body.lang-en p.en,body.lang-en li.en,body.lang-en ul.en,body.lang-en table.en{display:block}
+  body.lang-zh table.zh,body.lang-en table.en{display:table}
+  body.lang-zh li.zh,body.lang-en li.en{display:list-item}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 16px}
+  nav{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--card) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .nav-in{display:flex;align-items:center;gap:16px;height:58px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;color:var(--ink);font-size:17px;white-space:nowrap}
+  .brand .dot{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--brand),var(--cyan));box-shadow:0 2px 8px rgba(15,139,128,.4)}
+  .nav-links{display:flex;gap:16px;margin-left:auto;align-items:center}
+  .nav-links a{color:var(--body);font-size:14px;font-weight:500}
+  .langbtn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:4px 10px;font:inherit;font-size:13px;cursor:pointer}
+  @media (max-width:820px){.nav-links a.opt{display:none}}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:10px 18px;border-radius:10px;font-weight:600;font-size:15px;border:1px solid transparent}
+  .btn-primary{background:var(--brand);color:#fff;box-shadow:0 4px 14px rgba(15,139,128,.3)} .btn-primary:hover{background:var(--brand-h);text-decoration:none}
+  .btn-ghost{background:var(--card);border-color:var(--line);color:var(--ink)} .btn-ghost:hover{border-color:var(--brand);text-decoration:none}
+  header.hero{padding:64px 0 40px;background:radial-gradient(1200px 400px at 70% -10%,rgba(34,211,238,.18),transparent),radial-gradient(900px 400px at 10% 0,rgba(15,139,128,.16),transparent)}
+  .hero h1{font-size:clamp(30px,5vw,48px);letter-spacing:.5px}
+  .hero p.lead{font-size:clamp(16px,2.2vw,19px);max-width:760px;margin:0 0 22px}
+  .badges{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 22px;padding:0;list-style:none}
+  .badges li{font-size:13px;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:3px 12px;color:var(--ink)}
+  .cta{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+  .cmd{position:relative;background:var(--code);color:var(--code-ink);border-radius:12px;padding:14px 16px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13.5px;overflow-x:auto;white-space:pre;max-width:100%}
+  .cmdbox{position:relative} .cmdbox .cmd{padding-right:78px}
+  .cmd .c{color:#7dd3c7} .cmdbox button{position:absolute;top:8px;right:8px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:7px;font-size:12px;padding:3px 9px;cursor:pointer}
+  section{padding:56px 0;border-top:1px solid var(--line)}
+  section h2{font-size:clamp(24px,3.4vw,32px)}
+  .sub{color:var(--muted);margin:0 0 28px;max-width:760px}
+  .grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px}
+  .card h3{font-size:17px;display:flex;gap:8px;align-items:center}
+  .card p{margin:0;font-size:14.5px}
+  .ico{width:34px;height:34px;border-radius:9px;display:inline-grid;place-items:center;background:rgba(15,139,128,.12);color:var(--brand-d);font-size:18px;flex:none}
+  .pain{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+  .pain .card b{color:var(--ink)}
+  .flow{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));counter-reset:s}
+  .flow .card{position:relative;padding-top:38px}
+  .flow .card::before{counter-increment:s;content:counter(s);position:absolute;top:12px;left:16px;width:22px;height:22px;border-radius:50%;background:var(--brand);color:#fff;font-size:12px;font-weight:700;display:grid;place-items:center}
+  table.t{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;font-size:14.5px}
+  .t th,.t td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  .t th{background:color-mix(in srgb,var(--brand) 9%,var(--card));color:var(--ink);white-space:nowrap}
+  .t td:first-child{white-space:nowrap;font-weight:600;color:var(--ink)}
+  .tablewrap{overflow-x:auto}
+  .sev{display:inline-block;border-radius:6px;padding:0 8px;font-size:12.5px;font-weight:700}
+  .sev.e{background:#fde8e7;color:var(--err)} .sev.w{background:#fff3e0;color:var(--warn)} .sev.i{background:#e7efff;color:#1d4ed8}
+  .shots{display:grid;gap:22px}
+  figure{margin:0;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  figure img{display:block;width:100%;height:auto;border-bottom:1px solid var(--line);background:#f5f7f8}
+  figcaption{padding:12px 16px;font-size:14px}
+  figcaption b{color:var(--ink)}
+  .two{display:grid;gap:22px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+  .note{font-size:13px;color:var(--muted)}
+  ul.check{padding-left:0;list-style:none} ul.check li{padding-left:24px;position:relative;margin:6px 0}
+  ul.check li::before{content:"✓";position:absolute;left:0;color:var(--brand);font-weight:800}
+  .doctor{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;background:var(--code);color:var(--code-ink);border-radius:12px;padding:14px 16px;overflow-x:auto;white-space:pre;line-height:1.55}
+  .doctor .ok{color:#4ade80} .doctor .wa{color:#fbbf24} .doctor .fa{color:#f87171} .doctor .dim{color:#94a3b8}
+  footer{padding:34px 0 50px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
+</style>
+</head>
+<body class="lang-zh">
+<nav>
+  <div class="wrap nav-in">
+    <a class="brand" href="#top"><span class="dot"></span>CFXD 日報系統</a>
+    <div class="nav-links">
+      <a class="opt" href="#features"><span class="zh">特色</span><span class="en">Features</span></a>
+      <a class="opt" href="#checks"><span class="zh">檢查</span><span class="en">Checks</span></a>
+      <a class="opt" href="#ai"><span class="zh">AI</span><span class="en">AI</span></a>
+      <a class="opt" href="#screens"><span class="zh">畫面</span><span class="en">Screens</span></a>
+      <a href="#deploy"><span class="zh">部署</span><span class="en">Deploy</span></a>
+      <a class="opt" href="https://github.com/nox913106/CFXD_DailyReportDocSys">GitHub</a>
+      <button class="langbtn" type="button" data-lang-toggle aria-label="切換語言 / Switch language">EN</button>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <h1><span class="zh">日報交給系統核對，<br>人只負責判斷</span><span class="en">Let the system check the daily report.<br>People only make the call.</span></h1>
+    <p class="lead zh">CFXD SLA 每日維運日報系統：線上填寫檢查表與告警，送審時自動比對前一份已核准日報、辨識截圖上的系統日期、計算告警持續天數，並由 AI 依檢查結果提出建議。核准後輸出與原 Word / Excel 範本完全相同排版的 PDF。</p>
+    <p class="lead en">The CFXD SLA daily operations report, online: fill in the checklist and alarms, and on submission the system compares with the last approved report, reads the system date on every screenshot, tracks how long each alarm has lasted, and lets AI suggest what to fix. Approved reports export to a PDF laid out exactly like the original Word / Excel templates.</p>
+    <ul class="badges">
+      <li><span class="zh">自架、資料不離開公司</span><span class="en">Self-hosted, data stays in-house</span></li>
+      <li><span class="zh">AD 帳號登入</span><span class="en">Active Directory login</span></li>
+      <li>Ubuntu 24.04 / Debian 13</li>
+      <li><span class="zh">一行指令部署</span><span class="en">One-line install</span></li>
+    </ul>
+    <div class="cmdbox" data-copy><div class="cmd"><span class="c"># <span class="zh">全新主機，一行完成安裝（所有步驟自動進行）</span><span class="en">Fresh server, one line installs everything</span></span>
+curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash</div><button type="button">Copy</button></div>
+    <div class="cta">
+      <a class="btn btn-primary" href="#deploy"><span class="zh">部署說明</span><span class="en">Deployment guide</span></a>
+      <a class="btn btn-ghost" href="#screens"><span class="zh">看畫面</span><span class="en">See the screens</span></a>
+      <a class="btn btn-ghost" href="https://github.com/nox913106/CFXD_DailyReportDocSys">GitHub</a>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2><span class="zh">為什麼需要它</span><span class="en">Why it exists</span></h2>
+    <p class="sub zh">一份日報 85 頁：封面、四大類檢查表、告警摘要、統計圓餅圖、85 張截圖，每一處都要前後一致，還要和昨天對得上。</p>
+    <p class="sub en">One report is 85 pages: a cover, four checklist sections, an alarm summary, pie charts and 85 screenshots, all of which must agree with each other and with yesterday.</p>
+    <div class="pain">
+      <div class="card"><p class="zh"><b>人工核對耗時又容易漏。</b>Word 與 Excel 分開編輯、合併成 PDF 後再逐頁核對，告警數量、勾選結果、統計數字只要一處沒改就不一致。</p>
+        <p class="en"><b>Manual checking is slow and misses things.</b> Word and Excel are edited separately, merged into a PDF and checked page by page; one missed edit breaks the alarm counts, ticks or statistics.</p></div>
+      <div class="card"><p class="zh"><b>錯誤直接送到客戶手上。</b>日報是 SLA 交付文件。已正式發出的日報中，曾有統計加總不符、漏列告警、告警原因和檢查表寫法不一致。</p>
+        <p class="en"><b>Errors reach the customer.</b> The report is an SLA deliverable. Issued reports have contained totals that did not add up, missing alarms and alarm reasons that contradicted the checklist.</p></div>
+      <div class="card"><p class="zh"><b>截圖無法證明是當天拍的。</b>截圖是狀態的唯一證據，但沒有人逐張確認右下角的日期。</p>
+        <p class="en"><b>Screenshots don't prove the date.</b> Screenshots are the only evidence of status, yet nobody checks the clock in the corner of each one.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <h2><span class="zh">核心功能</span><span class="en">Core features</span></h2>
+    <p class="sub zh">資料存在資料庫，檢查直接比對資料，不需要再解析 PDF。</p>
+    <p class="sub en">Everything lives in a database, so checks compare data directly instead of parsing PDFs.</p>
+    <div class="grid">
+      <div class="card"><h3><span class="ico">📄</span><span class="zh">與原範本相同排版的 PDF</span><span class="en">PDF identical to the templates</span></h3>
+        <p class="zh">封面、檢查表（含圓餅圖與公式）、截圖附錄依原 Word / Excel 範本的位置與分頁產生，文字與線條誤差在 0.3 pt 以內。</p>
+        <p class="en">Cover, checklists (with pie charts and formulas) and screenshot appendix follow the original Word / Excel layout and page breaks, within 0.3 pt.</p></div>
+      <div class="card"><h3><span class="ico">✅</span><span class="zh">送審即檢查</span><span class="en">Checked on submission</span></h3>
+        <p class="zh">告警摘要 ↔ 檢查表、告警數量、勾選與備註、記錄欄位、跨日差異，分成錯誤、警告、提醒，直接顯示在審核畫面。</p>
+        <p class="en">Alarm summary vs checklist, alarm counts, ticks and notes, record fields and day-to-day changes, graded as error / warning / reminder on the review screen.</p></div>
+      <div class="card"><h3><span class="ico">🕒</span><span class="zh">截圖日期辨識</span><span class="en">Screenshot date OCR</span></h3>
+        <p class="zh">背景辨識每張截圖工作列與右上角的系統時鐘，日期不是當天就列為錯誤；只有時間或沒有時鐘的畫面另外標出。</p>
+        <p class="en">A background worker reads the system clock on each screenshot; a wrong date is an error, and screens with no date or no clock are flagged separately.</p></div>
+      <div class="card"><h3><span class="ico">📈</span><span class="zh">告警持續天數</span><span class="en">Alarm duration</span></h3>
+        <p class="zh">每筆告警已連續出現幾天、上一次發生在哪一天（回溯 365 天）。持續 30 天以上或解除後又再發生會提醒。</p>
+        <p class="en">How many days each alarm has lasted and when it last occurred (365-day look-back), with reminders for long-running or recurring alarms.</p></div>
+      <div class="card"><h3><span class="ico">✨</span><span class="zh">AI 建議與提醒</span><span class="en">AI suggestions</span></h3>
+        <p class="zh">依檢查結果給審核者建議（退回或核准、要修哪裡），可接地端主機、按量或包月的雲端服務，互為備援。</p>
+        <p class="en">Suggestions for the reviewer based on the check results, from an on-prem model or pay-per-token / monthly cloud services with fallback.</p></div>
+      <div class="card"><h3><span class="ico">🗂️</span><span class="zh">檢查結果.md 知識庫</span><span class="en">Check results as Markdown</span></h3>
+        <p class="zh">送審、核准、退回時各存一份 Markdown，格式與 DDoc_compare 比對報告相同，可直接作為 RAG 知識庫。</p>
+        <p class="en">A Markdown snapshot on submit, approve and reject, in the same layout as DDoc_compare reports, ready for a RAG knowledge base.</p></div>
+      <div class="card"><h3><span class="ico">🔐</span><span class="zh">角色、代簽、作廢</span><span class="en">Roles, delegation, voiding</span></h3>
+        <p class="zh">四種角色與職責分離；檔案管理員可授權二線管理員代簽，文件仍顯示核准人；作廢保留流水號。</p>
+        <p class="en">Four roles with separation of duties; file managers can delegate approval while the document still shows the approver; voiding keeps the serial number.</p></div>
+      <div class="card"><h3><span class="ico">🛠️</span><span class="zh">一行部署與健檢</span><span class="en">One-line install and doctor</span></h3>
+        <p class="zh">一行 curl 完成套件、HTTPS、服務、備份排程；健檢逐項列出問題與修正指令。</p>
+        <p class="en">One curl line installs packages, HTTPS, services and backups; the doctor lists every problem with the command that fixes it.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="zh">一份日報的流程</span><span class="en">How a report flows</span></h2>
+    <div class="flow">
+      <div class="card"><b class="zh">填寫</b><b class="en">Fill in</b><p class="zh">基本資料、記錄、告警、檢查表、截圖</p><p class="en">Details, records, alarms, checklist, screenshots</p></div>
+      <div class="card"><b class="zh">送審</b><b class="en">Submit</b><p class="zh">內容鎖定，產生檢查結果.md</p><p class="en">Content locks; check results saved</p></div>
+      <div class="card"><b class="zh">自動檢查</b><b class="en">Checks</b><p class="zh">與前一份已核准日報比對、截圖 OCR</p><p class="en">Compared with last approved report, OCR</p></div>
+      <div class="card"><b class="zh">AI 建議</b><b class="en">AI advice</b><p class="zh">依檢查結果與過去退回紀錄</p><p class="en">From check results and past rejections</p></div>
+      <div class="card"><b class="zh">核准 / 退回</b><b class="en">Approve / reject</b><p class="zh">由核准人或代簽人決定</p><p class="en">By the approver or a delegate</p></div>
+      <div class="card"><b class="zh">PDF</b><b class="en">PDF</b><p class="zh">與原範本相同排版，直接交付</p><p class="en">Template-identical, ready to deliver</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="checks">
+  <div class="wrap">
+    <h2><span class="zh">檢查項目</span><span class="en">What gets checked</span></h2>
+    <p class="sub zh">編號沿用 DDoc_compare 比對報告；<span class="sev e">錯誤</span> 建議退回、<span class="sev w">警告</span> 請確認、<span class="sev i">提醒</span> 參考。</p>
+    <p class="sub en">Numbering follows DDoc_compare reports. <span class="sev e">Error</span> reject, <span class="sev w">Warning</span> confirm, <span class="sev i">Reminder</span> for information.</p>
+    <div class="tablewrap">
+    <table class="t zh">
+      <tr><th>步驟</th><th>檢查</th><th>例子</th></tr>
+      <tr><td>一-1</td><td>告警摘要 ↔ 檢查表</td><td>勾了 Warning / Failed，Alarm Summary 卻沒列；Reason 與 Note 寫法不同</td></tr>
+      <tr><td>一-2</td><td>告警數量與告警表</td><td>New + Known + False ≠ 告警項數；有新增告警但 True Alarm Record 是 N/A</td></tr>
+      <tr><td>一-4</td><td>檢查表勾選與備註</td><td>未勾選；勾 Warning / Failed 但 Note 空白</td></tr>
+      <tr><td>一-5</td><td>敘述 ↔ 記錄欄位</td><td>寫「今日沒有 issue」但記錄有資料，或反過來</td></tr>
+      <tr><td>一-7</td><td>截圖</td><td>章節沒有截圖；截圖日期不是當天；畫面沒有日期</td></tr>
+      <tr><td>二-1</td><td>跨日一致性</td><td>New Alarm 數 ≠ 與前一份比對實際新增；Known Alarm ≠ 延續數</td></tr>
+      <tr><td>二-2～4</td><td>告警、統計、勾選變化</td><td>新增、解除、內容變更的告警；各分類 Normal / Warning / Failed 增減</td></tr>
+      <tr><td>二-6</td><td>告警歷程</td><td>已連續出現幾天、上次發生日期；持續 30 天以上、解除後又再發生</td></tr>
+    </table>
+    <table class="t en">
+      <tr><th>Step</th><th>Check</th><th>Example</th></tr>
+      <tr><td>1-1</td><td>Alarm summary ↔ checklist</td><td>Warning / Failed ticked but not in the alarm summary; Reason and Note disagree</td></tr>
+      <tr><td>1-2</td><td>Alarm counts</td><td>New + Known + False ≠ number of alarms; new alarm but True Alarm Record is N/A</td></tr>
+      <tr><td>1-4</td><td>Ticks and notes</td><td>Unticked items; Warning / Failed with an empty note</td></tr>
+      <tr><td>1-5</td><td>Narrative ↔ records</td><td>"No issue today" while records exist, or the reverse</td></tr>
+      <tr><td>1-7</td><td>Screenshots</td><td>Missing sections; wrong date on the screenshot; no date on screen</td></tr>
+      <tr><td>2-1</td><td>Day-to-day consistency</td><td>New Alarm count ≠ alarms actually new since the last approved report</td></tr>
+      <tr><td>2-2…4</td><td>Changes</td><td>New, cleared and changed alarms; Normal / Warning / Failed per category</td></tr>
+      <tr><td>2-6</td><td>Alarm history</td><td>Days running and last occurrence; 30+ days or recurring</td></tr>
+    </table>
+    </div>
+  </div>
+</section>
+
+<section id="ai">
+  <div class="wrap">
+    <h2><span class="zh">AI：預設不外流，接哪一家由你決定</span><span class="en">AI: in-house by default, any provider you choose</span></h2>
+    <p class="sub zh">AI 只看檢查結果.md 和過去被退回的檢查結果，必須標出依據的檢查步驟，不能編造。所有設定都在網頁上的「系統設定」，只有系統管理員看得到。</p>
+    <p class="sub en">The AI reads only the check results and past rejections, must cite the check step behind each point and may not invent anything. Everything is configured on the admin-only settings page.</p>
+    <div class="grid">
+      <div class="card"><h3><span class="ico">🏠</span><span class="zh">地端主機</span><span class="en">On-premises</span></h3>
+        <p class="zh">Ollama、LM Studio、vLLM、llama.cpp、LocalAI。資料不離開公司，可填每月攤提成本比較。</p>
+        <p class="en">Ollama, LM Studio, vLLM, llama.cpp, LocalAI. Data never leaves; enter amortised monthly cost to compare.</p></div>
+      <div class="card"><h3><span class="ico">🪙</span><span class="zh">按量計費</span><span class="en">Pay per token</span></h3>
+        <p class="zh">Claude、OpenAI、Gemini、Azure OpenAI、AWS Bedrock、Mistral、DeepSeek、OpenRouter 等。填單價、設每月預算上限。</p>
+        <p class="en">Claude, OpenAI, Gemini, Azure OpenAI, AWS Bedrock, Mistral, DeepSeek, OpenRouter and more, with prices and a monthly budget cap.</p></div>
+      <div class="card"><h3><span class="ico">📅</span><span class="zh">包月</span><span class="en">Monthly</span></h3>
+        <p class="zh">Azure PTU、Bedrock 預留容量、企業合約、公司 AI 閘道。填月費、設每月 token 額度。</p>
+        <p class="en">Azure PTU, Bedrock provisioned throughput, enterprise contracts, company AI gateways, with a monthly fee and token quota.</p></div>
+    </div>
+    <ul class="check zh">
+      <li>多個服務依順序嘗試；失敗、停用、預算或額度用完就自動換下一個。</li>
+      <li>使用外部服務前必須在設定頁明確允許，並勾選確認資料會送到公司外部。</li>
+      <li>API 金鑰加密保存，畫面只顯示末 4 碼；每次呼叫記錄 token、費用、耗時。</li>
+      <li>AI 建議僅供參考，不會自動核准或退回。</li>
+    </ul>
+    <ul class="check en">
+      <li>Providers are tried in order; on failure, when disabled, or when a budget or quota runs out, the next one takes over.</li>
+      <li>External services must be explicitly allowed, with a confirmation that data will leave the company.</li>
+      <li>API keys are encrypted and shown only by their last four characters; every call logs tokens, cost and latency.</li>
+      <li>AI advice is advisory only; it never approves or rejects on its own.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="roles">
+  <div class="wrap">
+    <h2><span class="zh">權限與稽核</span><span class="en">Roles and audit</span></h2>
+    <div class="tablewrap">
+    <table class="t zh">
+      <tr><th>角色</th><th>可以做的事</th></tr>
+      <tr><td>系統管理員</td><td>所有動作、帳號管理、系統設定。由檔案管理員或二線管理員兼任（AD 帳號可），一線使用者強制排除</td></tr>
+      <tr><td>本機緊急帳號</td><td>系統管理員權限、不經 AD；AD 無法驗證時使用</td></tr>
+      <tr><td>檔案管理員</td><td>指派、審核、退件、作廢、新增、編輯、刪除；授權二線管理員代理</td></tr>
+      <tr><td>二線管理員</td><td>新增、編輯、刪除、送審；經授權可代審核、代指派、代退件、代作廢</td></tr>
+      <tr><td>一線使用者</td><td>新增、編輯、送審、申請作廢</td></tr>
+    </table>
+    <table class="t en">
+      <tr><th>Role</th><th>Can do</th></tr>
+      <tr><td>System admin</td><td>Everything, plus accounts and settings. Granted to file managers or second-line managers (AD accounts too); never to first-line users</td></tr>
+      <tr><td>Break-glass account</td><td>Local admin account, no AD; for when AD is down</td></tr>
+      <tr><td>File manager</td><td>Assign, approve, reject, void, create, edit, delete; delegate to second-line managers</td></tr>
+      <tr><td>Second-line manager</td><td>Create, edit, delete, submit; with delegation approve, assign, reject and void</td></tr>
+      <tr><td>First-line user</td><td>Create, edit, submit, request voiding</td></tr>
+    </table>
+    </div>
+    <p class="note zh">職責分離：撰寫人與送審人都不能核准自己的日報。指派、代簽、作廢、刪除、設定變更全部寫入稽核紀錄。</p>
+    <p class="note en">Separation of duties: neither the author nor the submitter can approve their own report. Assignments, delegations, voids, deletions and settings changes are all audited.</p>
+  </div>
+</section>
+
+<section id="screens">
+  <div class="wrap">
+    <h2><span class="zh">實際畫面</span><span class="en">Screens</span></h2>
+    <p class="sub zh">畫面中的人名、文件與用量都是展示用資料。</p>
+    <p class="sub en">Names, documents and usage figures are demo data.</p>
+    <div class="shots">
+      <figure><img src="shots/ai.webp" alt="AI 建議與檢查結果" loading="lazy" width="1400" height="717">
+        <figcaption><b class="zh">AI 建議與檢查結果</b><b class="en">AI suggestions and check results</b>
+          <span class="zh">— 審核畫面最上方是 AI 的建議，下方是逐項檢查結果，點說明可直接跳到要修正的分頁。</span>
+          <span class="en">— AI advice at the top of the review screen, the itemised checks below; each item links to the tab to fix.</span></figcaption></figure>
+      <div class="two">
+        <figure><img src="shots/list.webp" alt="日報清單" loading="lazy" width="1400" height="885">
+          <figcaption><b class="zh">待審清單</b><b class="en">Review queue</b> <span class="zh">— 每份待審日報直接顯示錯誤與警告數。</span><span class="en">— error and warning counts per report.</span></figcaption></figure>
+        <figure><img src="shots/history.webp" alt="告警歷程" loading="lazy" width="1400" height="841">
+          <figcaption><b class="zh">告警歷程</b><b class="en">Alarm history</b> <span class="zh">— 持續天數、這次開始、上次發生。</span><span class="en">— days running, start date, last occurrence.</span></figcaption></figure>
+      </div>
+      <div class="two">
+        <figure><img src="shots/settings.webp" alt="系統設定" loading="lazy" width="1400" height="1023">
+          <figcaption><b class="zh">系統設定</b><b class="en">Settings</b> <span class="zh">— AI 服務的順序、計費、本期用量與連線測試。</span><span class="en">— provider order, billing, usage and connection tests.</span></figcaption></figure>
+        <figure><img src="shots/users.webp" alt="帳號管理" loading="lazy" width="1400" height="700">
+          <figcaption><b class="zh">帳號管理</b><b class="en">Accounts</b> <span class="zh">— 角色與系統管理員指派，一線使用者不可指派。</span><span class="en">— roles and admin grants; first-line users excluded.</span></figcaption></figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="deploy">
+  <div class="wrap">
+    <h2><span class="zh">部署</span><span class="en">Deployment</span></h2>
+    <p class="sub zh">支援 Ubuntu 24.04 / 26.04 LTS、Debian 13（x86_64 / aarch64；已實測 Ubuntu 24.04）。建議 2 核心、4 GB 記憶體、20 GB 磁碟，需要能連到 GitHub、PyPI 與 OCR 模型下載站。</p>
+    <p class="sub en">Ubuntu 24.04 / 26.04 LTS or Debian 13 (x86_64 / aarch64; tested on Ubuntu 24.04). Recommended 2 cores, 4 GB RAM, 20 GB disk, with access to GitHub, PyPI and the OCR model download site.</p>
+
+    <h3><span class="zh">1. 安裝</span><span class="en">1. Install</span></h3>
+    <div class="cmdbox" data-copy><div class="cmd"><span class="c"># <span class="zh">最小化系統先裝 curl</span><span class="en">minimal systems need curl first</span></span>
+sudo apt-get update &amp;&amp; sudo apt-get install -y curl
+curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash</div><button type="button">Copy</button></div>
+    <p class="zh">也可以一次帶入 AD 與範本（都可以之後再補）：</p><p class="en">Or pass AD settings and the template up front (both can be added later):</p>
+    <div class="cmdbox" data-copy><div class="cmd">curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash -s -- install \
+  --hostname report.corp.local \
+  --ldap-url ldaps://dc01.corp.local:636 --ad-domain corp.local --base-dn DC=corp,DC=local \
+  --template "/tmp/CFXD SLA - SCADA Daily Inspection CheckList.xlsx"</div><button type="button">Copy</button></div>
+    <div class="two" style="margin-top:18px">
+      <div class="card"><b class="zh">腳本自動完成</b><b class="en">The script does</b>
+        <ul class="check zh">
+          <li>檢查作業系統、記憶體、磁碟</li><li>安裝 Python、nginx、SQLite、字型與相依套件</li>
+          <li>建立系統帳號與虛擬環境、下載 OCR 模型</li><li>產生 .env 與隨機 SECRET_KEY</li>
+          <li>建立本機緊急帳號，密碼只印一次</li><li>自簽 HTTPS 憑證（可換公司憑證）、HTTP 轉 HTTPS</li>
+          <li>網頁、OCR、AI 三個服務與每日備份排程</li><li>啟動後自動執行健檢</li>
+        </ul>
+        <ul class="check en">
+          <li>Checks OS, memory and disk</li><li>Installs Python, nginx, SQLite, fonts and dependencies</li>
+          <li>Creates the service account and venv, downloads OCR models</li><li>Writes .env with a random SECRET_KEY</li>
+          <li>Creates the break-glass admin and prints its password once</li><li>Self-signed HTTPS (or your CA certificate), HTTP → HTTPS</li>
+          <li>Web, OCR and AI services plus a daily backup timer</li><li>Runs the doctor when done</li>
+        </ul></div>
+      <div class="card"><b class="zh">可以重跑</b><b class="en">Safe to re-run</b>
+        <p class="zh">中途失敗時修正問題後重跑同一行即可；已存在的 .env、資料庫、憑證與緊急帳號密碼都不會被覆蓋。</p>
+        <p class="en">If a step fails, fix it and run the same line again; an existing .env, database, certificate and admin password are never overwritten.</p>
+        <p class="note zh">安裝後的下一步：設定 AD（若安裝時沒帶）、放入 CheckList 範本、用 AD 帳號登入一次，再用緊急帳號指派系統管理員。</p>
+        <p class="note en">Next steps: configure AD if not given, add the CheckList template, sign in once with AD, then grant system admin with the break-glass account.</p></div>
+    </div>
+
+    <h3 style="margin-top:28px"><span class="zh">2. 檢查部署結果</span><span class="en">2. Check the deployment</span></h3>
+    <div class="cmdbox" data-copy><div class="cmd">curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash -s -- doctor</div><button type="button">Copy</button></div>
+    <p class="zh">逐項檢查系統、程式版本、權限、設定、資料庫、PDF 範本與字型、背景工作、服務、HTTPS 與備份。沒過的項目下一行直接印出修正指令；有失敗時結束代碼為 1，可放進監控。</p>
+    <p class="en">Checks the system, version, permissions, settings, database, PDF template and fonts, background jobs, services, HTTPS and backups. Every failing item prints the command that fixes it; exits 1 on failure so monitoring can use it.</p>
+    <div class="doctor"><span class="dim">CFXD 日報系統健檢  2026-11-03 16:17:10  report.corp.local</span>
+
+資料庫
+  <span class="ok">✔</span> 完整性           ok（/opt/dailyreport/instance/dailyreport.db，0.3 MB）
+  <span class="ok">✔</span> WAL 模式         wal
+  <span class="wa">!</span> 系統管理員       本機緊急帳號 1 個、指派 0 個
+      <span class="dim">→ AD 帳號登入一次後，在「帳號管理」指派檔案管理員或二線管理員為系統管理員</span>
+服務
+  <span class="ok">✔</span> dailyreport      執行中
+  <span class="fa">✘</span> dailyreport-ocr  inactive
+      <span class="dim">→ sudo systemctl restart dailyreport-ocr；sudo journalctl -u dailyreport-ocr -n 50</span>
+網路
+  <span class="ok">✔</span> 登入頁           https://report.corp.local/login（HTTP 200）
+  <span class="ok">✔</span> 憑證             自簽，剩 824 天到期
+
+結果：<span class="ok">正常 31</span>、<span class="wa">注意 3</span>、<span class="fa">失敗 1</span></div>
+
+    <h3 style="margin-top:28px"><span class="zh">3. 日常維護</span><span class="en">3. Day-to-day</span></h3>
+    <div class="tablewrap">
+    <table class="t zh">
+      <tr><th>指令</th><th>做什麼</th></tr>
+      <tr><td>… | sudo bash -s -- upgrade</td><td>先備份，再更新程式、相依套件、重啟服務並健檢</td></tr>
+      <tr><td>dailyreport.sh backup</td><td>線上備份資料庫、截圖與設定（每天 02:30 自動執行，保留 14 份）</td></tr>
+      <tr><td>dailyreport.sh restore &lt;資料夾&gt;</td><td>驗證檢查碼後還原，還原前會先備份目前的資料</td></tr>
+      <tr><td>dailyreport.sh template &lt;xlsx&gt;</td><td>放入或更新 CheckList 範本</td></tr>
+      <tr><td>dailyreport.sh restart / status</td><td>重新啟動 / 查看服務狀態</td></tr>
+    </table>
+    <table class="t en">
+      <tr><th>Command</th><th>What it does</th></tr>
+      <tr><td>… | sudo bash -s -- upgrade</td><td>Backs up, updates code and dependencies, restarts and runs the doctor</td></tr>
+      <tr><td>dailyreport.sh backup</td><td>Online backup of database, screenshots and settings (daily at 02:30, keeps 14)</td></tr>
+      <tr><td>dailyreport.sh restore &lt;dir&gt;</td><td>Verifies checksums and restores, after backing up the current data</td></tr>
+      <tr><td>dailyreport.sh template &lt;xlsx&gt;</td><td>Installs or replaces the CheckList template</td></tr>
+      <tr><td>dailyreport.sh restart / status</td><td>Restart / show service status</td></tr>
+    </table>
+    </div>
+    <p class="note zh">dailyreport.sh 位於 /opt/dailyreport/scripts/，以 sudo bash 執行。</p>
+    <p class="note en">dailyreport.sh lives in /opt/dailyreport/scripts/; run it with sudo bash.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="zh">安全</span><span class="en">Security</span></h2>
+    <ul class="check zh">
+      <li>AD（LDAPS）驗證，可限定群組；本機緊急帳號密碼雜湊保存</li>
+      <li>強制 HTTPS、Secure / HttpOnly Cookie、CSRF 防護、安全標頭</li>
+      <li>程式碼屬 root、應用程式以低權限帳號執行；.env 與備份只有 root 可讀</li>
+      <li>AI 預設關閉、外部服務需明確允許；AI 回覆先跳脫 HTML 再顯示</li>
+      <li>不需登入的只有 /healthz，且只回報服務是否正常，不含任何資料</li>
+    </ul>
+    <ul class="check en">
+      <li>AD (LDAPS) sign-in with optional group restriction; the break-glass password is stored hashed</li>
+      <li>HTTPS enforced, Secure / HttpOnly cookies, CSRF protection, security headers</li>
+      <li>Code owned by root, app runs as an unprivileged account; .env and backups readable by root only</li>
+      <li>AI off by default, external providers need explicit consent; AI output is HTML-escaped</li>
+      <li>Only /healthz is public, and it reports health only, no data</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">CFXD 日報系統 · <a href="https://github.com/nox913106/CFXD_DailyReportDocSys">GitHub</a> ·
+    <span class="zh">以 DDoc_compare 的檢查規則為基礎</span><span class="en">built on the DDoc_compare rule set</span></div>
+</footer>
+
+<script>
+(function () {
+  function setLang(l) {
+    document.body.className = 'lang-' + l;
+    document.documentElement.lang = l === 'en' ? 'en' : 'zh-Hant';
+    document.querySelector('[data-lang-toggle]').textContent = l === 'en' ? '中文' : 'EN';
+    try { localStorage.setItem('lang', l); } catch (e) {}
+  }
+  var q = new URLSearchParams(location.search).get('lang'), saved = null;
+  try { saved = localStorage.getItem('lang'); } catch (e) {}
+  setLang(q === 'en' || q === 'zh' ? q : (saved || ((navigator.language || '').indexOf('zh') === 0 ? 'zh' : 'zh')));
+  document.querySelector('[data-lang-toggle]').addEventListener('click', function () {
+    setLang(document.body.classList.contains('lang-en') ? 'zh' : 'en');
+  });
+  document.querySelectorAll('[data-copy] button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var box = b.parentElement.querySelector('.cmd').cloneNode(true);
+      box.querySelectorAll('.c').forEach(function (n) { n.remove(); });
+      var text = box.textContent.trim();
+      (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(function () {
+        b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1500);
+      }, function () { b.textContent = '請手動複製'; });
+    });
+  });
+})();
+</script>
+</body>
+</html>

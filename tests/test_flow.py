@@ -974,3 +974,19 @@ def test_settings_page_and_admin_assignment(app):
     assert "運作中：1 個服務可用" in bob.get("/admin/settings/")
     assert "已儲存提示詞" in bob.post("/admin/settings/prompt", {"ai_system_prompt": "自訂規則"})
     assert "自訂規則" in bob.get("/admin/settings/")
+
+
+def test_healthz_and_doctor(app):
+    """部署健檢：/healthz 不需登入且不含資料；doctor-json 輸出可解析、會指出預設 SECRET_KEY 與缺少的範本。"""
+    import json
+
+    r = app.test_client().get("/healthz")
+    assert r.status_code == 200 and r.get_json() == {"status": "ok"}
+    app.config["PDF_TEMPLATE_XLSX"] = "/nonexistent/checklist.xlsx"
+    res = app.test_cli_runner().invoke(args=["doctor-json"])
+    assert res.exit_code == 0, res.output
+    items = {(x["group"], x["name"]): x for x in json.loads(res.output.strip().splitlines()[-1])}
+    assert items[("設定", "SECRET_KEY")]["status"] == "fail"  # 測試用 SECRET_KEY 太短
+    assert items[("PDF 輸出", "CheckList 範本")]["status"] == "fail" and "template" in items[("PDF 輸出", "CheckList 範本")]["fix"]
+    assert items[("資料庫", "完整性")]["status"] == "ok"
+    assert all(x["status"] in ("ok", "warn", "fail") for x in items.values())
