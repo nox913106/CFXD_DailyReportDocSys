@@ -83,7 +83,10 @@ class Report(db.Model):
 
     author_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     author = db.relationship("User", foreign_keys=[author_id])
-    approver_name = db.Column(db.String(128), default="")  # 封面 Approval 欄顯示的名字
+    # 指定核准人（文件上的簽核者）。approver_name 是文件顯示的名字，代簽時仍顯示核准人本人
+    approver_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    approver = db.relationship("User", foreign_keys=[approver_id])
+    approver_name = db.Column(db.String(128), default="")  # 封面 Approval / Document Approved 欄
 
     status = db.Column(db.String(16), default="draft", nullable=False, index=True)
     submitted_at = db.Column(db.DateTime)
@@ -91,6 +94,9 @@ class Report(db.Model):
     reviewed_by = db.relationship("User", foreign_keys=[reviewed_by_id])
     reviewed_at = db.Column(db.DateTime)
     review_comment = db.Column(db.Text, default="")
+    # 代簽時記錄被代簽的核准人（reviewed_by 為實際操作者）；本人簽核時為空
+    reviewed_on_behalf_of_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    reviewed_on_behalf_of = db.relationship("User", foreign_keys=[reviewed_on_behalf_of_id])
 
     # 2 Inspection Record / Shift Record
     inspection_summary = db.Column(db.Text, default="There was no issue record reported today.")
@@ -121,6 +127,7 @@ class Report(db.Model):
     alarm_rows = db.relationship("AlarmSummaryRow", cascade="all, delete-orphan", order_by="AlarmSummaryRow.order")
     results = db.relationship("ChecklistResult", cascade="all, delete-orphan", lazy="dynamic")
     images = db.relationship("ReportImage", cascade="all, delete-orphan", order_by="ReportImage.order")
+    review_logs = db.relationship("ReviewLog", cascade="all, delete-orphan", order_by="ReviewLog.id")
 
     @property
     def status_label(self):
@@ -218,4 +225,51 @@ class ReportImage(db.Model):
     original_name = db.Column(db.String(256), default="")
     order = db.Column(db.Integer, default=0)
     uploaded_by_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+
+class ApprovalDelegation(db.Model):
+    """核准人把簽核權委派給其他帳號（代簽人）。在有效期間內，代簽人可代為核准 / 退回
+    指定給該核准人的日報；文件上仍顯示核准人本人的名字，系統另記錄實際操作者。"""
+
+    id = db.Column(db.Integer, primary_key=True)
+    principal_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    principal = db.relationship("User", foreign_keys=[principal_id])
+    delegate_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    delegate = db.relationship("User", foreign_keys=[delegate_id])
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date)  # 空白 = 直到撤銷
+    note = db.Column(db.String(256), default="")
+    created_by_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    revoked_at = db.Column(db.DateTime)
+
+    def active_on(self, day):
+        return self.revoked_at is None and self.start_date <= day and (self.end_date is None or day <= self.end_date)
+
+    @property
+    def state_label(self):
+        from datetime import date
+
+        today = date.today()
+        if self.revoked_at:
+            return "已撤銷"
+        if self.end_date and self.end_date < today:
+            return "已到期"
+        if self.start_date > today:
+            return "尚未生效"
+        return "生效中"
+
+
+class ReviewLog(db.Model):
+    """審核歷程：每次核准 / 退回各一筆，含代簽資訊。"""
+
+    id = db.Column(db.Integer, primary_key=True)
+    report_id = db.Column(db.Integer, db.ForeignKey("report.id"), nullable=False, index=True)
+    action = db.Column(db.String(16), nullable=False)  # approve / reject
+    actor_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    actor = db.relationship("User", foreign_keys=[actor_id])
+    on_behalf_of_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    on_behalf_of = db.relationship("User", foreign_keys=[on_behalf_of_id])
+    comment = db.Column(db.Text, default="")
     created_at = db.Column(db.DateTime, default=datetime.now)

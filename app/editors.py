@@ -7,6 +7,7 @@ from flask_login import current_user, login_required
 from sqlalchemy.orm import contains_eager
 
 from . import db
+from .approval import approvers
 from .helpers import SHEETS, checklist_stats, get_report, locked_redirect, parse_rows
 from .models import (
     AlarmSummaryRow,
@@ -17,6 +18,7 @@ from .models import (
     ScreenshotSection,
     SystemUpdateRecord,
     TrueAlarmRecord,
+    User,
 )
 
 bp = Blueprint("editors", __name__, url_prefix="/reports/<int:report_id>")
@@ -102,13 +104,21 @@ def basic(report_id):
         if (r := locked_redirect(report)) is not None:
             return r
         report.revision = _int(request.form.get("revision"))
-        for f in ("issue_purpose", "inspection_time", "approver_name", "first_line_officer", "second_line_support"):
+        for f in ("issue_purpose", "inspection_time", "first_line_officer", "second_line_support"):
             setattr(report, f, request.form.get(f, "").strip())
+        approver = db.session.get(User, request.form.get("approver_id", type=int) or 0)
+        if approver and (approver.is_approver or approver.id == report.approver_id):
+            report.approver_id, report.approver_name = approver.id, approver.name
+        elif request.form.get("approver_id") == "":
+            report.approver_id, report.approver_name = None, ""
         _touch(report)
         db.session.commit()
         flash("已儲存。", "success")
         return redirect(url_for("editors.basic", report_id=report.id))
-    return render_template("edit_basic.html", report=report, tab="basic")
+    choices = approvers()
+    if report.approver and report.approver not in choices:
+        choices.append(report.approver)
+    return render_template("edit_basic.html", report=report, tab="basic", approvers=choices)
 
 
 @bp.route("/records", methods=["GET", "POST"])

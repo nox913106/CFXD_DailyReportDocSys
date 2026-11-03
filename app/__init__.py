@@ -67,6 +67,23 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        _add_missing_columns()
         seed_master_data()
 
     return app
+
+
+def _add_missing_columns():
+    """create_all 不會替既有資料表加欄位；版本更新新增的可空欄位在此補上。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(db.engine)
+    for table in db.metadata.sorted_tables:
+        if not insp.has_table(table.name):
+            continue
+        existing = {c["name"] for c in insp.get_columns(table.name)}
+        for col in table.columns:
+            if col.name not in existing and col.nullable:
+                ddl = col.type.compile(dialect=db.engine.dialect)
+                with db.engine.begin() as conn:
+                    conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {ddl}'))

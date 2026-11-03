@@ -315,3 +315,101 @@ def db_status(rid):
     from app.models import Report
 
     return db.session.get(Report, rid).status
+
+
+def test_delegated_approval(app):
+    from app.models import Report, ReviewLog, User
+
+    boss = Browser(app)
+    boss.login("boss")  # 唯一的核准人 -> 新日報預設指定給 boss
+    carol = Browser(app)
+    carol.login("carol")  # 一般帳號，之後被授權代簽
+    boss2 = Browser(app)
+
+    alice = Browser(app)
+    alice.login("alice")
+    rid = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-05"}))
+    with app.app_context():
+        from app import db
+
+        r = db.session.get(Report, rid)
+        boss_id = User.query.filter_by(username="boss").one().id
+        carol_id = User.query.filter_by(username="carol").one().id
+        assert r.approver_id == boss_id and r.approver_name == "boss"
+    fill_checklist(alice, rid)
+    alice.get(f"/reports/{rid}")
+    alice.post(f"/reports/{rid}/submit")
+
+    # 未授權前：carol 看不到、不能審；另一位審核者 boss2 也不能審指定給 boss 的日報
+    assert "待我審核" not in carol.get("/")
+    carol.get(f"/reports/{rid}")
+    carol.post(f"/reports/{rid}/review", {"action": "approve"}, status=403)
+    boss2.login("boss2")
+    boss2.get(f"/reports/{rid}")
+    boss2.post(f"/reports/{rid}/review", {"action": "approve"}, status=403)
+
+    # 一般帳號不能建立授權；核准人不能授權給自己；過期的授權無效
+    carol.get("/delegations")
+    carol.post("/delegations", {"delegate_id": str(boss_id), "start_date": "2026-01-01"}, status=403)
+    boss.get("/delegations")
+    assert "請選擇其他帳號" in boss.post("/delegations", {"delegate_id": str(boss_id), "start_date": "2026-01-01"})
+    boss.post("/delegations", {"delegate_id": str(carol_id), "start_date": "2020-01-01", "end_date": "2020-01-31"})
+    carol.get(f"/reports/{rid}")
+    carol.post(f"/reports/{rid}/review", {"action": "approve"}, status=403)
+
+    # 有效授權：carol 代簽核准，文件仍顯示 boss
+    html = boss.post("/delegations", {"delegate_id": str(carol_id), "start_date": "2020-01-01", "note": "出差"})
+    assert "已授權" in html
+    html = carol.get("/")
+    assert "待我審核" in html and "代簽" in html
+    html = carol.get(f"/reports/{rid}")
+    assert "代 boss 簽核" in html
+    html = carol.post(f"/reports/{rid}/review", {"action": "approve"})
+    assert "代 boss 簽核" in html and "審核紀錄" in html and "carol 代簽" in html
+    with app.app_context():
+        from app import db
+        from app.pdf.report_pdf import cover_data
+
+        r = db.session.get(Report, rid)
+        assert r.status == "approved" and r.approver_name == "boss"
+        assert r.reviewed_by.username == "carol" and r.reviewed_on_behalf_of.username == "boss"
+        log = ReviewLog.query.filter_by(report_id=rid).one()
+        assert log.actor_id == carol_id and log.on_behalf_of_id == boss_id
+        d = cover_data(r)
+        assert d["approver"] == "boss" and d["revisions"][0]["approval"] == "boss"
+
+    # 撤銷後不能再代簽
+    rid2 = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-06"}))
+    fill_checklist(alice, rid2)
+    alice.get(f"/reports/{rid2}")
+    alice.post(f"/reports/{rid2}/submit")
+    html = boss.get("/delegations")
+    did = re.findall(r"/delegations/(\d+)/revoke", html)[0]
+    assert "已撤銷" in boss.post(f"/delegations/{did}/revoke")
+    carol.get(f"/reports/{rid2}")
+    carol.post(f"/reports/{rid2}/review", {"action": "approve"}, status=403)
+    # 核准人本人仍可簽核
+    boss.get(f"/reports/{rid2}")
+    assert "已核准。" in boss.post(f"/reports/{rid2}/review", {"action": "approve"})
+
+
+def test_add_missing_columns(tmp_path, monkeypatch):
+    """舊版資料庫（沒有代簽欄位）啟動時自動補欄位。"""
+    import sqlite3
+
+    db_path = tmp_path / "old.db"
+    con = sqlite3.connect(db_path)
+    con.execute('CREATE TABLE report (id INTEGER PRIMARY KEY, report_date DATE NOT NULL UNIQUE, doc_no VARCHAR(64) NOT NULL, '
+                'contractor_doc_no VARCHAR(64) NOT NULL, revision INTEGER NOT NULL, author_id INTEGER NOT NULL, '
+                'status VARCHAR(16) NOT NULL)')
+    con.commit()
+    con.close()
+    monkeypatch.setenv("AUTH_MODE", "dev")
+    monkeypatch.setenv("FLASK_DEBUG", "1")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "up"))
+    from app import create_app
+
+    create_app()
+    cols = {r[1] for r in sqlite3.connect(db_path).execute("PRAGMA table_info(report)")}
+    assert {"approver_id", "reviewed_on_behalf_of_id", "approver_name"} <= cols

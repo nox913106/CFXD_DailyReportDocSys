@@ -22,22 +22,42 @@
   </div>
 </div>
 
-{% if report.status == 'submitted' and current_user.is_approver and report.author_id != current_user.id %}
+{% if report.status == 'submitted' %}
+<div class="card no-print">
+  核准人：<strong>{{ report.approver_name or '（未指定）' }}</strong>
+  {% if not can_review %}<span class="hint">· 等待核准人{% if report.approver_id %}或其代簽人{% endif %}審核</span>{% endif %}
+</div>
+{% endif %}
+{% if can_review %}
 <form method="post" action="{{ url_for('views.review', report_id=report.id) }}" class="card review no-print">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <h3>審核</h3>
+  <h3>審核{% if principal %}（代 {{ principal.name }} 簽核）{% endif %}</h3>
+  {% if principal %}
+  <p class="flash">您是 {{ principal.name }} 的代簽人。核准後文件上的 Approval / Document Approved 會顯示
+    <strong>{{ principal.name }}</strong>，系統另外記錄由您代簽。</p>
+  {% endif %}
   <label>意見（退回時必填）<textarea name="comment" rows="2"></textarea></label>
   <div class="actions">
-    <button type="submit" name="action" value="approve">核准</button>
+    <button type="submit" name="action" value="approve">{{ '代簽核准' if principal else '核准' }}</button>
     <button type="submit" name="action" value="reject" class="danger">退回</button>
   </div>
 </form>
 {% endif %}
-{% if report.reviewed_at %}
-<div class="flash {{ 'error' if report.status == 'rejected' }} no-print">
-  {{ report.reviewed_by.name if report.reviewed_by }} 於 {{ report.reviewed_at.strftime('%Y-%m-%d %H:%M') }}
-  {{ '核准' if report.status == 'approved' else ('退回' if report.status == 'rejected' else '審核') }}
-  {% if report.review_comment %}：{{ report.review_comment }}{% endif %}
+{% if report.review_logs %}
+<div class="card no-print">
+  <h3>審核紀錄</h3>
+  <table class="list">
+    <tr><th>時間</th><th>動作</th><th>簽核者（文件顯示）</th><th>實際操作</th><th>意見</th></tr>
+    {% for log in report.review_logs|reverse %}
+    <tr class="{{ 'fail' if log.action == 'reject' }}">
+      <td>{{ log.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      <td>{{ '核准' if log.action == 'approve' else '退回' }}</td>
+      <td>{{ (log.on_behalf_of or log.actor).name }}</td>
+      <td>{% if log.on_behalf_of %}{{ log.actor.name }} 代簽{% else %}本人{% endif %}</td>
+      <td class="pre">{{ log.comment }}</td>
+    </tr>
+    {% endfor %}
+  </table>
 </div>
 {% endif %}
 

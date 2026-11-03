@@ -12,7 +12,14 @@
       <label>Issue Purpose<input name="issue_purpose" value="{{ report.issue_purpose }}"></label>
       <label>Inspection Time（檢查表）<input name="inspection_time" value="{{ report.inspection_time }}"></label>
       <label>Author<input value="{{ report.author.name }}" disabled></label>
-      <label>Approval（核准人）<input name="approver_name" value="{{ report.approver_name }}" placeholder="核准後自動填入審核者"></label>
+      <label>Approval（核准人）
+        <select name="approver_id">
+          <option value="" {{ 'selected' if not report.approver_id }}>（未指定：任何審核者都可核准）</option>
+          {% for u in approvers %}
+          <option value="{{ u.id }}" {{ 'selected' if u.id == report.approver_id }}>{{ u.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
     </div>
     <h3>Shift Record（值班）</h3>
     <div class="form-grid">
@@ -20,7 +27,8 @@
       <label class="wide">Second Line Backup Support<input name="second_line_support" value="{{ report.second_line_support }}"
              placeholder="例：Akshay Sampath / Allen Tsai / Jhengyu Wu"></label>
     </div>
-    <p class="hint">文件編號依日期自動產生；新增日報時會沿用前一份日報的值班人員與核准人。</p>
+    <p class="hint">文件編號依日期自動產生；新增日報時會沿用前一份日報的值班人員與核准人。
+      核准人可在「代簽設定」授權其他帳號代簽，代簽時文件上的 Approval / Document Approved 仍顯示核准人本人。</p>
     <button type="submit">儲存</button>
   </fieldset>
 </form>
