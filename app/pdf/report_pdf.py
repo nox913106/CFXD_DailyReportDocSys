@@ -200,7 +200,8 @@ def _fill_alarm_rows(book, report):
     rows = list(report.alarm_rows)
     template_last = ws.max_row
     style_row = ALARM_FIRST_ROW + 1
-    n = max(len(rows), 1)
+    # 範本的列印範圍固定到最後一列：資料較少時其餘列留白但保留框線
+    n = max(len(rows), template_last - ALARM_FIRST_ROW + 1)
     for k in range(n):
         r = ALARM_FIRST_ROW + k
         if r > template_last:
