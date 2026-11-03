@@ -4,11 +4,15 @@
 <section class="card">
   <h2>待我審核（{{ pending|length }}）</h2>
   <table class="list">
-    <tr><th>日期</th><th>文件編號</th><th>撰寫人</th><th>核准人</th><th>送審時間</th><th></th></tr>
+    <tr><th>日期</th><th>文件編號</th><th>撰寫人</th><th>核准人</th><th>檢查結果</th><th>送審時間</th><th></th></tr>
     {% for r in pending %}
     <tr>
       <td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td><td>{{ r.author.name }}</td>
       <td>{{ r.approver_name or '（未指定）' }}{% if r.approver_id and r.approver_id != current_user.id %} <span class="badge submitted">代簽</span>{% endif %}</td>
+      {% set c = pending_checks[r.id] %}
+      <td>{% if c['錯誤'] %}<span class="sev sev-err">錯誤 {{ c['錯誤'] }}</span>{% endif %}
+          {% if c['警告'] %}<span class="sev sev-warn">警告 {{ c['警告'] }}</span>{% endif %}
+          {% if not c['錯誤'] and not c['警告'] %}<span class="sev sev-ok">無誤</span>{% endif %}</td>
       <td>{{ r.submitted_at.strftime('%Y-%m-%d %H:%M') if r.submitted_at }}</td>
       <td><a href="{{ url_for('views.detail', report_id=r.id) }}">審核</a></td>
     </tr>

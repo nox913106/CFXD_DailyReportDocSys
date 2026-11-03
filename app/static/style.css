@@ -133,3 +133,13 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .danger-zone summary { cursor: pointer; font-weight: 600; color: #b91c1c; }
 .danger-zone form { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
 .danger-zone label { flex: 1 1 280px; }
+
+.sev { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.sev-err { background: #fde2e2; color: #b91c1c; }
+.sev-warn { background: #fef3c7; color: #92400e; }
+.sev-info { background: #e0f2fe; color: #075985; }
+.sev-ok { background: #dcfce7; color: #166534; }
+.checks table.issues td { vertical-align: top; }
+.checks details { margin-top: 12px; }
+.checks details summary { cursor: pointer; font-weight: 600; }
+.checks h3 .hint { font-weight: normal; font-size: 13px; margin-left: 6px; }

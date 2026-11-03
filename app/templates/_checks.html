@@ -1,0 +1,82 @@
+{% set c = checks.counts() %}
+{% macro fix_link(link) -%}
+  {%- if link and report.editable -%}
+    {%- if link.startswith('checklist:') -%}{{ url_for('editors.checklist', report_id=report.id, sheet=link.split(':')[1]) }}
+    {%- else -%}{{ url_for('editors.' + link, report_id=report.id) }}{%- endif -%}
+  {%- endif -%}
+{%- endmacro %}
+<section class="card no-print checks">
+  <div class="row-between">
+    <h3>檢查結果{% if checks.baseline %}<span class="hint">（與 {{ checks.baseline.report_date }} 已核准日報 {{ checks.baseline.doc_no }} 比對）</span>{% endif %}</h3>
+    <div>
+      <span class="sev sev-err">錯誤 {{ c['錯誤'] }}</span>
+      <span class="sev sev-warn">警告 {{ c['警告'] }}</span>
+      <span class="sev sev-info">提醒 {{ c['提醒'] }}</span>
+    </div>
+  </div>
+  {% if report.status == 'submitted' %}
+  <p class="hint">{% if c['錯誤'] %}有 {{ c['錯誤'] }} 項錯誤，建議退回修正。{% elif c['警告'] %}沒有錯誤，請確認警告項目後再核准。{% else %}沒有錯誤或警告。{% endif %}</p>
+  {% endif %}
+  {% set issues = checks.sorted_issues() %}
+  {% if issues %}
+  <table class="list issues">
+    <tr><th>嚴重度</th><th>類別</th><th>說明</th><th>項次</th><th>對象</th><th>依據</th><th>實際</th></tr>
+    {% for i in issues %}
+    <tr class="sev-row-{{ {'錯誤': 'err', '警告': 'warn', '提醒': 'info'}[i.severity] }}">
+      <td><span class="sev sev-{{ {'錯誤': 'err', '警告': 'warn', '提醒': 'info'}[i.severity] }}">{{ i.severity }}</span></td>
+      <td>{{ i.area }}</td>
+      <td>{% set href = fix_link(i.link) %}{% if href %}<a href="{{ href }}">{{ i.message }}</a>{% else %}{{ i.message }}{% endif %}</td>
+      <td>{{ i.ref }}</td><td>{{ i.obj }}</td><td class="pre">{{ i.a }}</td><td class="pre">{{ i.b }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="hint">沒有發現問題。</p>{% endif %}
+
+  {% if checks.baseline %}
+  <details {{ 'open' if checks.new_alarms or checks.cleared_alarms or checks.changed_alarms }}>
+    <summary>告警差異：新增 {{ checks.new_alarms|length }}、解除 {{ checks.cleared_alarms|length }}、內容變更 {{ checks.changed_alarms|length }}、延續 {{ checks.continued }}</summary>
+    {% if checks.new_alarms %}
+    <h4>新增</h4>
+    <table class="list"><tr><th>Category</th><th>Item</th><th>Device</th><th>Description</th><th>Reason</th></tr>
+      {% for a in checks.new_alarms %}<tr><td>{{ a.category }}</td><td>{{ a.item }}</td><td>{{ a.device_name }}</td><td>{{ a.description }}</td><td class="pre">{{ a.reason }}</td></tr>{% endfor %}
+    </table>
+    {% endif %}
+    {% if checks.cleared_alarms %}
+    <h4>解除（前一份有、這份沒有）</h4>
+    <table class="list"><tr><th>Category</th><th>Item</th><th>Device</th><th>Description</th><th>前一份 Reason</th></tr>
+      {% for a in checks.cleared_alarms %}<tr><td>{{ a.category }}</td><td>{{ a.item }}</td><td>{{ a.device_name }}</td><td>{{ a.description }}</td><td class="pre">{{ a.reason }}</td></tr>{% endfor %}
+    </table>
+    {% endif %}
+    {% if checks.changed_alarms %}
+    <h4>內容變更</h4>
+    <table class="list"><tr><th>Device</th><th>欄位</th><th>前一份</th><th>這份</th></tr>
+      {% for a, b, diff in checks.changed_alarms %}{% for f, (old, new) in diff.items() %}
+      <tr><td>{{ a.device_name }} {{ a.item }}</td><td>{{ f }}</td><td class="pre">{{ old }}</td><td class="pre">{{ new }}</td></tr>
+      {% endfor %}{% endfor %}
+    </table>
+    {% endif %}
+  </details>
+  <details {{ 'open' if checks.status_changes|length <= 15 and checks.status_changes }}>
+    <summary>檢查結果變化：{{ checks.status_changes|length }} 項</summary>
+    {% if checks.status_changes %}
+    <table class="list"><tr><th>分頁</th><th>項次</th><th>設備</th><th>Status Type</th><th>前一份</th><th>這份</th><th>前一份 Note</th><th>這份 Note</th></tr>
+      {% for item, old, new, onote, nnote in checks.status_changes %}
+      <tr><td>{{ item.sheet }}</td><td>{{ item.item_no }}</td><td>{{ item.device_name }}</td><td>{{ item.status_type }}</td>
+        <td>{{ RESULT_LABELS.get(old, '未勾選') }}</td><td class="{{ 'fail' if new in ('W', 'F') }}">{{ RESULT_LABELS.get(new, '未勾選') }}</td>
+        <td class="pre">{{ onote }}</td><td class="pre">{{ nnote }}</td></tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+  </details>
+  {% if checks.summary_diff %}
+  <details>
+    <summary>統計數字變化：{{ checks.summary_diff|length }} 個分類</summary>
+    <table class="list"><tr><th>分頁</th><th>分類</th><th>前一份 N / W / F</th><th>這份 N / W / F</th></tr>
+      {% for sheet, cat, old, new in checks.summary_diff %}
+      <tr><td>{{ sheet }}</td><td>{{ cat }}</td><td>{{ old|join(' / ') }}</td><td>{{ new|join(' / ') }}</td></tr>
+      {% endfor %}
+    </table>
+  </details>
+  {% endif %}
+  {% endif %}
+</section>

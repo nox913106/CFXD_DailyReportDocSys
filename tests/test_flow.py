@@ -569,3 +569,76 @@ def test_managers_can_submit_but_not_approve_own_submission(app):
     assert "不能審核自己送審" in boss.post(f"/reports/{rid2}/review", {"action": "approve"})
     dave.get(f"/reports/{rid2}")
     assert "代 boss 簽核" in dave.post(f"/reports/{rid2}/review", {"action": "approve"})
+
+
+def test_report_checks(app):
+    """資料庫檢查與跨日比對：送審中的日報與最近一份已核准日報比對，結果顯示在日報頁與待審清單。"""
+    from app import db
+    from app.checks import run_checks
+    from app.models import AlarmSummaryRow, ChecklistItem, ChecklistResult, Report, TrueAlarmRecord
+
+    boss, alice = Browser(app), Browser(app)
+    boss.login("boss")
+    alice.login("alice")
+    set_role(app, "boss", "file_manager")
+
+    # 前一天：一筆告警（VM 第 1 項 Warning），已核准
+    rid1 = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-01"}))
+    with app.app_context():
+        r1 = db.session.get(Report, rid1)
+        first = ChecklistItem.query.filter_by(sheet="vm").order_by(ChecklistItem.order).first()
+        for res in r1.results:
+            res.result = "W" if res.item_id == first.id else "N"
+            res.note = "disk latency" if res.item_id == first.id else ""
+        r1.alarm_rows.append(AlarmSummaryRow(order=1, category="Virtual Machines", item=first.item_no,
+                                             device_name=first.device_name, description=first.status_type,
+                                             reason="disk latency", false_alarm="N"))
+        r1.alarm_known = 1
+        r1.inspection_summary = "There was no issue record reported today."
+        r1.second_line_support = "Bob"
+        r1.status = "approved"
+        db.session.commit()
+        assert run_checks(r1).counts()["錯誤"] == 0
+
+    # 今日：延續 + 新增一筆 Failed 但沒有寫 Note、沒有列入告警表，New/Known 填錯
+    rid2 = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-02"}))
+    with app.app_context():
+        r2 = db.session.get(Report, rid2)
+        second = ChecklistItem.query.filter_by(sheet="vm").order_by(ChecklistItem.order).offset(1).first()
+        for res in r2.results:
+            res.result = {first.id: "W", second.id: "F"}.get(res.item_id, "N")
+        r2.alarm_new, r2.alarm_known = 0, 1  # 沿用前一天的告警列，New 應為 1（若有列入）
+        db.session.commit()
+        chk = run_checks(r2)
+        msgs = [(i.severity, i.message) for i in chk.issues]
+        assert chk.baseline.id == rid1 and chk.continued == 1 and not chk.new_alarms
+        assert ("警告", "勾選 Failed 但 Note 空白") in msgs
+        assert ("錯誤", "檢查表勾選 Warning/Failed，但 Alarm Summary 沒有列出") in msgs
+        assert any(i.ref == second.item_no for i in chk.issues)
+        assert len(chk.status_changes) == 1 and chk.status_changes[0][2] == "F"
+
+        # 修正：列入告警表、寫 Note，但 New Alarm 仍填 0、沒有 True Alarm Record
+        res2 = ChecklistResult.query.filter_by(report_id=rid2, item_id=second.id).one()
+        res2.note = "host down"
+        r2.alarm_rows.append(AlarmSummaryRow(order=2, category="Virtual Machines", item=second.item_no,
+                                             device_name=second.device_name, description=second.status_type,
+                                             reason="host down", false_alarm="N"))
+        db.session.commit()
+        msgs = [i.message for i in run_checks(r2).issues if i.severity == "錯誤"]
+        assert "告警計數與 Alarm Summary 項數不符" in msgs
+        assert "New Alarm 數與實際新增的告警數不同" in msgs
+
+        r2.alarm_new = 1
+        r2.true_alarms.append(TrueAlarmRecord(alarm_item=second.device_name, status="Open"))
+        db.session.commit()
+        chk = run_checks(r2)
+        assert chk.counts()["錯誤"] == 0, [i.message for i in chk.issues if i.severity == "錯誤"]
+        assert len(chk.new_alarms) == 1
+
+    # 畫面：送審後審核者在日報頁與待審清單看到檢查結果
+    alice.get(f"/reports/{rid2}")
+    alice.post(f"/reports/{rid2}/submit")
+    html = boss.get("/")
+    assert "檢查結果" in html and ("無誤" in html or "警告" in html)
+    html = boss.get(f"/reports/{rid2}")
+    assert "檢查結果" in html and "告警差異：新增 1" in html and "2026-11-01" in html

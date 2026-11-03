@@ -10,6 +10,7 @@ from flask import current_app
 
 from . import approval as perm
 from .approval import approvers, pending_for
+from .checks import run_checks
 from .helpers import get_report
 from .models import (
     ASSIGNABLE_ROLES,
@@ -47,8 +48,10 @@ def index():
         .all()
     )
     pending, void_requests = pending_for(current_user)
+    pending_checks = {r.id: run_checks(r).counts() for r in pending}
     return render_template(
         "index.html", reports=reports, month=month, pending=pending, void_requests=void_requests,
+        pending_checks=pending_checks,
         today=date.today().isoformat(), can_create=perm.can_create(current_user),
     )
 
@@ -126,6 +129,7 @@ def detail(report_id):
     review = perm.can_review(u, report)
     return render_template(
         "report_detail.html", report=report, can_review=review.allowed, principal=review.principal,
+        checks=run_checks(report) if report.status != "voided" else None,
         can={
             "edit": perm.can_edit(u, report), "submit": perm.can_submit(u, report),
             "delete": perm.can_delete(u, report), "void": perm.can_void(u, report),

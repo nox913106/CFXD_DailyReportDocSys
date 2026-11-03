@@ -22,6 +22,7 @@
   </div>
 </div>
 
+{% if checks %}{% include "_checks.html" %}{% endif %}
 {% if report.status == 'submitted' %}
 <div class="card no-print">
   核准人：<strong>{{ report.approver_name or '（未指定）' }}</strong>
