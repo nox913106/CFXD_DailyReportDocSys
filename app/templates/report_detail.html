@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% import "macros.html" as m %}
 {% block title %}{{ report.doc_no }} - CFXD{% endblock %}
 
 
@@ -18,7 +17,8 @@
       <button type="submit">送出審核</button>
     </form>
     {% endif %}
-    <button type="button" class="secondary" onclick="window.print()">列印</button>
+    <a class="button secondary" href="{{ url_for('views.pdf', report_id=report.id) }}" target="_blank">開啟 PDF / 列印</a>
+    <a class="button" href="{{ url_for('views.pdf', report_id=report.id, download=1) }}">下載 PDF</a>
   </div>
 </div>
 
@@ -41,100 +41,6 @@
 </div>
 {% endif %}
 
-<article class="doc">
-  <section class="doc-cover">
-    <h1>CFXD SLA Project<br>Daily Work Report</h1>
-    <table class="kv">
-      <tr><td>Document No.</td><td>{{ report.doc_no }}</td></tr>
-      <tr><td>Contractor</td><td>Rally Technology Co., Ltd.</td></tr>
-      <tr><td>Contractor Doc No.</td><td>{{ report.contractor_doc_no }}</td></tr>
-      <tr><td>Issue Purpose</td><td>{{ report.issue_purpose }}</td></tr>
-      <tr><td>Revision</td><td>Rev. {{ report.revision }}</td></tr>
-      <tr><td>Date</td><td>{{ report.report_date.strftime('%Y.%m.%d') }}</td></tr>
-      <tr><td>Author</td><td>{{ report.author.name }}</td></tr>
-      <tr><td>Approval</td><td>{{ report.approver_name or 'N/A' }}</td></tr>
-    </table>
-  </section>
-
-  <h2>1 Reports Control ({{ report.report_date.strftime('%B %Y') }})</h2>
-  <table class="grid-table">
-    <tr><th>No.</th><th>Date</th><th>Author</th><th>Report ID</th></tr>
-    {% for r in control %}
-    <tr><td class="center">{{ loop.index }}</td><td>{{ r.report_date }}</td><td>{{ r.author.name }}</td><td>{{ r.doc_no }}</td></tr>
-    {% endfor %}
-  </table>
-
-  <h2>2 Inspection Record</h2>
-  <p class="pre">{{ report.inspection_summary }}</p>
-  <table class="kv">
-    <tr><th colspan="2">Shift Record</th></tr>
-    <tr><td>First Line Duty officer</td><td>{{ report.first_line_officer or 'N/A' }}</td></tr>
-    <tr><td>Second Line Backup Support</td><td>{{ report.second_line_support or 'N/A' }}</td></tr>
-    <tr><td>Document Approved</td><td>{{ report.approver_name or 'N/A' }}</td></tr>
-  </table>
-  {% set issue_fields = [('received_by','Received By'),('received_from','Received From'),('received_time','Received Time'),('report_by','Report By'),('reporter_phone','Reporter Phone No.'),('issue_type','Issue Type'),('description','Issue Description'),('status','Status'),('further_action','Further Action'),('jira','Issue on Jira')] %}
-  {% for rec in report.issues or [none] %}{{ m.kv_table('Issue Record', issue_fields, rec) }}{% endfor %}
-
-  <h2>3 On-site Record/System Update Record</h2>
-  <p class="pre">{{ report.onsite_summary }}</p>
-  {% set onsite_fields = [('personnel','On-site Personnel'),('recorded_by','Recorded By'),('time','Time'),('title','Work Title'),('status','Work Status'),('further_action','Further Action'),('jira','Work on Jira')] %}
-  {% for rec in report.onsite_records or [none] %}{{ m.kv_table('On-site Record', onsite_fields, rec) }}{% endfor %}
-  {% if onsite_images %}<div class="thumbs">{% for img in onsite_images %}{{ m.thumb(report, img, false) }}{% endfor %}</div>{% endif %}
-  {% set sys_fields = [('system_name','System Name'),('update_personnel','Update Personnel'),('backup_support','Backup Support'),('time_period','Time Period'),('risk_info','Risk Information'),('logbook_updated','Log Book Updated')] %}
-  {% for rec in report.system_updates or [none] %}{{ m.kv_table('System Update Record', sys_fields, rec) }}{% endfor %}
-
-  <h2>4 Daily Alarm Inspection (True Alarm)</h2>
-  <p>New Alarm: {{ report.alarm_new }}<br>Known Alarm: {{ report.alarm_known }}<br>False Alarm: {{ report.alarm_false }}</p>
-  {% set alarm_fields = [('alarm_item','Alarm Item'),('start_time','Alarm Start Time'),('end_time','Alarm End Time'),('checked_by','Issue Checked By'),('recorded_by','Recorded By'),('status','Status'),('follow_up','Follow Up')] %}
-  {% for rec in report.true_alarms or [none] %}{{ m.kv_table('True Alarm Record', alarm_fields, rec) }}{% endfor %}
-  {% if alarm_images %}<div class="thumbs">{% for img in alarm_images %}{{ m.thumb(report, img, false) }}{% endfor %}</div>{% endif %}
-
-  <h2>CheckList Alarm Summary</h2>
-  <table class="grid-table">
-    <tr><th>No.</th><th>Alarm Category</th><th>Item</th><th>Device Name</th><th>Description</th><th>Reason</th><th>False Alarm (Y/N)</th><th>Note</th></tr>
-    {% for a in report.alarm_rows %}
-    <tr><td class="center">{{ loop.index }}</td><td>{{ a.category }}</td><td>{{ a.item }}</td><td>{{ a.device_name }}</td>
-        <td class="pre">{{ a.description }}</td><td class="pre">{{ a.reason }}</td><td class="center">{{ a.false_alarm }}</td><td class="pre">{{ a.note }}</td></tr>
-    {% else %}
-    <tr><td colspan="8" class="center">N/A</td></tr>
-    {% endfor %}
-  </table>
-
-  <h2>CheckList Summary</h2>
-  <table class="grid-table">
-    <tr><th>分類</th><th>Normal</th><th>Warning</th><th>Failed</th><th>未勾選</th><th>SUM</th></tr>
-    {% for key, title in sheets.items() %}
-    {% set s = stats[key] %}
-    <tr class="strong"><td>{{ title }}</td><td>{{ s.N }}</td><td>{{ s.W }}</td><td>{{ s.F }}</td><td>{{ s.blank }}</td><td>{{ s.total }}</td></tr>
-    {% if key in ('software', 'physical') %}
-    {% for cat, c in s.categories.items() %}
-    <tr><td class="indent">{{ cat }}</td><td>{{ c.N }}</td><td>{{ c.W }}</td><td>{{ c.F }}</td><td>{{ c.blank }}</td><td>{{ c.total }}</td></tr>
-    {% endfor %}
-    {% endif %}
-    {% endfor %}
-  </table>
-
-  <h3>Warning / Failed 項目</h3>
-  <table class="grid-table">
-    <tr><th>分頁</th><th>Item</th><th>Device</th><th>Status Type</th><th>Result</th><th>Note</th></tr>
-    {% for res in abnormal %}
-    <tr><td>{{ sheets[res.item.sheet] }}</td><td>{{ res.item.item_no }}</td><td>{{ res.item.device_name }}</td>
-        <td>{{ res.item.status_type }}</td><td class="{{ 'warn' if res.result == 'W' else 'fail' }}">{{ RESULT_LABELS[res.result] }}</td>
-        <td class="pre">{{ res.note }}</td></tr>
-    {% else %}
-    <tr><td colspan="6" class="center">無</td></tr>
-    {% endfor %}
-  </table>
-
-  <h2>Daily Report_Screenshot</h2>
-  {% for s in sections %}
-  <h{{ 3 if s.level == 1 else 4 }}>{{ s.code }} {{ s.title }}</h{{ 3 if s.level == 1 else 4 }}>
-  {% set imgs = images_by_section.get(s.id) or [] %}
-  {% if imgs %}
-  <div class="shots">{% for img in imgs %}<img src="{{ url_for('images.show', report_id=report.id, image_id=img.id) }}" alt="{{ img.original_name }}" loading="lazy">{% endfor %}</div>
-  {% elif s.level > 1 or not sections[loop.index] or sections[loop.index].level == 1 %}
-  <p class="hint">（未上傳截圖）</p>
-  {% endif %}
-  {% endfor %}
-</article>
+<p class="hint no-print">以下為與原始範本（Coverpage + CheckList + Screenshot）相同排版的完整日報 PDF，首次產生約需 20 秒。</p>
+<iframe class="pdf-view" src="{{ url_for('views.pdf', report_id=report.id) }}" title="{{ report.doc_no }} PDF"></iframe>
 {% endblock %}

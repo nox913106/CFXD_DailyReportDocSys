@@ -126,3 +126,5 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; bac
   .form-grid .wide { grid-column: auto; }
   .form-grid.narrow { grid-template-columns: 1fr; }
 }
+
+.pdf-view { width: 100%; height: calc(100vh - 160px); min-height: 600px; border: 1px solid var(--border); background: #fff; }
