@@ -10,6 +10,8 @@ from flask import current_app
 
 from . import approval as perm
 from .approval import approvers, pending_for
+from .check_report import render as render_check_md
+from .check_report import snapshot
 from .checks import run_checks
 from .helpers import get_report
 from .models import (
@@ -18,6 +20,7 @@ from .models import (
     AlarmSummaryRow,
     ApprovalDelegation,
     AuditLog,
+    CheckReport,
     ChecklistItem,
     ChecklistResult,
     Report,
@@ -127,10 +130,14 @@ def detail(report_id):
     report = get_report(report_id)
     u = current_user
     review = perm.can_review(u, report)
+    snaps = report.check_reports.order_by(None).order_by(CheckReport.id.desc()).all()
     return render_template(
         "report_detail.html", report=report, can_review=review.allowed, principal=review.principal,
         checks=run_checks(report) if report.status != "voided" else None,
+        snaps=snaps, ai_snap=next((s for s in snaps if s.ai_status), None),
+        ai_enabled=bool(current_app.config.get("AI_BASE_URL")),
         can={
+            "ai": _can_request_ai(u, report),
             "edit": perm.can_edit(u, report), "submit": perm.can_submit(u, report),
             "delete": perm.can_delete(u, report), "void": perm.can_void(u, report),
             "request_void": perm.can_request_void(u, report),
@@ -156,6 +163,7 @@ def submit(report_id):
     report.submitted_at = datetime.now()
     report.submitted_by_id = current_user.id
     report.updated_by_id = current_user.id
+    snapshot(report, "submit", current_user, ai=True)  # 檢查結果.md，並排入 AI 建議
     db.session.commit()
     flash("已送出審核。", "success")
     return redirect(url_for("views.detail", report_id=report.id))
@@ -197,9 +205,46 @@ def review(report_id):
     report.review_comment = comment
     db.session.add(ReviewLog(report_id=report.id, action=action, actor_id=current_user.id,
                              on_behalf_of_id=principal.id if principal else None, comment=comment))
+    # 審核當下的檢查結果與決定，留給日後 RAG（哪些問題會被退回）
+    snapshot(report, action, current_user, review=(action, current_user, principal, comment))
     db.session.commit()
     flash(msg, "success")
     return redirect(url_for("views.detail", report_id=report.id))
+
+
+def _can_request_ai(u, report):
+    """AI 建議：撰寫中（送審前自我檢查）或送審中，可編輯或可審核的人才能要求重新產生。"""
+    if not current_app.config.get("AI_BASE_URL") or report.status not in ("draft", "rejected", "submitted"):
+        return False
+    return bool(perm.can_edit(u, report) or perm.can_review(u, report) or u.role in ("admin", "file_manager"))
+
+
+@bp.route("/reports/<int:report_id>/ai", methods=["POST"])
+def request_ai(report_id):
+    report = get_report(report_id)
+    if not _can_request_ai(current_user, report):
+        abort(403)
+    snapshot(report, "manual", current_user, ai=True)
+    db.session.commit()
+    flash("已依目前的檢查結果重新產生檢查結果.md，AI 建議產生中。", "success")
+    return redirect(url_for("views.detail", report_id=report.id))
+
+
+@bp.route("/reports/<int:report_id>/checks.md")
+def checks_md(report_id):
+    """下載檢查結果.md：指定快照（?snap=），或沒有指定時即時產生目前的檢查結果（不存檔）。"""
+    report = get_report(report_id)
+    sid = request.args.get("snap", type=int)
+    if sid:
+        snap = CheckReport.query.filter_by(id=sid, report_id=report.id).first_or_404()
+        md, stamp = snap.markdown, f"{snap.stage}_{snap.created_at:%Y%m%d%H%M%S}"
+    else:
+        md, stamp = render_check_md(report, stage="manual"), "目前"
+    from urllib.parse import quote
+
+    name = f"{report.doc_no}_{stamp}_檢查結果.md"
+    return Response(md, mimetype="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
 
 
 # ---------------------------------------------------------------- 代簽設定

@@ -44,6 +44,62 @@ def register_cli(app):
         db.session.commit()
         click.echo(f"已排入 {n} 張截圖。")
 
+    @app.cli.command("ai-worker")
+    @click.option("--once", is_flag=True, help="處理完目前排隊的工作就結束")
+    def ai_worker(once):
+        """AI 建議與提醒背景服務：依據檢查結果.md 呼叫地端 AI（由 systemd 以單一程序執行）。"""
+        from .ai import run_worker
+
+        run_worker(app, once=once)
+
+    @app.cli.command("check-md-backfill")
+    @click.option("--since", help="只處理這一天（YYYY-MM-DD）之後的日報")
+    def check_md_backfill(since):
+        """替還沒有檢查結果.md 的已核准日報補產生一份（建立 RAG 知識庫用，不產生 AI 建議）。"""
+        import datetime as dt
+
+        from . import db
+        from .check_report import snapshot
+        from .models import CheckReport, Report
+
+        q = Report.query.filter(Report.status == "approved", ~Report.check_reports.any())
+        if since:
+            q = q.filter(Report.report_date >= dt.date.fromisoformat(since))
+        n = 0
+        for r in q.order_by(Report.report_date):
+            snapshot(r, "backfill")
+            n += 1
+            if n % 20 == 0:
+                db.session.commit()
+        db.session.commit()
+        click.echo(f"已補產生 {n} 份檢查結果.md（共 {CheckReport.query.count()} 份）。")
+
+    @app.cli.command("import-check-md")
+    @click.argument("folder", type=click.Path(exists=True, file_okay=False))
+    def import_check_md(folder):
+        """把 DDoc_compare 產生的 <DocNo>_比對報告.md 複製到 CHECK_MD_DIR/ddoc_compare/（保留子資料夾結構）。"""
+        import os
+        import shutil
+
+        root = app.config.get("CHECK_MD_DIR")
+        if not root:
+            raise click.ClickException("沒有設定 CHECK_MD_DIR。")
+        dest_root = os.path.join(root, "ddoc_compare")
+        n = skipped = 0
+        for base, _, files in os.walk(folder):
+            for f in files:
+                if not f.endswith(".md"):
+                    continue
+                src = os.path.join(base, f)
+                dest = os.path.join(dest_root, os.path.relpath(src, folder))
+                if os.path.exists(dest) and os.path.getsize(dest) == os.path.getsize(src):
+                    skipped += 1
+                    continue
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.copy2(src, dest)
+                n += 1
+        click.echo(f"已匯入 {n} 份，略過 {skipped} 份已存在的檔案 → {dest_root}")
+
     @app.cli.command("create-admin")
     @click.option("--username", default="sysadmin", show_default=True, help="本機系統管理員帳號")
     @click.password_option(help="密碼（至少 12 個字元）")

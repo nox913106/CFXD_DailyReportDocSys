@@ -1,0 +1,51 @@
+{# AI 建議與提醒：依據檢查結果.md（CheckReport 快照）。位於檢查結果最上方。 #}
+{% set c_live = checks.counts() %}
+<div class="ai-box">
+  <div class="row-between">
+    <h3>AI 建議與提醒</h3>
+    <div class="actions">
+      {% if can.ai %}
+      <form method="post" action="{{ url_for('views.request_ai', report_id=report.id) }}" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="secondary small">{{ '重新產生' if ai_snap else '產生 AI 建議' }}</button>
+      </form>
+      {% endif %}
+      <a class="button secondary small" href="{{ url_for('views.checks_md', report_id=report.id, snap=ai_snap.id if ai_snap else (snaps[0].id if snaps else None)) }}">下載檢查結果.md</a>
+    </div>
+  </div>
+  {% if not ai_enabled %}
+  <p class="hint">尚未啟用。設定地端 AI 服務（<code>AI_BASE_URL</code>）並啟動 <code>dailyreport-ai</code> 後，
+    送審時會依據這份日報的檢查結果.md 自動產生建議與提醒。</p>
+  {% elif not ai_snap %}
+  <p class="hint">送審時會依據檢查結果.md 自動產生{% if can.ai %}，也可以先按「產生 AI 建議」做送審前的自我檢查{% endif %}。</p>
+  {% elif ai_snap.ai_status in ('pending', 'running') %}
+  <p class="ai-wait">{{ ai_snap.ai_state_label }}…依據 {{ ai_snap.created_at.strftime('%m/%d %H:%M') }} {{ ai_snap.stage_label }}時的檢查結果.md
+    {%- if ai_snap.ai_status == 'pending' %}（截圖辨識完成後才會開始）{% endif %}。請稍後重新整理。</p>
+  {% elif ai_snap.ai_status == 'error' %}
+  <p class="flash error">AI 建議產生失敗：{{ ai_snap.ai_error }}</p>
+  {% else %}
+  <div class="ai-body">{{ ai_snap.ai_markdown|ai_html }}</div>
+  {% if (ai_snap.errors, ai_snap.warnings, ai_snap.infos) != (c_live['錯誤'], c_live['警告'], c_live['提醒']) %}
+  <p class="flash">檢查結果在產生建議後已有變化（當時 錯誤 {{ ai_snap.errors }} / 警告 {{ ai_snap.warnings }} / 提醒 {{ ai_snap.infos }}，
+    現在 {{ c_live['錯誤'] }} / {{ c_live['警告'] }} / {{ c_live['提醒'] }}），建議重新產生。</p>
+  {% endif %}
+  {% endif %}
+  {% if ai_snap and ai_snap.ai_status == 'done' %}
+  <p class="hint">依據：{{ ai_snap.created_at.strftime('%Y-%m-%d %H:%M') }} {{ ai_snap.stage_label }}時的檢查結果.md
+    （錯誤 {{ ai_snap.errors }} / 警告 {{ ai_snap.warnings }} / 提醒 {{ ai_snap.infos }}）· 模型 {{ ai_snap.ai_model or '—' }} ·
+    {{ ai_snap.ai_at.strftime('%H:%M') if ai_snap.ai_at }} 產生。AI 建議僅供參考，核准或退回以檢查結果與審核者判斷為準。</p>
+  {% endif %}
+  {% if snaps|length > 1 or (snaps and not ai_snap) %}
+  <details>
+    <summary>歷次檢查結果.md（{{ snaps|length }} 份）</summary>
+    <table class="list">
+      <tr><th>時間</th><th>時機</th><th>錯誤 / 警告 / 提醒</th><th>AI</th><th></th></tr>
+      {% for s in snaps %}
+      <tr><td>{{ s.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ s.stage_label }}</td>
+        <td>{{ s.errors }} / {{ s.warnings }} / {{ s.infos }}</td><td>{{ s.ai_state_label or '—' }}</td>
+        <td><a href="{{ url_for('views.checks_md', report_id=report.id, snap=s.id) }}">下載</a></td></tr>
+      {% endfor %}
+    </table>
+  </details>
+  {% endif %}
+</div>

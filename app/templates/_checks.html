@@ -6,6 +6,7 @@
   {%- endif -%}
 {%- endmacro %}
 <section class="card no-print checks">
+  {% include "_ai.html" %}
   <div class="row-between">
     <h3>檢查結果{% if checks.baseline %}<span class="hint">（與 {{ checks.baseline.report_date }} 已核准日報 {{ checks.baseline.doc_no }} 比對）</span>{% endif %}</h3>
     <div>

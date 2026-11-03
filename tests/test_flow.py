@@ -20,6 +20,8 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setenv("SECRET_KEY", "test")
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setenv("CHECK_MD_DIR", str(tmp_path / "check_reports"))
+    monkeypatch.delenv("AI_BASE_URL", raising=False)
     monkeypatch.setenv("APPROVER_USERS", "boss,boss2")
     from app import create_app
 
@@ -708,3 +710,104 @@ def test_alarm_history(app):
     page.login("hist")
     html = page.get(f"/reports/{cur_id}")
     assert "告警歷程" in html and "超過 365 天" in html and "第 15 天" in html
+
+
+def test_check_report_and_ai(app, tmp_path):
+    """檢查結果.md：送審 / 退回 / 核准各存一份並匯出；AI 依據檢查結果.md 產生建議（背景服務、輸出跳脫）。"""
+    import http.server
+    import json
+    import threading
+
+    from app import ai, db
+    from app.models import CheckReport, ReportImage
+
+    boss, alice = Browser(app), Browser(app)
+    boss.login("boss")
+    alice.login("alice")
+
+    # 未啟用 AI：區塊保留、顯示說明；送審仍會產生檢查結果.md，但不排 AI
+    rid = submitted_report(app, alice, "2026-11-02")
+    html = alice.get(f"/reports/{rid}")
+    assert "AI 建議與提醒" in html and "尚未啟用" in html
+    with app.app_context():
+        s = CheckReport.query.filter_by(report_id=rid).one()
+        assert s.stage == "submit" and s.ai_status is None
+        text = (tmp_path / "check_reports" / s.file_path).read_text(encoding="utf-8")
+        assert text.startswith("---\ntype: \"cfxd-daily-report-check\"") and "## 一、今日文件內部一致性" in text
+        assert "### 二-1 跨日一致性" in text and 'stage: "submit"' in text
+
+    # 退回：快照含審核結果與意見（RAG 用）
+    boss.get(f"/reports/{rid}")
+    boss.post(f"/reports/{rid}/review", {"action": "reject", "comment": "Alarm 計數錯誤"})
+    with app.app_context():
+        rej = CheckReport.query.filter_by(report_id=rid, stage="reject").one()
+        assert "## 三、審核結果" in rej.markdown and "Alarm 計數錯誤" in rej.markdown
+
+    # 啟用 AI，再送審 -> 排入 AI；截圖還在辨識時先等
+    app.config["AI_BASE_URL"] = "http://ai.invalid/v1"
+    alice.get(f"/reports/{rid}")
+    alice.post(f"/reports/{rid}/submit")
+    with app.app_context():
+        snap = CheckReport.query.filter_by(report_id=rid).order_by(CheckReport.id.desc()).first()
+        assert snap.stage == "submit" and snap.ai_status == "pending"
+        img = ReportImage(report_id=rid, kind="screenshot", filename="x.png", ocr_status="pending")
+        db.session.add(img)
+        db.session.commit()
+        assert ai.claim_next(db) is None  # 等截圖辨識
+        img.ocr_status = "error"
+        db.session.commit()
+
+        seen = {}
+
+        def fake_llm(messages):
+            seen["messages"] = messages
+            return "## 建議\n- **建議退回修正** <script>alert(1)</script>\n- [一-2] 告警計數不符", "test-model"
+
+        assert ai.process_one(db, llm=fake_llm)
+        snap = db.session.get(CheckReport, snap.id)
+        assert snap.ai_status == "done" and snap.ai_model == "test-model"
+        user_msg = seen["messages"][1]["content"]
+        assert "檢查結果.md" in user_msg and "## 總覽" in user_msg
+        assert "<details>" not in user_msg  # 逐張明細不送
+        assert "先前被退回時的檢查結果" in user_msg and "Alarm 計數錯誤" in user_msg  # RAG：先前退回的版本
+        assert "1 張截圖辨識失敗" in snap.markdown  # AI 產生前依最新 OCR 狀態更新 .md
+        assert not ai.process_one(db, llm=fake_llm)
+
+    html = boss.get(f"/reports/{rid}")
+    assert "<strong>建議退回修正</strong>" in html and "&lt;script&gt;" in html and "<script>alert" not in html
+    assert "模型 test-model" in html and "歷次檢查結果.md（3 份）" in html
+
+    # 手動重新產生、下載 .md
+    boss.post(f"/reports/{rid}/ai")
+    with app.app_context():
+        assert CheckReport.query.filter_by(report_id=rid, stage="manual", ai_status="pending").count() == 1
+    r = boss.c.get(f"/reports/{rid}/checks.md")
+    assert r.status_code == 200 and r.mimetype == "text/markdown" and "日報檢查結果" in r.get_data(as_text=True)
+
+    # 一線使用者不能替送審中、別人審的日報要求 AI（不能編輯也不能審核）
+    alice.post(f"/reports/{rid}/ai", status=403)
+
+    # 真正的 HTTP 呼叫：OpenAI 相容 API，推理模型的 <think> 會被移除
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            seen["auth"] = self.headers.get("Authorization")
+            seen["path"] = self.path
+            out = json.dumps({"model": body["model"], "choices": [
+                {"message": {"role": "assistant", "content": "<think>...</think>\n## 建議\n可核准"}}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(out)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.handle_request, daemon=True).start()
+    app.config.update(AI_BASE_URL=f"http://127.0.0.1:{srv.server_port}/v1", AI_MODEL="qwen3", AI_API_KEY="k")
+    with app.app_context():
+        text, model = ai.chat([{"role": "user", "content": "hi"}])
+    srv.server_close()
+    assert text == "## 建議\n可核准" and model == "qwen3"
+    assert seen["path"] == "/v1/chat/completions" and seen["auth"] == "Bearer k"

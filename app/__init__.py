@@ -51,6 +51,15 @@ def create_app():
         PDF_TEMPLATE_XLSX=os.environ.get("PDF_TEMPLATE_XLSX")
         or os.path.join(app.instance_path, "templates", "checklist.xlsx"),
         FONT_DIR=os.environ.get("FONT_DIR") or os.path.join(app.instance_path, "fonts"),
+        # 檢查結果.md 匯出位置（RAG 知識庫來源，可設成 NAS 路徑）；設成空字串則只存在資料庫
+        CHECK_MD_DIR=os.environ.get("CHECK_MD_DIR", os.path.join(app.instance_path, "check_reports")),
+        # 地端 AI（OpenAI 相容 API，例如 Ollama 的 http://ai-host:11434/v1）；沒設定 AI_BASE_URL 則不啟用
+        AI_BASE_URL=os.environ.get("AI_BASE_URL", ""),
+        AI_MODEL=os.environ.get("AI_MODEL", ""),
+        AI_API_KEY=os.environ.get("AI_API_KEY", ""),
+        AI_TIMEOUT=int(os.environ.get("AI_TIMEOUT", "180")),
+        AI_CONTEXT_REPORTS=int(os.environ.get("AI_CONTEXT_REPORTS", "3")),
+        AI_MAX_CHARS=int(os.environ.get("AI_MAX_CHARS", "24000")),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
     )
@@ -76,11 +85,12 @@ def create_app():
     app.register_blueprint(editors_bp)
     app.register_blueprint(images_bp)
 
-    from . import ocr
+    from . import ai, ocr
 
     app.jinja_env.globals.update(STATUS_LABELS=models.STATUS_LABELS, RESULT_LABELS=models.RESULT_LABELS,
                                  REVIEW_ACTION_LABELS=models.REVIEW_ACTION_LABELS,
                                  ocr_status=ocr.status_for, ocr_clock=ocr.clock_of)
+    app.jinja_env.filters["ai_html"] = ai.md_to_html
     app.jinja_env.tests["ocr_is"] = lambda img, code, day: ocr.status_for(img, day)[0] == code
 
     with app.app_context():

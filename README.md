@@ -108,6 +108,42 @@ flask --app wsgi create-admin --username sysadmin      # 建立或重設密碼
 更新規則後可執行 `flask --app wsgi ocr-requeue [--date YYYY-MM-DD]`。
 以 2026-11-03 的 85 張實際截圖驗證：77 張日期正確，8 張 12 NVR 畫面本身沒有日期（6 張只有時間、2 張沒有時鐘）。
 
+### 檢查結果.md 與 AI 建議
+
+**檢查結果.md**：送審、核准、退回時，系統把當下的檢查結果存成一份 Markdown（資料庫一份，並匯出到
+`CHECK_MD_DIR/<年>/<月>/<文件編號>_R<版次>_<時機>_<時間>_檢查結果.md`）。結構與 DDoc_compare 的
+`<DocNo>_比對報告.md` 相同（一-1 ～ 一-8 今日文件內部一致性、二-1 ～ 二-4 跨日比對，另加二-6 告警歷程），
+所以兩邊的檔案可以放進同一個 RAG 知識庫：
+
+- 檔案開頭有 YAML front matter（文件編號、日期、時機、錯誤 / 警告 / 提醒數、比對基準），RAG 可依此過濾。
+- 核准 / 退回的檔案多一節「三、審核結果」（決定、簽核者、代簽、意見），AI 可以學到哪些問題會被退回。
+- 檔案先寫成 `.part` 再改名，收錄程式不會讀到寫一半的檔案；匯出失敗不影響審核。
+- 日報頁可下載任一版本的檢查結果.md；`CHECK_MD_DIR` 可設成 NAS 路徑。
+- `flask --app wsgi check-md-backfill [--since YYYY-MM-DD]`：替舊的已核准日報補產生檢查結果.md。
+- `flask --app wsgi import-check-md <資料夾>`：把 DDoc_compare 產生的比對報告.md 複製到 `CHECK_MD_DIR/ddoc_compare/`。
+  DDoc_compare 的 .md 是每次比對的輸出，存在它設定的 NAS 資料夾，不在 DDoc_compare 的程式庫裡，因此要從 NAS 匯入。
+
+**AI 建議與提醒**：檢查結果最上方保留一個區塊。依據只有檢查結果.md：
+
+- 送審時自動排入；撰寫人也可以在送審前按「產生 AI 建議」自我檢查，審核者可「重新產生」。
+- 背景服務 `dailyreport-ai` 呼叫地端 AI（OpenAI 相容的 Chat Completions API：Ollama、LM Studio、llama.cpp、vLLM），
+  網頁不等 AI 回應。截圖還在 OCR 時先等辨識完成（最多 30 分鐘），並在產生前依最新辨識結果更新檢查結果.md。
+- 送給 AI 的內容：本次檢查結果.md（不含截圖逐張明細），加上 RAG 參考：同一份日報先前被退回時的檢查結果、
+  最近 60 天其他日報被退回時的檢查結果（`app/ai.py` 的 `retrieve_context()`，日後改用向量檢索只需替換這個函式）。
+- AI 必須標出依據的步驟編號（一-2、二-6…），不可編造檢查結果裡沒有的內容；回覆一律跳脫 HTML 後才顯示。
+- 產生後檢查結果若有變化（數量不同），區塊會提示重新產生。AI 建議僅供參考，不會自動核准或退回。
+- 沒有設定 `AI_BASE_URL` 時區塊顯示「尚未啟用」，其他功能不受影響。
+
+| 變數 | 說明 | 預設 |
+|---|---|---|
+| `CHECK_MD_DIR` | 檢查結果.md 匯出資料夾（空字串 = 只存資料庫） | `instance/check_reports` |
+| `AI_BASE_URL` | 地端 AI 的 OpenAI 相容 API，例如 `http://ai-host:11434/v1`（Ollama） | 空（不啟用） |
+| `AI_MODEL` | 模型名稱，例如 `qwen3:32b` | |
+| `AI_API_KEY` | 選填，API 需要時才設定 | |
+| `AI_TIMEOUT` | 單次呼叫逾時秒數 | 180 |
+| `AI_CONTEXT_REPORTS` | RAG 參考的過去檢查結果份數（0 = 不參考） | 3 |
+| `AI_MAX_CHARS` | 本次檢查結果.md 送給 AI 的最大字數 | 24000 |
+
 ### 檢查表主檔
 
 `app/seed/checklist.json` 由原始 Excel 轉出，首次啟動時匯入資料庫。項目編號已依群組順序重新編號
@@ -157,6 +193,9 @@ sudo .venv/bin/python -c "from rapidocr import RapidOCR; RapidOCR()"   # 預先�
 
 sudo cp deploy/dailyreport.service deploy/dailyreport-ocr.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now dailyreport dailyreport-ocr
+# 有地端 AI 主機時（.env 設定 AI_BASE_URL、AI_MODEL）：
+sudo cp deploy/dailyreport-ai.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now dailyreport-ai
 
 sudo cp deploy/nginx-dailyreport.conf /etc/nginx/sites-available/dailyreport
 sudo ln -s /etc/nginx/sites-available/dailyreport /etc/nginx/sites-enabled/

@@ -154,3 +154,9 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .ocr-summary { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 8px; }
 .ocr-summary button { margin-left: auto; }
 .history td.long { color: var(--warn, #b26a00); font-weight: bold; }
+.ai-box { border: 1px solid #c7d2fe; background: #f5f7ff; border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; }
+.ai-box h3 { margin: 0; }
+.ai-box .ai-body h4 { margin: 10px 0 4px; }
+.ai-box .ai-body ul { margin: 4px 0 4px 20px; padding: 0; }
+.ai-box .ai-wait { color: #3730a3; }
+button.small, .button.small { padding: 3px 10px; font-size: 13px; }

@@ -346,3 +346,45 @@ class AuditLog(db.Model):
     target = db.Column(db.String(256), default="")
     detail = db.Column(db.Text, default="")
     created_at = db.Column(db.DateTime, default=datetime.now)
+
+
+CHECK_STAGE_LABELS = {"submit": "送審", "approve": "核准", "reject": "退回", "manual": "手動重新產生",
+                      "backfill": "補產生"}
+AI_STATE_LABELS = {"pending": "等待產生", "running": "產生中", "done": "已產生", "error": "產生失敗"}
+
+
+class CheckReport(db.Model):
+    """檢查結果.md 快照：送審、核准、退回時各存一份（與 DDoc_compare 的 <DocNo>_比對報告.md 相同結構）。
+
+    用途：審核時的 AI 建議依據、日後 RAG 的知識庫（同時匯出成檔案，見 CHECK_MD_DIR）。
+    日報刪除時快照一併刪除，但已匯出的 .md 檔案保留。
+    """
+
+    id = db.Column(db.Integer, primary_key=True)
+    report_id = db.Column(db.Integer, db.ForeignKey("report.id"), nullable=False, index=True)
+    report = db.relationship("Report", backref=db.backref("check_reports", cascade="all, delete-orphan",
+                                                          order_by="CheckReport.id", lazy="dynamic"))
+    stage = db.Column(db.String(12), nullable=False)  # submit / approve / reject / manual / backfill
+    created_at = db.Column(db.DateTime, default=datetime.now, nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    markdown = db.Column(db.Text, nullable=False)
+    errors = db.Column(db.Integer, default=0)
+    warnings = db.Column(db.Integer, default=0)
+    infos = db.Column(db.Integer, default=0)
+    file_path = db.Column(db.String(512))  # 匯出的 .md（相對 CHECK_MD_DIR）
+    # AI 建議與提醒（背景服務 ai-worker 產生）：None（不產生）/ pending / running / done / error
+    ai_status = db.Column(db.String(12), index=True)
+    ai_markdown = db.Column(db.Text)
+    ai_model = db.Column(db.String(128))
+    ai_error = db.Column(db.Text)
+    ai_started_at = db.Column(db.DateTime)
+    ai_at = db.Column(db.DateTime)
+
+    @property
+    def stage_label(self):
+        return CHECK_STAGE_LABELS.get(self.stage, self.stage)
+
+    @property
+    def ai_state_label(self):
+        return AI_STATE_LABELS.get(self.ai_status, "")

@@ -1,0 +1,18 @@
+[Unit]
+Description=CFXD Daily Report AI review suggestions worker
+After=network.target dailyreport.service
+
+[Service]
+User=dailyreport
+Group=www-data
+WorkingDirectory=/opt/dailyreport
+EnvironmentFile=/opt/dailyreport/.env
+# 依據檢查結果.md 呼叫地端 AI（OpenAI 相容 API），只做網路請求，記憶體需求很小
+ExecStart=/opt/dailyreport/.venv/bin/flask --app wsgi ai-worker
+Restart=always
+RestartSec=10
+Nice=10
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
