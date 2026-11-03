@@ -128,3 +128,8 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 }
 
 .pdf-view { width: 100%; height: calc(100vh - 160px); min-height: 600px; border: 1px solid var(--border); background: #fff; }
+
+.badge.voided { background: #e5e7eb; color: #6b7280; text-decoration: line-through; }
+.danger-zone summary { cursor: pointer; font-weight: 600; color: #b91c1c; }
+.danger-zone form { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.danger-zone label { flex: 1 1 280px; }

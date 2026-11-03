@@ -11,9 +11,15 @@
       <label>Revision<input type="number" min="0" name="revision" value="{{ report.revision }}"></label>
       <label>Issue Purpose<input name="issue_purpose" value="{{ report.issue_purpose }}"></label>
       <label>Inspection Time（檢查表）<input name="inspection_time" value="{{ report.inspection_time }}"></label>
-      <label>Author<input value="{{ report.author.name }}" disabled></label>
+      <label>Author（撰寫人）
+        <select name="author_id" {{ 'disabled' if not can_assign }}>
+          {% for u in authors %}
+          <option value="{{ u.id }}" {{ 'selected' if u.id == report.author_id }}>{{ u.name }}（{{ u.role_label }}）</option>
+          {% endfor %}
+        </select>
+      </label>
       <label>Approval（核准人）
-        <select name="approver_id">
+        <select name="approver_id" {{ 'disabled' if not can_assign }}>
           <option value="" {{ 'selected' if not report.approver_id }}>（未指定：任何審核者都可核准）</option>
           {% for u in approvers %}
           <option value="{{ u.id }}" {{ 'selected' if u.id == report.approver_id }}>{{ u.name }}</option>
@@ -28,7 +34,9 @@
              placeholder="例：Akshay Sampath / Allen Tsai / Jhengyu Wu"></label>
     </div>
     <p class="hint">文件編號依日期自動產生；新增日報時會沿用前一份日報的值班人員與核准人。
-      核准人可在「代簽設定」授權其他帳號代簽，代簽時文件上的 Approval / Document Approved 仍顯示核准人本人。</p>
+      {% if can_assign %}{% if can_assign.principal %}您以 {{ can_assign.principal.name }} 的代理人身分指派。{% endif %}
+      {% else %}撰寫人與核准人由檔案管理員（或其授權的二線管理員）指派。{% endif %}
+      二線管理員代為核准時，文件上的 Approval / Document Approved 仍顯示核准人本人。</p>
     <button type="submit">儲存</button>
   </fieldset>
 </form>

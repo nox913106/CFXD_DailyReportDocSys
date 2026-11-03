@@ -4,6 +4,7 @@ from datetime import datetime
 from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 from flask_login import login_required, login_user, logout_user
 from ldap3 import ALL, SUBTREE, Connection, Server, Tls
+from werkzeug.security import check_password_hash
 from ldap3.core.exceptions import LDAPException
 from ldap3.utils.conv import escape_filter_chars
 
@@ -61,6 +62,14 @@ def ad_authenticate(username, password):
         conn.unbind()
 
 
+def _next_url():
+    next_url = request.args.get("next", "")
+    # 只允許站內相對路徑，避免開放式重新導向
+    if not next_url.startswith("/") or next_url.startswith("//"):
+        next_url = url_for("views.index")
+    return next_url
+
+
 @bp.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -69,29 +78,39 @@ def login():
         username = username.split("\\")[-1].split("@")[0].lower()
         password = request.form.get("password", "")
 
+        local = User.query.filter_by(username=username).first()
+        if local is not None and local.password_hash:
+            # 本機帳號（系統管理員）：不經 AD，只比對本機密碼
+            if password and check_password_hash(local.password_hash, password):
+                local.last_login = datetime.now()
+                db.session.commit()
+                login_user(local)
+                current_app.logger.warning("本機帳號 %s 登入", username)
+                return redirect(_next_url())
+            flash("帳號或密碼錯誤，或您沒有使用此系統的權限。", "error")
+            return render_template("login.html")
+
         if current_app.config["AUTH_MODE"] == "dev":
             result = (username, None, False) if username else None
         else:
             result = ad_authenticate(username, password)
 
         if result:
-            display_name, email, is_approver = result
-            is_approver = is_approver or username in current_app.config["APPROVER_USERS"]
+            display_name, email, in_approver_group = result
             user = User.query.filter_by(username=username).first()
             if not user:
+                # 首次登入：預設一線使用者；設定檔 / AD 群組指定的帳號預設為檔案管理員。
+                # 之後角色一律由系統管理員在「帳號管理」設定，登入時不再變更。
                 user = User(username=username)
+                bootstrap = in_approver_group or username in current_app.config["APPROVER_USERS"]
+                user.set_role("file_manager" if bootstrap else "first_line")
                 db.session.add(user)
             user.display_name = display_name
             user.email = email
-            user.is_approver = is_approver
             user.last_login = datetime.now()
             db.session.commit()
             login_user(user)
-            next_url = request.args.get("next", "")
-            # 只允許站內相對路徑，避免開放式重新導向
-            if not next_url.startswith("/") or next_url.startswith("//"):
-                next_url = url_for("views.index")
-            return redirect(next_url)
+            return redirect(_next_url())
 
         flash("帳號或密碼錯誤，或您沒有使用此系統的權限。", "error")
 

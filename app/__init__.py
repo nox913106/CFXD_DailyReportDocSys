@@ -63,12 +63,18 @@ def create_app():
     app.register_blueprint(editors_bp)
     app.register_blueprint(images_bp)
 
-    app.jinja_env.globals.update(STATUS_LABELS=models.STATUS_LABELS, RESULT_LABELS=models.RESULT_LABELS)
+    app.jinja_env.globals.update(STATUS_LABELS=models.STATUS_LABELS, RESULT_LABELS=models.RESULT_LABELS,
+                                 REVIEW_ACTION_LABELS=models.REVIEW_ACTION_LABELS)
 
     with app.app_context():
         db.create_all()
         _add_missing_columns()
+        _migrate_roles()
         seed_master_data()
+
+    from .cli import register_cli
+
+    register_cli(app)
 
     return app
 
@@ -87,3 +93,15 @@ def _add_missing_columns():
                 ddl = col.type.compile(dialect=db.engine.dialect)
                 with db.engine.begin() as conn:
                     conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {ddl}'))
+
+
+def _migrate_roles():
+    """舊版只有 is_approver：轉成角色（審核者 -> 檔案管理員，其餘 -> 一線使用者）。"""
+    from .models import User
+
+    changed = False
+    for u in User.query.filter((User.role.is_(None)) | (User.role == "")):
+        u.set_role("file_manager" if u.is_approver else "first_line")
+        changed = True
+    if changed:
+        db.session.commit()

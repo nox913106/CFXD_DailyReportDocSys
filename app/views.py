@@ -4,9 +4,25 @@ from flask import Blueprint, Response, abort, flash, redirect, render_template, 
 from flask_login import current_user, login_required
 
 from . import db, docno
-from .approval import active_principals, approvers, pending_for, review_role
+import os
+
+from flask import current_app
+
+from . import approval as perm
+from .approval import approvers, pending_for
 from .helpers import get_report
-from .models import AlarmSummaryRow, ApprovalDelegation, ChecklistItem, ChecklistResult, Report, ReviewLog, User
+from .models import (
+    ASSIGNABLE_ROLES,
+    ROLE_LABELS,
+    AlarmSummaryRow,
+    ApprovalDelegation,
+    AuditLog,
+    ChecklistItem,
+    ChecklistResult,
+    Report,
+    ReviewLog,
+    User,
+)
 
 bp = Blueprint("views", __name__)
 
@@ -30,13 +46,17 @@ def index():
         .order_by(Report.report_date.desc())
         .all()
     )
+    pending, void_requests = pending_for(current_user)
     return render_template(
-        "index.html", reports=reports, month=month, pending=pending_for(current_user), today=date.today().isoformat()
+        "index.html", reports=reports, month=month, pending=pending, void_requests=void_requests,
+        today=date.today().isoformat(), can_create=perm.can_create(current_user),
     )
 
 
 @bp.route("/reports/new", methods=["POST"])
 def create():
+    if not perm.can_create(current_user):
+        abort(403)
     try:
         d = datetime.strptime(request.form.get("report_date", ""), "%Y-%m-%d").date()
     except ValueError:
@@ -102,15 +122,25 @@ def create():
 def detail(report_id):
     """完整日報檢視：嵌入與原始範本相同排版的 PDF，並提供送審/審核操作。"""
     report = get_report(report_id)
-    can_review, principal, _ = review_role(current_user, report)
-    return render_template("report_detail.html", report=report, can_review=can_review, principal=principal)
+    u = current_user
+    review = perm.can_review(u, report)
+    return render_template(
+        "report_detail.html", report=report, can_review=review.allowed, principal=review.principal,
+        can={
+            "edit": perm.can_edit(u, report), "submit": perm.can_submit(u, report),
+            "delete": perm.can_delete(u, report), "void": perm.can_void(u, report),
+            "request_void": perm.can_request_void(u, report),
+            "decide_void": perm.can_decide_void_request(u, report),
+        },
+    )
 
 
 @bp.route("/reports/<int:report_id>/submit", methods=["POST"])
 def submit(report_id):
     report = get_report(report_id)
-    if not report.editable:
-        flash("此日報目前不能送審。", "error")
+    d = perm.can_submit(current_user, report)
+    if not d:
+        flash(d.reason, "error")
         return redirect(url_for("views.detail", report_id=report.id))
 
     missing = report.results.filter(ChecklistResult.result.is_(None)).count()
@@ -129,14 +159,15 @@ def submit(report_id):
 @bp.route("/reports/<int:report_id>/review", methods=["POST"])
 def review(report_id):
     report = get_report(report_id)
-    allowed, principal, reason = review_role(current_user, report)
-    if not allowed:
-        # 沒有任何審核身分（非審核者、也不是任何人的代簽人），或日報不歸他審核：403
-        no_role = not current_user.is_approver and not active_principals(current_user)
-        if no_role or (report.status == "submitted" and report.author_id != current_user.id):
+    d = perm.can_review(current_user, report)
+    if not d:
+        if report.status == "submitted" and report.author_id != current_user.id:
             abort(403)
-        flash(reason, "error")
+        if current_user.role == "first_line":
+            abort(403)
+        flash(d.reason, "error")
         return redirect(url_for("views.detail", report_id=report.id))
+    principal = d.principal
 
     action = request.form.get("action")
     comment = request.form.get("comment", "").strip()
@@ -148,7 +179,7 @@ def review(report_id):
 
     signer = principal or current_user  # 文件上的簽核者：代簽時仍是核准人本人
     if report.approver_id is None:
-        report.approver_id = current_user.id
+        report.approver_id = signer.id
     if action == "approve":
         report.status = "approved"
         report.approver_name = signer.name
@@ -173,8 +204,10 @@ def review(report_id):
 @bp.route("/delegations", methods=["GET", "POST"])
 def delegations():
     """核准人設定代簽人；代簽人可看到自己被授權代誰簽核。"""
+    if current_user.role == "first_line":
+        abort(403)
     if request.method == "POST":
-        if not current_user.is_approver:
+        if current_user.role != "file_manager":
             abort(403)
         delegate = db.session.get(User, request.form.get("delegate_id", type=int) or 0)
         try:
@@ -184,8 +217,8 @@ def delegations():
         except ValueError:
             flash("日期格式錯誤。", "error")
             return redirect(url_for("views.delegations"))
-        if not delegate or delegate.id == current_user.id:
-            flash("請選擇其他帳號作為代簽人。", "error")
+        if not delegate or delegate.id == current_user.id or delegate.role != "second_line":
+            flash("請選擇一位二線管理員作為代理人。", "error")
         elif end and end < start:
             flash("結束日期不能早於開始日期。", "error")
         else:
@@ -198,11 +231,11 @@ def delegations():
                   "success")
         return redirect(url_for("views.delegations"))
 
-    mine = (ApprovalDelegation.query.filter_by(principal_id=current_user.id)
-            .order_by(ApprovalDelegation.id.desc()).all())
+    q = ApprovalDelegation.query.order_by(ApprovalDelegation.id.desc())
+    mine = q.all() if current_user.is_admin else q.filter_by(principal_id=current_user.id).all()
     granted = (ApprovalDelegation.query.filter_by(delegate_id=current_user.id)
                .order_by(ApprovalDelegation.id.desc()).all())
-    users = User.query.filter(User.id != current_user.id).order_by(User.display_name, User.username).all()
+    users = User.query.filter_by(role="second_line").order_by(User.display_name, User.username).all()
     return render_template("delegations.html", mine=mine, granted=granted, users=users,
                            today=date.today().isoformat())
 
@@ -210,13 +243,139 @@ def delegations():
 @bp.route("/delegations/<int:delegation_id>/revoke", methods=["POST"])
 def revoke_delegation(delegation_id):
     d = db.session.get(ApprovalDelegation, delegation_id) or abort(404)
-    if d.principal_id != current_user.id:
+    if d.principal_id != current_user.id and not current_user.is_admin:
         abort(403)
     if d.revoked_at is None:
         d.revoked_at = datetime.now()
         db.session.commit()
         flash(f"已撤銷 {d.delegate.name} 的代簽權限。", "success")
     return redirect(url_for("views.delegations"))
+
+
+# ---------------------------------------------------------------- 作廢 / 刪除
+
+
+def _log(report, action, principal=None, comment=""):
+    db.session.add(ReviewLog(report_id=report.id, action=action, actor_id=current_user.id,
+                             on_behalf_of_id=principal.id if principal else None, comment=comment))
+
+
+@bp.route("/reports/<int:report_id>/void", methods=["POST"])
+def void(report_id):
+    """作廢：保留日期與文件編號，內容唯讀。"""
+    report = get_report(report_id)
+    d = perm.can_void(current_user, report)
+    if not d:
+        abort(403) if current_user.role == "first_line" else flash(d.reason, "error")
+        return redirect(url_for("views.detail", report_id=report.id))
+    reason = request.form.get("reason", "").strip() or (report.void_request_reason or "")
+    if not reason:
+        flash("作廢時請填寫原因。", "error")
+        return redirect(url_for("views.detail", report_id=report.id))
+    _void(report, reason, d.principal)
+    db.session.commit()
+    flash(f"已作廢 {report.doc_no}，文件編號保留不再使用。", "success")
+    return redirect(url_for("views.detail", report_id=report.id))
+
+
+def _void(report, reason, principal):
+    report.status = "voided"
+    report.void_reason = reason
+    report.voided_at = datetime.now()
+    report.voided_by_id = current_user.id
+    report.updated_by_id = current_user.id
+    _log(report, "void", principal, reason)
+
+
+@bp.route("/reports/<int:report_id>/void-request", methods=["POST"])
+def request_void(report_id):
+    report = get_report(report_id)
+    d = perm.can_request_void(current_user, report)
+    if not d:
+        flash(d.reason, "error")
+        return redirect(url_for("views.detail", report_id=report.id))
+    reason = request.form.get("reason", "").strip()
+    if not reason:
+        flash("申請作廢請填寫原因。", "error")
+        return redirect(url_for("views.detail", report_id=report.id))
+    report.void_request_reason = reason
+    report.void_requested_at = datetime.now()
+    report.void_requested_by_id = current_user.id
+    _log(report, "void_request", None, reason)
+    db.session.commit()
+    flash("已送出作廢申請，待檔案管理員核定。", "success")
+    return redirect(url_for("views.detail", report_id=report.id))
+
+
+@bp.route("/reports/<int:report_id>/void-request/decide", methods=["POST"])
+def decide_void(report_id):
+    report = get_report(report_id)
+    d = perm.can_decide_void_request(current_user, report)
+    if not d:
+        abort(403) if current_user.role == "first_line" else flash(d.reason, "error")
+        return redirect(url_for("views.detail", report_id=report.id))
+    comment = request.form.get("comment", "").strip()
+    if request.form.get("action") == "approve":
+        _void(report, report.void_request_reason + (f"（{comment}）" if comment else ""), d.principal)
+        flash(f"已核定作廢 {report.doc_no}。", "success")
+    else:
+        _log(report, "void_request_reject", d.principal, comment)
+        flash("已駁回作廢申請。", "success")
+    report.void_requested_at = None
+    db.session.commit()
+    return redirect(url_for("views.detail", report_id=report.id))
+
+
+@bp.route("/reports/<int:report_id>/delete", methods=["POST"])
+def delete(report_id):
+    """刪除日報（含截圖檔）。刪除後該日期可重新建立；要保留編號請改用作廢。"""
+    report = get_report(report_id)
+    if not perm.can_delete(current_user, report):
+        abort(403)
+    if request.form.get("confirm_doc_no", "").strip() != report.doc_no:
+        flash("請輸入完整文件編號以確認刪除。", "error")
+        return redirect(url_for("views.detail", report_id=report.id))
+    folder = os.path.join(current_app.config["UPLOAD_DIR"], str(report.id))
+    db.session.add(AuditLog(action="delete_report", actor_id=current_user.id, target=report.doc_no,
+                            detail=f"{report.report_date} {report.status_label}"))
+    for log in report.review_logs:
+        db.session.delete(log)
+    db.session.delete(report)
+    db.session.commit()
+    if os.path.isdir(folder):
+        import shutil
+
+        shutil.rmtree(folder, ignore_errors=True)
+    flash(f"已刪除 {report.doc_no}。", "success")
+    return redirect(url_for("views.index"))
+
+
+# ---------------------------------------------------------------- 帳號管理（系統管理員）
+
+
+@bp.route("/admin/users", methods=["GET", "POST"])
+def users():
+    if not perm.can_manage_users(current_user):
+        abort(403)
+    if request.method == "POST":
+        user = db.session.get(User, request.form.get("user_id", type=int) or 0) or abort(404)
+        role = request.form.get("role")
+        if user.role == "admin" or role not in ASSIGNABLE_ROLES:
+            abort(400)
+        if user.role != role:
+            db.session.add(AuditLog(action="set_role", actor_id=current_user.id, target=user.username,
+                                    detail=f"{ROLE_LABELS.get(user.role)} → {ROLE_LABELS[role]}"))
+            user.set_role(role)
+            if role != "second_line":
+                # 不再是二線管理員：撤銷其所有代理授權
+                for dl in ApprovalDelegation.query.filter_by(delegate_id=user.id, revoked_at=None):
+                    dl.revoked_at = datetime.now()
+            db.session.commit()
+            flash(f"{user.name} 已設為{ROLE_LABELS[role]}。", "success")
+        return redirect(url_for("views.users"))
+    all_users = User.query.order_by(User.role, User.display_name, User.username).all()
+    logs = AuditLog.query.order_by(AuditLog.id.desc()).limit(50).all()
+    return render_template("users.html", users=all_users, roles=ASSIGNABLE_ROLES, role_labels=ROLE_LABELS, logs=logs)
 
 
 @bp.route("/reports/<int:report_id>/pdf")

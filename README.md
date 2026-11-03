@@ -45,19 +45,35 @@ CheckList 的圓餅圖數值由範本公式（COUNTIFS、Qty / SUM）依日報�
 
 ### 權限
 
-- 所有能登入的 AD 帳號都可以新增與編輯草稿 / 退回的日報。
-- 審核者：`LDAP_APPROVER_GROUP` 群組成員，或列在 `APPROVER_USERS` 的帳號（每次登入時更新）。
-- 核准人：每份日報在「基本資料」指定一位核准人（新日報沿用前一份；系統只有一位審核者時自動指定）。
-  只有該核准人或其代簽人能核准 / 退回；未指定時任何審核者都可以審核。
+| 角色 | 可執行的動作 |
+|---|---|
+| 系統管理員 | 所有動作。本機帳號（不經 AD），平時不使用；在「帳號管理」設定其他人的角色 |
+| 檔案管理員 | 指派（撰寫人、核准人）、審核、退件、作廢、新增、編輯、刪除；授權二線管理員代理 |
+| 二線管理員 | 新增、編輯、刪除；經檔案管理員授權後可代審核、代指派、代退件、代作廢 |
+| 一線使用者 | 送審、新增、編輯（含別人的草稿 / 退回）、申請作廢 |
 
-### 代簽
+- AD 帳號首次登入建立為一線使用者；`APPROVER_USERS` 或 `LDAP_APPROVER_GROUP` 內的帳號首次登入時預設為檔案管理員。
+  之後角色一律由系統管理員在右上角「帳號管理」調整，登入時不會再變更。
+- 核准人：每份日報在「基本資料」指定一位檔案管理員為核准人（新日報沿用前一份；只有一位檔案管理員時自動指定）。
+  只有該核准人或其授權的二線管理員能核准 / 退件；未指定時任何檔案管理員都可以審核。
+- **作廢**：保留日期與文件編號（流水號不會被後續日報沖掉），內容唯讀，處理紀錄保留原因。
+  一線使用者送出「申請作廢」，由檔案管理員（或其代理人）核定或駁回。
+- **刪除**：移除整份日報與截圖，該日期可重新建立；需輸入文件編號確認，並寫入稽核紀錄。
 
-- 核准人在右上角「代簽設定」授權其他帳號（不必是審核者，但需登入過一次）代簽，可設定期間與備註，隨時撤銷。
-- 代簽人登入後，首頁「待我審核」會列出可代簽的日報（標示「代簽」），審核頁顯示「代 Alan Lin 簽核」。
-- **文件顯示不變**：代簽核准後，PDF 封面的 Approval、Revision Control 的 Approval 與 Shift Record 的
-  Document Approved 仍顯示核准人本人（例如 Alan Lin）。
-- 稽核：系統另記錄實際操作者（`reviewed_by`）與被代簽者（`reviewed_on_behalf_of`），
-  日報頁的「審核紀錄」列出每次核准 / 退回的時間、文件上的簽核者，以及是本人或由誰代簽。
+系統管理員帳號（本機密碼，至少 12 字元）：
+
+```bash
+flask --app wsgi create-admin --username sysadmin      # 建立或重設密碼
+```
+
+### 代理（二線管理員代檔案管理員）
+
+- 檔案管理員在右上角「代理設定」授權二線管理員，可設定期間與備註，隨時撤銷；角色改成非二線時自動撤銷。
+- 代理人首頁會列出可代為審核的日報與待核定的作廢申請，畫面註明「代 Alan Lin 簽核」。
+- **文件顯示不變**：代理核准後，PDF 封面的 Approval、Revision Control 的 Approval 與 Shift Record 的
+  Document Approved 仍顯示檔案管理員本人（例如 Alan Lin）。
+- 稽核：系統記錄實際操作者與被代理者；日報頁的「處理紀錄」列出每次指派、核准、退件、作廢申請與作廢，
+  以及是本人或由誰代理。刪除日報與角色變更記在「帳號管理」頁的稽核紀錄。
 
 ### 檢查表主檔
 
@@ -102,6 +118,7 @@ sudo mkdir -p instance/templates                  # 放入 CheckList 範本（�
 sudo cp "/path/to/CFXD SLA - SCADA Daily Inspection CheckList.xlsx" instance/templates/checklist.xlsx
 sudo chown -R dailyreport:www-data /opt/dailyreport
 sudo chmod 640 .env
+sudo -u dailyreport .venv/bin/flask --app wsgi create-admin --username sysadmin   # 本機系統管理員
 
 sudo cp deploy/dailyreport.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now dailyreport

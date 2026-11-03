@@ -301,10 +301,12 @@ def test_full_flow(app):
 def test_self_review_blocked(app):
     boss = Browser(app)
     boss.login("boss")
-    rid = report_id_from(boss.post("/reports/new", {"report_date": "2026-11-01"}))
-    fill_checklist(boss, rid)
-    boss.get(f"/reports/{rid}")
-    boss.post(f"/reports/{rid}/submit")
+    rid = report_id_from(boss.post("/reports/new", {"report_date": "2026-11-01"}))  # 檔案管理員建立，撰寫人是自己
+    alice = Browser(app)
+    alice.login("alice")
+    fill_checklist(alice, rid)
+    alice.get(f"/reports/{rid}")
+    alice.post(f"/reports/{rid}/submit")  # 一線使用者送審
     boss.get(f"/reports/{rid}")
     html = boss.post(f"/reports/{rid}/review", {"action": "approve"})
     assert "不能審核自己" in html
@@ -317,55 +319,71 @@ def db_status(rid):
     return db.session.get(Report, rid).status
 
 
+def set_role(app, username, role):
+    from app import db
+    from app.models import User
+
+    with app.app_context():
+        u = User.query.filter_by(username=username).one()
+        u.set_role(role)
+        db.session.commit()
+        return u.id
+
+
+def submitted_report(app, alice, day):
+    rid = report_id_from(alice.post("/reports/new", {"report_date": day}))
+    fill_checklist(alice, rid)
+    alice.get(f"/reports/{rid}")
+    alice.post(f"/reports/{rid}/submit")
+    return rid
+
+
 def test_delegated_approval(app):
     from app.models import Report, ReviewLog, User
 
     boss = Browser(app)
-    boss.login("boss")  # 唯一的核准人 -> 新日報預設指定給 boss
+    boss.login("boss")  # 唯一的檔案管理員 -> 新日報預設指定給 boss
     carol = Browser(app)
-    carol.login("carol")  # 一般帳號，之後被授權代簽
+    carol.login("carol")
     boss2 = Browser(app)
+    boss2.login("boss2")
+    boss_id = set_role(app, "boss", "file_manager")
+    carol_id = set_role(app, "carol", "second_line")
+    set_role(app, "boss2", "first_line")
 
     alice = Browser(app)
     alice.login("alice")
-    rid = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-05"}))
+    rid = submitted_report(app, alice, "2026-11-05")
     with app.app_context():
         from app import db
 
         r = db.session.get(Report, rid)
-        boss_id = User.query.filter_by(username="boss").one().id
-        carol_id = User.query.filter_by(username="carol").one().id
         assert r.approver_id == boss_id and r.approver_name == "boss"
-    fill_checklist(alice, rid)
-    alice.get(f"/reports/{rid}")
-    alice.post(f"/reports/{rid}/submit")
+    set_role(app, "boss2", "file_manager")
 
-    # 未授權前：carol 看不到、不能審；另一位審核者 boss2 也不能審指定給 boss 的日報
+    # 未授權前：二線看不到、不能審；另一位檔案管理員也不能審指定給 boss 的日報
     assert "待我審核" not in carol.get("/")
     carol.get(f"/reports/{rid}")
     carol.post(f"/reports/{rid}/review", {"action": "approve"}, status=403)
-    boss2.login("boss2")
     boss2.get(f"/reports/{rid}")
     boss2.post(f"/reports/{rid}/review", {"action": "approve"}, status=403)
 
-    # 一般帳號不能建立授權；核准人不能授權給自己；過期的授權無效
+    # 二線不能建立授權；只能授權給二線管理員；過期的授權無效
     carol.get("/delegations")
     carol.post("/delegations", {"delegate_id": str(boss_id), "start_date": "2026-01-01"}, status=403)
     boss.get("/delegations")
-    assert "請選擇其他帳號" in boss.post("/delegations", {"delegate_id": str(boss_id), "start_date": "2026-01-01"})
+    assert "請選擇一位二線管理員" in boss.post("/delegations", {"delegate_id": str(boss_id), "start_date": "2026-01-01"})
     boss.post("/delegations", {"delegate_id": str(carol_id), "start_date": "2020-01-01", "end_date": "2020-01-31"})
     carol.get(f"/reports/{rid}")
     carol.post(f"/reports/{rid}/review", {"action": "approve"}, status=403)
 
     # 有效授權：carol 代簽核准，文件仍顯示 boss
-    html = boss.post("/delegations", {"delegate_id": str(carol_id), "start_date": "2020-01-01", "note": "出差"})
-    assert "已授權" in html
+    assert "已授權" in boss.post("/delegations", {"delegate_id": str(carol_id), "start_date": "2020-01-01", "note": "出差"})
     html = carol.get("/")
     assert "待我審核" in html and "代簽" in html
-    html = carol.get(f"/reports/{rid}")
-    assert "代 boss 簽核" in html
+    assert "代 boss 簽核" in carol.get(f"/reports/{rid}")
     html = carol.post(f"/reports/{rid}/review", {"action": "approve"})
-    assert "代 boss 簽核" in html and "審核紀錄" in html and "carol 代簽" in html
+    assert "代 boss 簽核" in html and "處理紀錄" in html and "carol 代簽" in html
     with app.app_context():
         from app import db
         from app.pdf.report_pdf import cover_data
@@ -373,24 +391,133 @@ def test_delegated_approval(app):
         r = db.session.get(Report, rid)
         assert r.status == "approved" and r.approver_name == "boss"
         assert r.reviewed_by.username == "carol" and r.reviewed_on_behalf_of.username == "boss"
-        log = ReviewLog.query.filter_by(report_id=rid).one()
+        log = ReviewLog.query.filter_by(report_id=rid, action="approve").one()
         assert log.actor_id == carol_id and log.on_behalf_of_id == boss_id
         d = cover_data(r)
         assert d["approver"] == "boss" and d["revisions"][0]["approval"] == "boss"
+        assert User.query.filter_by(username="carol").one().role == "second_line"
 
-    # 撤銷後不能再代簽
-    rid2 = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-06"}))
-    fill_checklist(alice, rid2)
-    alice.get(f"/reports/{rid2}")
-    alice.post(f"/reports/{rid2}/submit")
-    html = boss.get("/delegations")
-    did = re.findall(r"/delegations/(\d+)/revoke", html)[0]
+    # 撤銷後不能再代簽；檔案管理員本人仍可簽核
+    rid2 = submitted_report(app, alice, "2026-11-06")
+    did = re.findall(r"/delegations/(\d+)/revoke", boss.get("/delegations"))[0]
     assert "已撤銷" in boss.post(f"/delegations/{did}/revoke")
     carol.get(f"/reports/{rid2}")
     carol.post(f"/reports/{rid2}/review", {"action": "approve"}, status=403)
-    # 核准人本人仍可簽核
     boss.get(f"/reports/{rid2}")
     assert "已核准。" in boss.post(f"/reports/{rid2}/review", {"action": "approve"})
+
+
+def test_role_permissions(app):
+    from app import db
+    from app.models import Report
+
+    boss, sl, alice = Browser(app), Browser(app), Browser(app)
+    boss.login("boss")
+    sl.login("dave")
+    alice.login("alice")
+    boss_id = set_role(app, "boss", "file_manager")
+    dave_id = set_role(app, "dave", "second_line")
+    with app.app_context():
+        from app.models import User
+
+        alice_id = User.query.filter_by(username="alice").one().id
+
+    # 一線：可新增 / 編輯 / 送審，不能指派、作廢、刪除、管理帳號或代理
+    rid = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-10"}))
+    alice.get(f"/reports/{rid}/basic")
+    alice.post(f"/reports/{rid}/basic", {"author_id": str(dave_id), "approver_id": "", "revision": "0"})
+    with app.app_context():
+        r = db.session.get(Report, rid)
+        assert r.author_id == alice_id and r.approver_id == boss_id  # 指派被忽略
+    alice.get(f"/reports/{rid}")
+    alice.post(f"/reports/{rid}/void", {"reason": "x"}, status=403)
+    alice.post(f"/reports/{rid}/delete", {"confirm_doc_no": "x"}, status=403)
+    alice.get("/admin/users", status=403)
+    alice.get("/delegations", status=403)
+
+    # 二線：可編輯 / 刪除，不能送審；未授權不能指派
+    sl.get(f"/reports/{rid}/basic")
+    sl.post(f"/reports/{rid}/basic", {"author_id": str(dave_id), "approver_id": str(boss_id), "revision": "0"})
+    with app.app_context():
+        assert db.session.get(Report, rid).author_id == alice_id
+    sl.get(f"/reports/{rid}")
+    assert "只有一線使用者可以送審" in sl.post(f"/reports/{rid}/submit")
+
+    # 檔案管理員：指派撰寫人
+    boss.get(f"/reports/{rid}/basic")
+    boss.post(f"/reports/{rid}/basic", {"author_id": str(dave_id), "approver_id": str(boss_id), "revision": "0",
+                                        "issue_purpose": "IFI - Issue for Information", "inspection_time": "10:00 AM"})
+    with app.app_context():
+        r = db.session.get(Report, rid)
+        assert r.author_id == dave_id
+        assert any(log.action == "assign" for log in r.review_logs)
+
+    # 一線申請作廢 -> 檔案管理員駁回 -> 再申請 -> 核定作廢；作廢後唯讀、編號保留
+    alice.get(f"/reports/{rid}")
+    assert "已送出作廢申請" in alice.post(f"/reports/{rid}/void-request", {"reason": "日期建錯"})
+    assert "已有待處理" in alice.post(f"/reports/{rid}/void-request", {"reason": "again"})
+    assert "待核定的作廢申請" in boss.get("/")
+    boss.get(f"/reports/{rid}")
+    assert "已駁回作廢申請" in boss.post(f"/reports/{rid}/void-request/decide", {"action": "reject"})
+    alice.get(f"/reports/{rid}")
+    alice.post(f"/reports/{rid}/void-request", {"reason": "日期建錯"})
+    boss.get(f"/reports/{rid}")
+    html = boss.post(f"/reports/{rid}/void-request/decide", {"action": "approve"})
+    assert "已核定作廢" in html and "保留" in html
+    with app.app_context():
+        r = db.session.get(Report, rid)
+        assert r.status == "voided" and r.void_reason.startswith("日期建錯")
+    assert "不能修改" in alice.post(f"/reports/{rid}/basic", {"revision": "3"})
+    assert "已經存在" in alice.post("/reports/new", {"report_date": "2026-11-10"})  # 日期 / 流水號仍被保留
+
+    # 刪除：需輸入文件編號；刪除後日期可重新建立，稽核紀錄保留
+    rid2 = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-11"}))
+    sl.get(f"/reports/{rid2}")
+    assert "請輸入完整文件編號" in sl.post(f"/reports/{rid2}/delete", {"confirm_doc_no": "wrong"})
+    with app.app_context():
+        doc = db.session.get(Report, rid2).doc_no
+    assert "已刪除" in sl.post(f"/reports/{rid2}/delete", {"confirm_doc_no": doc})
+    with app.app_context():
+        from app.models import AuditLog
+
+        assert db.session.get(Report, rid2) is None
+        assert AuditLog.query.filter_by(action="delete_report", target=doc).one()
+
+
+def test_local_admin(app):
+    from app import db
+    from app.models import User
+
+    runner = app.test_cli_runner()
+    res = runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "short"])
+    assert res.exit_code != 0
+    res = runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "a-very-long-pass"])
+    assert res.exit_code == 0, res.output
+
+    b = Browser(app)
+    b.get("/login")
+    assert "帳號或密碼錯誤" in b.post("/login", {"username": "sysadmin", "password": "wrong"})  # dev 模式也要驗證本機密碼
+    html = b.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
+    assert "系統管理員" in html and "帳號管理" in html
+
+    other = Browser(app)
+    other.login("erin")
+    html = b.get("/admin/users")
+    assert "erin" in html
+    with app.app_context():
+        erin = User.query.filter_by(username="erin").one()
+        assert erin.role == "first_line"
+        eid = erin.id
+    b.post("/admin/users", {"user_id": str(eid), "role": "file_manager"})
+    b.post("/admin/users", {"user_id": str(eid), "role": "admin"}, status=400)  # 系統管理員只能用指令建立
+    with app.app_context():
+        assert db.session.get(User, eid).role == "file_manager"
+    assert "變更角色" in b.get("/admin/users")
+
+    # 系統管理員可直接作廢任何日報
+    rid = report_id_from(other.post("/reports/new", {"report_date": "2026-11-12"}))
+    b.get(f"/reports/{rid}")
+    assert "已作廢" in b.post(f"/reports/{rid}/void", {"reason": "測試"})
 
 
 def test_add_missing_columns(tmp_path, monkeypatch):

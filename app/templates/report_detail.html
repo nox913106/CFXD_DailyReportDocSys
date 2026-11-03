@@ -9,8 +9,8 @@
     <span class="badge {{ report.status }}">{{ report.status_label }}</span>
   </div>
   <div class="actions">
-    {% if report.editable %}
-    <a class="button secondary" href="{{ url_for('editors.basic', report_id=report.id) }}">編輯</a>
+    {% if can.edit %}<a class="button secondary" href="{{ url_for('editors.basic', report_id=report.id) }}">編輯</a>{% endif %}
+    {% if can.submit %}
     <form method="post" action="{{ url_for('views.submit', report_id=report.id) }}" class="inline"
           onsubmit="return confirm('確定送出審核？送出後不能再修改。')">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -43,15 +43,66 @@
   </div>
 </form>
 {% endif %}
+{% if report.status == 'voided' %}
+<div class="flash error no-print">此日報已作廢（{{ report.voided_by.name if report.voided_by }}，
+  {{ report.voided_at.strftime('%Y-%m-%d %H:%M') }}）：{{ report.void_reason }}。文件編號 {{ report.doc_no }} 保留，不會被重複使用。</div>
+{% elif report.void_requested_at %}
+<div class="card no-print">
+  <h3>作廢申請</h3>
+  <p>{{ report.void_requested_by.name }} 於 {{ report.void_requested_at.strftime('%Y-%m-%d %H:%M') }} 申請作廢：{{ report.void_request_reason }}</p>
+  {% if can.decide_void %}
+  <form method="post" action="{{ url_for('views.decide_void', report_id=report.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if can.decide_void.principal %}<p class="hint">您將以 {{ can.decide_void.principal.name }} 的代理人身分核定。</p>{% endif %}
+    <label>意見<input name="comment"></label>
+    <div class="actions">
+      <button type="submit" name="action" value="approve" class="danger">核定作廢</button>
+      <button type="submit" name="action" value="reject" class="secondary">駁回申請</button>
+    </div>
+  </form>
+  {% else %}<p class="hint">等待檔案管理員核定。</p>{% endif %}
+</div>
+{% endif %}
+
+{% if can.request_void or can.void or can.delete %}
+<details class="card no-print danger-zone">
+  <summary>作廢 / 刪除</summary>
+  {% if can.request_void and not can.void %}
+  <form method="post" action="{{ url_for('views.request_void', report_id=report.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>申請作廢原因<input name="reason" required></label>
+    <button type="submit" class="danger">申請作廢</button>
+  </form>
+  {% endif %}
+  {% if can.void %}
+  <form method="post" action="{{ url_for('views.void', report_id=report.id) }}"
+        onsubmit="return confirm('確定作廢 {{ report.doc_no }}？作廢後內容唯讀，文件編號保留不再使用。')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if can.void.principal %}<p class="hint">您將以 {{ can.void.principal.name }} 的代理人身分作廢。</p>{% endif %}
+    <label>作廢原因<input name="reason" required></label>
+    <button type="submit" class="danger">作廢</button>
+    <p class="hint">作廢會保留日期與文件編號（流水號不會被沖掉）；刪除則會移除整份日報。</p>
+  </form>
+  {% endif %}
+  {% if can.delete %}
+  <form method="post" action="{{ url_for('views.delete', report_id=report.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>刪除：請輸入文件編號 <code>{{ report.doc_no }}</code> 確認<input name="confirm_doc_no" autocomplete="off"></label>
+    <button type="submit" class="danger">刪除日報</button>
+  </form>
+  {% endif %}
+</details>
+{% endif %}
+
 {% if report.review_logs %}
 <div class="card no-print">
-  <h3>審核紀錄</h3>
+  <h3>處理紀錄</h3>
   <table class="list">
-    <tr><th>時間</th><th>動作</th><th>簽核者（文件顯示）</th><th>實際操作</th><th>意見</th></tr>
+    <tr><th>時間</th><th>動作</th><th>簽核者（文件顯示）</th><th>實際操作</th><th>意見 / 內容</th></tr>
     {% for log in report.review_logs|reverse %}
-    <tr class="{{ 'fail' if log.action == 'reject' }}">
+    <tr class="{{ 'fail' if log.action in ('reject', 'void') }}">
       <td>{{ log.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-      <td>{{ '核准' if log.action == 'approve' else '退回' }}</td>
+      <td>{{ REVIEW_ACTION_LABELS.get(log.action, log.action) }}</td>
       <td>{{ (log.on_behalf_of or log.actor).name }}</td>
       <td>{% if log.on_behalf_of %}{{ log.actor.name }} 代簽{% else %}本人{% endif %}</td>
       <td class="pre">{{ log.comment }}</td>

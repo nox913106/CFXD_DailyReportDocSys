@@ -5,20 +5,52 @@ from flask_login import UserMixin
 from . import db, login_manager
 
 
+ROLE_LABELS = {
+    "admin": "系統管理員",
+    "file_manager": "檔案管理員",
+    "second_line": "二線管理員",
+    "first_line": "一線使用者",
+}
+ASSIGNABLE_ROLES = ("file_manager", "second_line", "first_line")  # 系統管理員只能用指令建立
+
+
 class User(UserMixin, db.Model):
-    """AD 帳號首次登入時建立，之後每次登入更新顯示名稱、Email 與審核權限。"""
+    """AD 帳號首次登入時建立（預設一線使用者），角色由系統管理員在「帳號管理」調整。
+    系統管理員是本機帳號：密碼雜湊存在 password_hash，不經 AD 驗證。"""
 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(128), unique=True, nullable=False)
     display_name = db.Column(db.String(256))
     email = db.Column(db.String(256))
-    is_approver = db.Column(db.Boolean, default=False, nullable=False)
+    is_approver = db.Column(db.Boolean, default=False, nullable=False)  # 舊欄位，與 role 同步
+    role = db.Column(db.String(16), default="first_line")
+    password_hash = db.Column(db.String(256))  # 僅本機帳號（系統管理員）
     created_at = db.Column(db.DateTime, default=datetime.now)
     last_login = db.Column(db.DateTime)
 
     @property
     def name(self):
         return self.display_name or self.username
+
+    @property
+    def role_label(self):
+        return ROLE_LABELS.get(self.role, self.role)
+
+    def set_role(self, role):
+        self.role = role
+        self.is_approver = role in ("file_manager", "admin")
+
+    @property
+    def is_admin(self):
+        return self.role == "admin"
+
+    @property
+    def is_file_manager(self):
+        return self.role == "file_manager"
+
+    @property
+    def is_second_line(self):
+        return self.role == "second_line"
 
 
 @login_manager.user_loader
@@ -67,6 +99,7 @@ STATUS_LABELS = {
     "submitted": "待審核",
     "approved": "已核准",
     "rejected": "退回",
+    "voided": "作廢",
 }
 
 RESULT_LABELS = {"N": "Normal", "W": "Warning", "F": "Failed"}
@@ -94,6 +127,16 @@ class Report(db.Model):
     reviewed_by = db.relationship("User", foreign_keys=[reviewed_by_id])
     reviewed_at = db.Column(db.DateTime)
     review_comment = db.Column(db.Text, default="")
+    # 作廢：保留日期與文件編號（流水號不會被後續日報沖掉），內容唯讀
+    void_reason = db.Column(db.Text)
+    voided_at = db.Column(db.DateTime)
+    voided_by_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    voided_by = db.relationship("User", foreign_keys=[voided_by_id])
+    # 一線使用者的作廢申請，待檔案管理員（或其代理二線）核定
+    void_request_reason = db.Column(db.Text)
+    void_requested_at = db.Column(db.DateTime)
+    void_requested_by_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    void_requested_by = db.relationship("User", foreign_keys=[void_requested_by_id])
     # 代簽時記錄被代簽的核准人（reviewed_by 為實際操作者）；本人簽核時為空
     reviewed_on_behalf_of_id = db.Column(db.Integer, db.ForeignKey("user.id"))
     reviewed_on_behalf_of = db.relationship("User", foreign_keys=[reviewed_on_behalf_of_id])
@@ -261,15 +304,37 @@ class ApprovalDelegation(db.Model):
         return "生效中"
 
 
+REVIEW_ACTION_LABELS = {
+    "approve": "核准",
+    "reject": "退回",
+    "assign": "指派",
+    "void": "作廢",
+    "void_request": "申請作廢",
+    "void_request_reject": "駁回作廢申請",
+}
+
+
 class ReviewLog(db.Model):
-    """審核歷程：每次核准 / 退回各一筆，含代簽資訊。"""
+    """審核歷程：核准 / 退回 / 指派 / 作廢 / 作廢申請，含代理資訊。"""
 
     id = db.Column(db.Integer, primary_key=True)
     report_id = db.Column(db.Integer, db.ForeignKey("report.id"), nullable=False, index=True)
-    action = db.Column(db.String(16), nullable=False)  # approve / reject
+    action = db.Column(db.String(24), nullable=False)
     actor_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     actor = db.relationship("User", foreign_keys=[actor_id])
     on_behalf_of_id = db.Column(db.Integer, db.ForeignKey("user.id"))
     on_behalf_of = db.relationship("User", foreign_keys=[on_behalf_of_id])
     comment = db.Column(db.Text, default="")
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+
+class AuditLog(db.Model):
+    """不隨日報刪除的稽核紀錄：刪除日報、角色變更。"""
+
+    id = db.Column(db.Integer, primary_key=True)
+    action = db.Column(db.String(24), nullable=False)  # delete_report / set_role
+    actor_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    actor = db.relationship("User", foreign_keys=[actor_id])
+    target = db.Column(db.String(256), default="")
+    detail = db.Column(db.Text, default="")
     created_at = db.Column(db.DateTime, default=datetime.now)

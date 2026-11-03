@@ -7,6 +7,7 @@ from flask_login import current_user, login_required
 from sqlalchemy.orm import contains_eager
 
 from . import db
+from . import approval as perm
 from .approval import approvers
 from .helpers import SHEETS, checklist_stats, get_report, locked_redirect, parse_rows
 from .models import (
@@ -17,6 +18,7 @@ from .models import (
     OnsiteRecord,
     ScreenshotSection,
     SystemUpdateRecord,
+    ReviewLog,
     TrueAlarmRecord,
     User,
 )
@@ -106,11 +108,9 @@ def basic(report_id):
         report.revision = _int(request.form.get("revision"))
         for f in ("issue_purpose", "inspection_time", "first_line_officer", "second_line_support"):
             setattr(report, f, request.form.get(f, "").strip())
-        approver = db.session.get(User, request.form.get("approver_id", type=int) or 0)
-        if approver and (approver.is_approver or approver.id == report.approver_id):
-            report.approver_id, report.approver_name = approver.id, approver.name
-        elif request.form.get("approver_id") == "":
-            report.approver_id, report.approver_name = None, ""
+        assign = perm.can_assign(current_user, report)
+        if assign:
+            _assign(report, assign.principal)
         _touch(report)
         db.session.commit()
         flash("已儲存。", "success")
@@ -118,7 +118,29 @@ def basic(report_id):
     choices = approvers()
     if report.approver and report.approver not in choices:
         choices.append(report.approver)
-    return render_template("edit_basic.html", report=report, tab="basic", approvers=choices)
+    authors = User.query.filter(User.role != "admin").order_by(User.display_name, User.username).all()
+    return render_template("edit_basic.html", report=report, tab="basic", approvers=choices, authors=authors,
+                           can_assign=perm.can_assign(current_user, report))
+
+
+def _assign(report, principal):
+    """指派撰寫人（Author）與核准人（Approval），並記錄於審核紀錄。"""
+    changes = []
+    author = db.session.get(User, request.form.get("author_id", type=int) or 0)
+    if author and author.role != "admin" and author.id != report.author_id:
+        changes.append(f"撰寫人 {report.author.name} → {author.name}")
+        report.author_id = author.id
+    raw = request.form.get("approver_id")
+    approver = db.session.get(User, int(raw)) if raw and raw.isdigit() else None
+    if approver and approver.role == "file_manager" and approver.id != report.approver_id:
+        changes.append(f"核准人 {report.approver_name or '未指定'} → {approver.name}")
+        report.approver_id, report.approver_name = approver.id, approver.name
+    elif raw == "" and report.approver_id is not None:
+        changes.append(f"核准人 {report.approver_name} → 未指定")
+        report.approver_id, report.approver_name = None, ""
+    if changes:
+        db.session.add(ReviewLog(report_id=report.id, action="assign", actor_id=current_user.id,
+                                 on_behalf_of_id=principal.id if principal else None, comment="；".join(changes)))
 
 
 @bp.route("/records", methods=["GET", "POST"])

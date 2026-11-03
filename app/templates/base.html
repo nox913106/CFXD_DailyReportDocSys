@@ -11,8 +11,9 @@
   <header class="topbar">
     <a class="brand" href="{{ url_for('views.index') }}">CFXD SLA 日報系統</a>
     {% if current_user.is_authenticated %}
-      <span class="user">{{ current_user.name }}{% if current_user.is_approver %}（審核者）{% endif %}
-        · <a href="{{ url_for('views.delegations') }}">代簽設定</a>
+      <span class="user">{{ current_user.name }}（{{ current_user.role_label }}）
+        {% if current_user.role in ('admin', 'file_manager', 'second_line') %}· <a href="{{ url_for('views.delegations') }}">代理設定</a>{% endif %}
+        {% if current_user.role == 'admin' %}· <a href="{{ url_for('views.users') }}">帳號管理</a>{% endif %}
         · <a href="{{ url_for('auth.logout') }}">登出</a></span>
     {% endif %}
   </header>
