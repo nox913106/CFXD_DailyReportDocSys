@@ -28,6 +28,10 @@
 | CheckList（25 頁） | `app/pdf/xlsx_print.py`、`xlsx_chart.py`、`formula.py` | 讀取 CheckList 範本 xlsx 本身的欄寬、列高、合併儲存格、框線、列印範圍、縮放、分頁、頁首 Logo 與圓餅圖，重算公式後畫出，等同 Excel 的列印結果 |
 | Screenshot（52 頁起） | `app/pdf/screenshot.py` | 封面、含頁碼的目錄、46 個章節與上傳的截圖 |
 
+CheckList 的圓餅圖數值由範本公式（COUNTIFS、Qty / SUM）依日報資料重算。圖表排列經過整理（表格、框線、頁首不變）：
+每張圖對齊旁邊統計表的上緣、同頁圖表尺寸一致，百分比直接標在圖例上，不再使用範本中位置不一的浮動標籤。
+若要恢復範本原始的圖表位置，將 `app/pdf/xlsx_print.py` 的 `OPTIMIZE_CHARTS` 設為 `False`。
+
 檔名沿用原本格式：`CFXD-SCA-RLY-DPR-000896_0_IFI_2026-11-03_CFXD_SLA_Daily_Work_Report.pdf`。
 產生一次約 20 秒，結果會快取在 `instance/pdf_cache/`，日報或截圖有變動時自動重產。
 

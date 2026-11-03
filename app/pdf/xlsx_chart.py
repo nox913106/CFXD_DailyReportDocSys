@@ -254,6 +254,37 @@ def _round_half_up(x, dec):
     return str(Decimal(repr(x)).quantize(q, rounding=ROUND_HALF_UP))
 
 
+def _place_label(cx, cy, r, dx, dy, sweep, bw, bh, gap, placed, bounds, fs):
+    """自動擺放資料標籤，回傳框中心。大扇形（≥ 半圓）放在扇形內；其餘放在外緣，
+    與已放置的標籤重疊時改放對側或上下移動，並限制在圖表可用範圍內。"""
+    left, bottom, right, top = bounds
+    pad = 2.0 * fs
+
+    def ok(px, py):
+        x0, y0, x1, y1 = px - bw / 2, py - bh / 2, px + bw / 2, py + bh / 2
+        if x0 < left or x1 > right or y0 < bottom or y1 > top:
+            return False
+        return all(x1 + pad <= a or x0 - pad >= c or y1 + pad <= b or y0 - pad >= d for a, b, c, d in placed)
+
+    if sweep >= 180:
+        base = [(cx + dx * r * 0.45, cy + dy * r * 0.45)]
+    else:
+        ox = cx + dx * (r + gap) + (bw / 2 if dx >= 0 else -bw / 2) * min(1, abs(dx) * 3 + 0.35)
+        oy = cy + dy * (r + gap) + dy * bh / 2
+        base = [(ox, oy), (2 * cx - ox, oy)]
+    cands = []
+    for bx, by in base:
+        cands.append((bx, by))
+        for k in range(1, 6):
+            step = (bh + pad) * k
+            cands += [(bx, by - step), (bx, by + step)]
+    for px, py in cands:
+        if ok(px, py):
+            return px, py
+    px, py = base[0]
+    return min(max(px, left + bw / 2), right - bw / 2), min(max(py, bottom + bh / 2), top - bh / 2)
+
+
 def _fmt_val(v, code):
     if v is None:
         return ""
@@ -265,8 +296,11 @@ def _fmt_val(v, code):
     return ("%g" % v) if isinstance(v, float) else str(v)
 
 
-def draw_chart(cv, ch, x, y, w, h, fs, values):
-    """x,y 為圖表左下角（reportlab 座標）。"""
+def draw_chart(cv, ch, x, y, w, h, fs, values, optimize=False):
+    """x,y 為圖表左下角（reportlab 座標）。
+
+    optimize=True：統一版面（標題置中、圓餅在左、圖例在右且垂直置中），
+    資料標籤不採用範本的手動位移，改為自動擺放並避免與標題、圖例及彼此重疊。"""
     if ch["kind"] != "pie":
         return
     vals = values["vals"][0] if values["vals"] else ch.get("val_cache", [])
@@ -314,12 +348,37 @@ def draw_chart(cv, ch, x, y, w, h, fs, values):
         to.textOut(text)
         cv.drawText(to)
         cv.restoreState()
+        title_bottom = ty - size * 0.3
+    else:
+        title_bottom = top - 4 * fs
+
+    leg = ch.get("legend")
+    leg_size = leg["style"]["size"] * fs if leg else 0
+    leg_texts = list(cats)
+    if optimize:
+        total_ = sum(vals) or 0
+        pct_fmt = ch.get("label_numfmt") or "0%"
+        leg_texts = [f"{c}  {_fmt_val(vals[i] / total_ if total_ else 0, pct_fmt)}" if i < len(vals) else c
+                     for i, c in enumerate(cats)]
+    if optimize and leg:
+        n_leg = max(len(cats), 1)
+        lw_ = max(fonts.width(c, font, leg_size) for c in leg_texts or [""]) + leg_size * 2.6
+        lh_ = leg_size * 1.775 * n_leg + leg_size * 0.6
+        leg_rect = (x + w - lw_ - 6 * fs, (y + title_bottom) / 2 - lh_ / 2, lw_, lh_)
+    else:
+        leg_rect = None
 
     # 圓餅
-    lay = ch.get("plot") or {"x": 0.1, "y": 0.2, "w": 0.6, "h": 0.75}
-    px, py, pw, ph = x + lay["x"] * w, top - lay["y"] * h, lay["w"] * w, lay["h"] * h
-    r = min(pw, ph) / 2
-    cx, cy = px + pw / 2, py - ph / 2
+    if optimize:
+        area_l, area_r = x + 4 * fs, (leg_rect[0] if leg_rect else x + w) - 4 * fs
+        area_t, area_b = title_bottom - 3 * fs, y + 4 * fs
+        r = min(area_r - area_l, area_t - area_b) / 2 * 0.9
+        cx, cy = (area_l + area_r) / 2, (area_t + area_b) / 2
+    else:
+        lay = ch.get("plot") or {"x": 0.1, "y": 0.2, "w": 0.6, "h": 0.75}
+        px, py, pw, ph = x + lay["x"] * w, top - lay["y"] * h, lay["w"] * w, lay["h"] * h
+        r = min(pw, ph) / 2
+        cx, cy = px + pw / 2, py - ph / 2
     total = sum(vals) or 1.0
     ang = ch.get("first_angle", 0)
     slices = []
@@ -366,12 +425,14 @@ def draw_chart(cv, ch, x, y, w, h, fs, values):
             cv.drawPath(wedge_path(a0, sweep)(), stroke=1, fill=0)
             cv.restoreState()
 
-    # 資料標籤
-    if ch.get("label_flags") is not None:
+    # 資料標籤（優化版面改把百分比寫在圖例上，不畫浮動標籤）
+    if ch.get("label_flags") is not None and not optimize:
         st = ch["label_style"]
         size = st["size"] * fs
         lh = size * 1.22
-        for i, a0, sweep in slices:
+        placed = []
+        order = sorted(slices, key=lambda t: -t[2]) if optimize else slices
+        for i, a0, sweep in order:
             lab = ch["labels"].get(i) or {"dx": 0, "dy": 0, "deleted": False, "flags": ch["label_flags"]}
             fl = lab["flags"]
             if lab.get("deleted") or not (fl["val"] or fl["cat"] or fl["pct"]):
@@ -390,11 +451,16 @@ def draw_chart(cv, ch, x, y, w, h, fs, values):
             mid = math.radians(a0 + sweep / 2)
             dx, dy = math.sin(mid), math.cos(mid)
             gap = 3.0 * fs
-            # Excel bestFit 預設：標籤框底邊落在扇形外緣延伸點上
-            lx = cx + dx * (r + gap) + dx * bw / 2
-            ly = cy + dy * (r + gap) + bh / 2
-            lx += lab["dx"] * w
-            ly -= lab["dy"] * h
+            if optimize:
+                lx, ly = _place_label(cx, cy, r, dx, dy, sweep, bw, bh, gap, placed,
+                                      (area_l, area_b, area_r, area_t), fs)
+                placed.append((lx - bw / 2, ly - bh / 2, lx + bw / 2, ly + bh / 2))
+            else:
+                # Excel bestFit 預設：標籤框底邊落在扇形外緣延伸點上
+                lx = cx + dx * (r + gap) + dx * bw / 2
+                ly = cy + dy * (r + gap) + bh / 2
+                lx += lab["dx"] * w
+                ly -= lab["dy"] * h
             bx0, by0 = lx - bw / 2, ly - bh / 2
             # 指引線（wedge callout）：從標籤框指向扇形邊緣
             ex, ey = cx + dx * r, cy + dy * r
@@ -432,12 +498,15 @@ def draw_chart(cv, ch, x, y, w, h, fs, values):
             cv.restoreState()
 
     # 圖例
-    leg = ch.get("legend")
     if leg:
         st = leg["style"]
         size = st["size"] * fs
-        lay = leg.get("layout") or {"x": 0.78, "y": 0.4, "w": 0.2, "h": 0.25}
-        lx, ltop, lw, lh_ = x + lay["x"] * w, top - lay["y"] * h, lay["w"] * w, lay["h"] * h
+        if leg_rect:
+            lx, lw, lh_ = leg_rect[0], leg_rect[2], leg_rect[3]
+            ltop = leg_rect[1] + lh_
+        else:
+            lay = leg.get("layout") or {"x": 0.78, "y": 0.4, "w": 0.2, "h": 0.25}
+            lx, ltop, lw, lh_ = x + lay["x"] * w, top - lay["y"] * h, lay["w"] * w, lay["h"] * h
         if leg.get("line"):
             cv.saveState()
             cv.setStrokeColorRGB(*leg["line"]["color"])
@@ -447,7 +516,7 @@ def draw_chart(cv, ch, x, y, w, h, fs, values):
         n = len(cats)
         row_h = size * 1.775
         start = ltop - (lh_ - row_h * n) / 2
-        marker = size * 0.55
+        marker = size * (0.7 if leg_rect else 0.55)
         for i, cat in enumerate(cats):
             rowy = start - row_h * (i + 0.5) + size * 0.12
             mx = lx + size * 0.6
@@ -463,5 +532,5 @@ def draw_chart(cv, ch, x, y, w, h, fs, values):
             cv.saveState()
             cv.setFillColorRGB(*(st["color"] or (0.35, 0.35, 0.35)))
             cv.setFont(font, size)
-            cv.drawString(mx + marker + size * 1.21, rowy - size * 0.33, cat)
+            cv.drawString(mx + marker + size * (0.6 if leg_rect else 1.21), rowy - size * 0.33, leg_texts[i])
             cv.restoreState()

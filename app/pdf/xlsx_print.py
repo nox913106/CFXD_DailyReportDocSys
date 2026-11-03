@@ -28,6 +28,7 @@ K_GEOM_Y = 0.9826  # 垂直（預設）
 # Excel 依縮放比把列高換算成印表機點數時的實測係數（以原始輸出校正）
 K_GEOM_Y_BY_SCALE = {45: 0.9820, 47: 0.9842, 48: 0.9842, 52: 0.9826, 53: 0.9803, 62: 0.9800}
 TOP_OFFSET = 0.45  # pt，原始輸出表格頂端比上邊界略低
+OPTIMIZE_CHARTS = True  # 圖表排列優化：對齊統計表、統一尺寸、標籤避免重疊（表格與框線不變）
 LEFT_OFFSET = -0.42  # pt，置中後的實測偏移
 TEXT_DY = 1.0  # 工作表 pt，文字基線下移量
 CHAR_PT = 5.25
@@ -710,6 +711,11 @@ class SheetPainter:
         cv.restoreState()
 
     def _draw_charts(self, rows):
+        if OPTIMIZE_CHARTS:
+            for chart, x, top, w, h in self._optimized_charts(rows):
+                draw_chart(self.cv, chart, self.X(x), self.Y(top) - h * self.fy, w * self.f, h * self.fy,
+                           self.fs, self._chart_values(chart), optimize=True)
+            return
         s = self.s
         for (fx, frow, foff), (tx, trow, toff), chart in s.charts:
             if frow not in self.row_y:
@@ -725,6 +731,57 @@ class SheetPainter:
             w, h = (tx - fx) * self.f, (y2 - y1) * self.fy
             vals = self._chart_values(chart)
             draw_chart(self.cv, chart, x1, y1p - h, w, h, self.fs, vals)
+
+    def _optimized_charts(self, rows):
+        """每張圖對齊最近一個統計表（含「Qty」的表頭列）的上緣；同一工作表的圖寬、高、左緣統一，
+        高度不超過下一個統計表或本頁底部。回傳本頁要畫的 (chart, x, 頁內 top, w, h)（工作表 pt）。"""
+        s = self.s
+        if not hasattr(self, "_chart_plan"):
+            import statistics
+
+            abs_y, y = {}, 0.0
+            for r in s.rows:
+                abs_y[r] = y
+                y += s.row_h[r]
+            page_of = {}
+            for i, pg in enumerate(self.pages()):
+                for r in pg:
+                    page_of[r] = (i, pg)
+            headers = [r for r in s.rows if any(
+                isinstance(c.value, str) and c.value.strip() == "Qty"
+                for c in s.ws[r][s.c1 - 1:s.c2])]
+            items = []
+            for (fx, frow, foff), (tx, trow, toff), chart in s.charts:
+                fr = frow if frow in abs_y else next((r for r in s.rows if r > frow), None)
+                tr = trow if trow in abs_y else next((r for r in s.rows if r > trow), None)
+                if fr is None or tr is None:
+                    continue
+                top = abs_y[fr] + (foff if fr == frow else 0)
+                items.append((chart, fx, tx - fx, top, abs_y[tr] + (toff if tr == trow else 0) - top))
+            plan = []
+            if items:
+                tw = statistics.median(i[2] for i in items)
+                th = statistics.median(i[4] for i in items)
+                tx = statistics.median(i[1] for i in items)
+                for chart, fx, w, top, h in items:
+                    cands = [r for r in headers if abs(abs_y[r] - top) < max(h, 40)]
+                    if not cands:
+                        plan.append((chart, fx, None, top, w, h))
+                        continue
+                    hr = min(cands, key=lambda r: abs(abs_y[r] - top))
+                    _, pg = page_of[hr]
+                    nxt = [r for r in headers if r > hr and r in pg]
+                    limit = (abs_y[nxt[0]] - 8) if nxt else (abs_y[pg[-1]] + s.row_h[pg[-1]] - 4)
+                    plan.append((chart, tx, hr, abs_y[hr], tw, max(40.0, min(th, limit - abs_y[hr]))))
+            self._chart_plan = (plan, abs_y)
+        plan, abs_y = self._chart_plan
+        base = abs_y[rows[0]]
+        out = []
+        for chart, x, hr, top, w, h in plan:
+            anchor = hr if hr is not None else next((r for r in s.rows if abs_y[r] >= top), None)
+            if anchor in self.rowset:
+                out.append((chart, x, top - base, w, h))
+        return out
 
     def _chart_values(self, chart):
         out = []
