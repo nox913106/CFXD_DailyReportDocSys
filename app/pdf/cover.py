@@ -381,7 +381,7 @@ class CoverDoc:
             ("row", "First Line Duty officer", d["first_line_officer"], 15.12),
             ("row", "Second Line Backup Support", d["second_line_support"], 15.12),
             ("row", "Document Approved", d["approver"], 15.24),
-            ("row", d["author"], d["author"], 15.12),
+            ("row", "Document Prepared", d["author"], 15.12),
         ]
         issue_h = [15.15, 15.24, 15.12, 15.12, 15.12, 15.24, 15.84, 15.12, 15.12, 15.24]
         issues = d["issues"] or [None]
