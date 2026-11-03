@@ -1,4 +1,9 @@
-"""系統設定頁（只有系統管理員）：AI 服務（按量 / 包月 / 地端）、AI 參數與提示詞、檢查結果.md 匯出位置、用量。"""
+"""系統設定（只有系統管理員）。
+
+這個檔案：AI 建議（服務、參數、提示詞、檢查結果.md 匯出位置、用量）。
+admin_views.py：系統狀態與健康檢查、AD 驗證、本機緊急帳號、備份還原、PDF 與上傳、HTTPS 憑證。
+帳號管理在 views.users（/admin/users），共用同一組分頁。
+"""
 
 import json
 import os
@@ -29,8 +34,8 @@ def _audit(action, target, detail=""):
     db.session.add(AuditLog(action=action, actor_id=current_user.id, target=target[:128], detail=detail[:500]))
 
 
-@bp.route("/", methods=["GET"])
-def index():
+@bp.route("/ai", methods=["GET"])
+def ai():
     providers = AIProvider.query.order_by(AIProvider.priority, AIProvider.id).all()
     s = prov.settings()
     rows = []
@@ -38,7 +43,7 @@ def index():
         u = prov.period_usage(p)
         rows.append((p, u, prov.blocked_reason(p, s["ai_allow_external"], u)))
     recent = AIUsage.query.order_by(AIUsage.id.desc()).limit(30).all()
-    return render_template("settings.html", s=s, rows=rows, recent=recent, presets=prov.PRESETS,
+    return render_template("settings.html", tab="ai", s=s, rows=rows, recent=recent, presets=prov.PRESETS,
                            groups=prov.GROUP_LABELS, billing=prov.BILLING, kinds=prov.KINDS,
                            default_prompt=prov.DEFAULT_SYSTEM_PROMPT, usable=sum(1 for *_, b in rows if not b))
 
@@ -70,11 +75,11 @@ def general():
     md_dir = f.get("check_md_dir", "").strip()
     if md_dir and not os.path.isabs(md_dir):
         flash("檢查結果.md 匯出位置必須是絕對路徑。", "error")
-        return redirect(url_for("settings.index"))
+        return redirect(url_for("settings.ai"))
     new["check_md_dir"] = md_dir  # 空字串 = 只存在資料庫，不匯出檔案
     if new["ai_allow_external"] and not old["ai_allow_external"] and f.get("external_ack") != "1":
         flash("允許外部 AI 服務前，請勾選確認資料會送到公司外部。", "error")
-        return redirect(url_for("settings.index"))
+        return redirect(url_for("settings.ai"))
     for k, v in new.items():
         prov.set_setting(k, v, current_user)
     changed = [k for k in new if new[k] != old.get(k)]
@@ -82,7 +87,7 @@ def general():
         _audit("ai_settings", "一般設定", "、".join(f"{k}={new[k]}" for k in changed))
     db.session.commit()
     flash("已儲存設定。", "success")
-    return redirect(url_for("settings.index"))
+    return redirect(url_for("settings.ai"))
 
 
 @bp.route("/prompt", methods=["POST"])
@@ -94,7 +99,7 @@ def prompt():
     _audit("ai_settings", "提示詞", f"{len(text)} 字")
     db.session.commit()
     flash("已儲存提示詞。", "success")
-    return redirect(url_for("settings.index") + "#prompt")
+    return redirect(url_for("settings.ai") + "#prompt")
 
 
 @bp.route("/providers/new", methods=["GET", "POST"])
@@ -171,7 +176,7 @@ def _save_provider(p):
            + ("・更新金鑰" if new_key.strip() else "") + ("・清除金鑰" if f.get("clear_key") == "1" else ""))
     db.session.commit()
     flash(f"已儲存 {p.name}。", "success")
-    return redirect(url_for("settings.index") + "#providers")
+    return redirect(url_for("settings.ai") + "#providers")
 
 
 @bp.route("/providers/<int:pid>/delete", methods=["POST"])
@@ -182,7 +187,7 @@ def delete_provider(pid):
     db.session.delete(p)
     db.session.commit()
     flash(f"已刪除 {p.name}（用量紀錄保留）。", "success")
-    return redirect(url_for("settings.index") + "#providers")
+    return redirect(url_for("settings.ai") + "#providers")
 
 
 @bp.route("/providers/<int:pid>/move", methods=["POST"])
@@ -197,7 +202,7 @@ def move_provider(pid):
     for n, p in enumerate(rows, 1):
         p.priority = n * 10
     db.session.commit()
-    return redirect(url_for("settings.index") + "#providers")
+    return redirect(url_for("settings.ai") + "#providers")
 
 
 @bp.route("/providers/<int:pid>/test", methods=["POST"])
@@ -206,7 +211,7 @@ def test_provider(pid):
     p = db.session.get(AIProvider, pid) or abort(404)
     if p.external and not prov.get_setting("ai_allow_external"):
         flash("這是外部服務，請先在一般設定允許將資料送到公司外部，再測試。", "error")
-        return redirect(url_for("settings.index") + "#providers")
+        return redirect(url_for("settings.ai") + "#providers")
     s = prov.settings()
     opts = {"timeout": min(60, s["ai_timeout"]), "max_output_tokens": min(1024, s["ai_max_output_tokens"]),
             "temperature": s["ai_temperature"]}
@@ -219,4 +224,7 @@ def test_provider(pid):
         flash(f"{p.name} 連線失敗：{e}", "error")
     p.last_test_at = datetime.now()
     db.session.commit()
-    return redirect(url_for("settings.index") + "#providers")
+    return redirect(url_for("settings.ai") + "#providers")
+
+
+from . import admin_views  # noqa: E402,F401  在同一個 blueprint 註冊其他分頁

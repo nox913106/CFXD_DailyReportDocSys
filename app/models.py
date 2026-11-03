@@ -467,3 +467,24 @@ class AIUsage(db.Model):
     currency = db.Column(db.String(8), default="")
     latency_ms = db.Column(db.Integer, default=0)
     error = db.Column(db.Text)
+
+
+class MaintJob(db.Model):
+    """維護工作（備份、還原）：系統設定頁排入，由維護背景服務（maint-worker）執行。"""
+
+    id = db.Column(db.Integer, primary_key=True)
+    kind = db.Column(db.String(16), nullable=False)  # backup / restore
+    trigger = db.Column(db.String(16), default="manual")  # manual / scheduled / pre_restore
+    param = db.Column(db.String(256), default="")  # restore：備份名稱
+    status = db.Column(db.String(16), default="pending")  # pending / running / done / error
+    message = db.Column(db.Text, default="")
+    requested_by_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    requested_by = db.relationship("User", foreign_keys=[requested_by_id])
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    started_at = db.Column(db.DateTime)
+    finished_at = db.Column(db.DateTime)
+
+
+MAINT_KIND_LABELS = {"backup": "備份", "restore": "還原"}
+MAINT_STATUS_LABELS = {"pending": "排隊中", "running": "執行中", "done": "完成", "error": "失敗"}
+MAINT_TRIGGER_LABELS = {"manual": "手動", "scheduled": "排程", "pre_restore": "還原前自動"}

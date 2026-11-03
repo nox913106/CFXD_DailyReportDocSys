@@ -2,8 +2,8 @@
 {% block title %}系統設定 - CFXD{% endblock %}
 {% block content %}
 <p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>
-<h2>系統設定</h2>
-<p class="hint">只有系統管理員看得到這一頁。設定存在資料庫，背景服務每次產生 AI 建議前都會重新讀取，不需要重啟。所有變更都記錄在「帳號管理」的稽核紀錄。</p>
+{% include "_admin_nav.html" %}
+<p class="hint">設定存在資料庫，背景服務每次產生 AI 建議前都會重新讀取，不需要重啟。所有變更都記錄在「帳號管理」的稽核紀錄。</p>
 
 <section class="card">
   <div class="row-between">

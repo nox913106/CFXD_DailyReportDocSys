@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "_status.html" import row, job_rows %}
+{% block title %}系統狀態 - CFXD{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>
+{% include "_admin_nav.html" %}
+<p class="hint">只有系統管理員看得到這些頁面。所有設定存在資料庫，儲存後立即套用，不需要重啟服務或登入主機；每一項變更都記錄在「帳號管理」的稽核紀錄。
+  程式升級仍在主機上用一行指令執行，升級完成後會自動做部署檢查。</p>
+
+{% if not worker_alive %}
+<div class="flash error">維護背景服務（dailyreport-maint）沒有回應：自動備份、自動健康檢查、還原都不會執行。
+  請在主機執行 <code>sudo systemctl restart dailyreport-maint</code>。</div>
+{% endif %}
+
+<section class="card">
+  <div class="row-between">
+    <h3>健康檢查</h3>
+    <div class="actions">
+      {% if last %}
+      <span class="hint">{{ last.at.strftime('%Y-%m-%d %H:%M') }}（{{ '手動' if last.trigger == 'manual' else '自動' }}）</span>
+      <span class="sev sev-ok">正常 {{ last.ok }}</span><span class="sev sev-warn">注意 {{ last.warn }}</span><span class="sev sev-fail">失敗 {{ last.fail }}</span>
+      {% endif %}
+      <form method="post" action="{{ url_for('settings.health_run') }}" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">立即檢查</button>
+      </form>
+    </div>
+  </div>
+  {% if last %}
+  <table class="list health">
+    {% for g, items in groups.items() %}
+    <tr class="group"><th colspan="3">{{ g }}</th></tr>
+    {% for it in items %}{{ row(it) }}{% endfor %}
+    {% endfor %}
+  </table>
+  {% else %}<p class="hint">還沒有檢查紀錄。按「立即檢查」。</p>{% endif %}
+
+  <form method="post" action="{{ url_for('settings.health_config') }}" class="actions top-gap">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="inline"><input type="checkbox" name="health_enabled" value="1" {{ 'checked' if health.health_enabled }}> 自動檢查，每</label>
+    <input name="health_interval_hours" type="number" min="1" max="168" value="{{ health.health_interval_hours }}" class="short"> 小時
+    <button type="submit" class="secondary small">儲存</button>
+    <span class="hint">有失敗項目時，系統管理員在每一頁上方都會看到提醒。</span>
+  </form>
+</section>
+
+<section class="card">
+  <h3>最近的維護工作</h3>
+  <table class="list">
+    <tr><th>時間</th><th>工作</th><th>來源</th><th>狀態</th><th>結果</th></tr>
+    {{ job_rows(jobs, kind_labels, status_labels, trigger_labels) }}
+  </table>
+  <p><a href="{{ url_for('settings.backup') }}">備份還原 →</a></p>
+</section>
+
+<section class="card">
+  <h3>安裝時決定的項目（唯讀）</h3>
+  <p class="hint">這些是基礎設施設定，由安裝腳本管理，平常不需要變更；改錯會讓系統無法啟動，所以不放在網頁上。</p>
+  <table class="list">
+    {% for k, v in infra.items() %}<tr><th class="nw">{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}
+  </table>
+</section>
+{% endblock %}

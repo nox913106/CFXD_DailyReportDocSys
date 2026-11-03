@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% from "_status.html" import job_rows %}
+{% block title %}備份還原 - CFXD{% endblock %}
+{% block head %}{% if busy %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>
+{% include "_admin_nav.html" %}
+
+{% if not worker_alive %}
+<div class="flash error">維護背景服務（dailyreport-maint）沒有回應，備份與還原工作不會執行。請在主機執行 <code>sudo systemctl restart dailyreport-maint</code>。</div>
+{% endif %}
+{% if dir_error %}<div class="flash error">備份位置 {{ root }} {{ dir_error }}</div>{% endif %}
+
+<section class="card">
+  <div class="row-between">
+    <h3>備份設定</h3>
+    <form method="post" action="{{ url_for('settings.backup_now') }}" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" {{ 'disabled' if busy }}>立即備份</button>
+    </form>
+  </div>
+  <form method="post" action="{{ url_for('settings.backup_config') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="checks-col">
+      <label class="inline"><input type="checkbox" name="backup_enabled" value="1" {{ 'checked' if b.backup_enabled }}> 每日自動備份</label>
+      <label class="inline"><input type="checkbox" name="backup_include_env" value="1" {{ 'checked' if b.backup_include_env }}>
+        包含設定檔 .env（含 SECRET_KEY；換主機還原時 AI 金鑰才能解密）</label>
+    </div>
+    <div class="form-grid">
+      <label>每天幾點（24 小時制）<input name="backup_time" value="{{ b.backup_time }}" placeholder="02:30" pattern="[0-2][0-9]:[0-5][0-9]"></label>
+      <label>保留最近幾份<input name="backup_keep" type="number" min="1" max="365" value="{{ b.backup_keep }}"></label>
+      <label class="wide">備份位置（絕對路徑，可為已掛載的 NAS；空白 = {{ default_dir }}）
+        <input name="backup_dir" value="{{ b.backup_dir or '' }}" placeholder="{{ default_dir }}"></label>
+    </div>
+    <p class="hint">目前位置：{{ root }}{% if next_run %}・下次自動備份 {{ next_run.strftime('%m/%d %H:%M') }}{% endif %}。
+      備份在線上進行，不需要停止服務。內容：資料庫、截圖、CheckList 範本與字型、檢查結果.md{{ '、.env' if b.backup_include_env }}。
+      備份與日報資料放在同一顆磁碟時，磁碟損壞會一起遺失，建議設定到 NAS。</p>
+    <button type="submit">儲存</button>
+  </form>
+</section>
+
+<section class="card">
+  <h3>備份（{{ items|length }} 份）</h3>
+  <table class="list">
+    <tr><th>時間</th><th>來源</th><th>大小</th><th>日報數</th><th>下載</th><th>還原</th><th></th></tr>
+    {% for it in items %}
+    <tr>
+      <td class="nw">{{ it.time.strftime('%Y-%m-%d %H:%M:%S') }}<br><span class="hint">{{ it.name }}</span></td>
+      <td>{{ {'manual': '手動', 'scheduled': '排程', 'pre_restore': '還原前自動', 'cli': '主機指令'}.get(it.meta.trigger, it.meta.trigger) }}
+        {%- if it.meta.by %}・{{ it.meta.by }}{% endif %}</td>
+      <td class="nw">{{ '%.1f'|format(it.size / 1e6) }} MB</td>
+      <td>{{ it.meta.reports if it.meta.reports is defined else '' }}</td>
+      <td class="nw">{% if it.readable %}<a href="{{ url_for('settings.backup_download', name=it.name, fname='dailyreport.db') }}">資料庫</a>
+        · <a href="{{ url_for('settings.backup_download', name=it.name, fname='instance.tar.gz') }}">檔案</a>{% else %}<span class="hint">無法讀取</span>{% endif %}</td>
+      <td>
+        {% if it.readable %}
+        <form method="post" action="{{ url_for('settings.backup_restore', name=it.name) }}" class="inline"
+              onsubmit="return confirm('還原 {{ it.time.strftime('%Y-%m-%d %H:%M') }} 的備份？\n\n之後新增或修改的日報、帳號、系統設定都會回到備份當時的狀態。還原前會自動再備份一次目前的資料。')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input name="confirm" placeholder="輸入 {{ it.name[:8] }}" class="confirm-input" autocomplete="off" required>
+          <button type="submit" class="secondary small" {{ 'disabled' if busy }}>還原</button>
+        </form>
+        {% endif %}
+      </td>
+      <td>
+        <form method="post" action="{{ url_for('settings.backup_delete', name=it.name) }}" class="inline"
+              onsubmit="return confirm('刪除備份 {{ it.name }}？')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="link danger">刪除</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}<tr><td colspan="7" class="hint">還沒有備份。按右上角「立即備份」。</td></tr>{% endfor %}
+  </table>
+  <p class="hint">還原會把資料庫與檔案換成備份當時的內容（系統設定、帳號也一起），不需要停服務；設定檔 .env 不會被覆蓋。
+    下載的資料庫與檔案含全部日報資料，請妥善保管。</p>
+</section>
+
+<section class="card">
+  <h3>工作紀錄</h3>
+  <table class="list">
+    <tr><th>時間</th><th>工作</th><th>來源</th><th>狀態</th><th>結果</th></tr>
+    {{ job_rows(jobs, kind_labels, status_labels, trigger_labels) }}
+  </table>
+  {% if busy %}<p class="hint">工作進行中，這一頁每 5 秒自動重新整理。</p>{% endif %}
+</section>
+{% endblock %}

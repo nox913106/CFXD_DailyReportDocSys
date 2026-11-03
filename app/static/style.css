@@ -164,3 +164,14 @@ button.small, .button.small { padding: 3px 10px; font-size: 13px; }
 tr.muted td { color: var(--muted); }
 td.nw { white-space: nowrap; }
 [hidden] { display: none !important; }
+
+/* 系統設定 */
+.admin-tabs { margin-top: -4px; }
+.top-gap { margin-top: 12px; }
+.sev-fail { background: #fde2e2; color: #b91c1c; }
+table.health tr.group th { background: #f0f3f6; padding: 6px 8px; font-size: 13px; }
+table.health td { vertical-align: top; }
+form.stack { display: flex; flex-direction: column; gap: 6px; max-width: 280px; margin-top: 6px; }
+details > summary { cursor: pointer; color: var(--accent-dark); }
+input.confirm-input { width: 150px !important; }
+input.file-input { width: auto; max-width: 100%; }

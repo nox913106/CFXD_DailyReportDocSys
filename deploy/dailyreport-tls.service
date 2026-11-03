@@ -1,0 +1,7 @@
+[Unit]
+Description=CFXD Daily Report: install uploaded HTTPS certificate into nginx
+
+[Service]
+Type=oneshot
+# 以 root 執行：檢查憑證 → 安裝到 /etc/dailyreport/tls → nginx -t → reload；失敗時還原
+ExecStart=/bin/bash /opt/dailyreport/scripts/dailyreport.sh apply-tls

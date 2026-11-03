@@ -433,10 +433,12 @@ def users():
             db.session.commit()
             flash(f"{user.name} 已設為{ROLE_LABELS[role]}。", "success")
         return redirect(url_for("views.users"))
+    from . import admin_views as adm
+
     all_users = User.query.order_by(User.role, User.display_name, User.username).all()
-    logs = AuditLog.query.order_by(AuditLog.id.desc()).limit(50).all()
-    return render_template("users.html", users=all_users, roles=ASSIGNABLE_ROLES, role_labels=ROLE_LABELS, logs=logs,
-                           admin_roles=ADMIN_ELIGIBLE_ROLES)
+    return render_template("users.html", tab="users", users=all_users, roles=ASSIGNABLE_ROLES, role_labels=ROLE_LABELS,
+                           logs=adm.recent_audit(), audit_labels=adm.AUDIT_LABELS, admin_roles=ADMIN_ELIGIBLE_ROLES,
+                           local_accounts=adm.local_accounts(), min_pw=adm.MIN_PASSWORD)
 
 
 def _set_sys_admin():

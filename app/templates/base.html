@@ -6,6 +6,7 @@
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>{% block title %}CFXD 日報系統{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {% block head %}{% endblock %}
 </head>
 <body>
   <header class="topbar">
@@ -13,12 +14,16 @@
     {% if current_user.is_authenticated %}
       <span class="user">{{ current_user.name }}（{{ current_user.role_label }}{% if current_user.is_admin and not current_user.is_local_admin %}・系統管理員{% endif %}）
         {% if current_user.role in ('admin', 'file_manager', 'second_line') %}· <a href="{{ url_for('views.delegations') }}">代理設定</a>{% endif %}
-        {% if current_user.is_admin %}· <a href="{{ url_for('views.users') }}">帳號管理</a>
-        · <a href="{{ url_for('settings.index') }}">系統設定</a>{% endif %}
+        {% if current_user.is_admin %}· <a href="{{ url_for('settings.index') }}">系統設定</a>{% endif %}
         · <a href="{{ url_for('auth.logout') }}">登出</a></span>
     {% endif %}
   </header>
   <main class="container">
+    {% if health_alert and request.endpoint != 'settings.index' %}
+      <div class="flash error">健康檢查有 {{ health_alert.fail }} 個失敗項目（{{ health_alert.at[5:16].replace('T', ' ') }}）：
+        {{ health_alert['items']|selectattr('status', 'equalto', 'fail')|map(attribute='name')|join('、') }}。
+        <a href="{{ url_for('settings.index') }}">查看與修正方式</a></div>
+    {% endif %}
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}
         <div class="flash {{ category }}">{{ message }}</div>

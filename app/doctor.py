@@ -1,5 +1,8 @@
-"""部署健檢（應用程式內部的部分）：由 `flask --app wsgi doctor-json` 輸出 JSON，
-scripts/dailyreport.sh doctor 再加上系統、服務、網路的檢查一起顯示。
+"""健康檢查。
+
+- 系統設定頁「健康檢查」：run(system=True)，含服務、版本、HTTPS 憑證、磁碟等系統項目（以服務帳號執行）
+- 維護背景服務依設定的間隔自動執行 run(system=True)
+- scripts/dailyreport.sh doctor（升級後驗證）：`flask doctor-json` 輸出 run()，系統項目由腳本以 root 檢查
 
 每一項：group, name, status（ok / warn / fail）, detail, fix（照著做就能修好的指令或步驟）。
 """
@@ -22,8 +25,9 @@ def _item(out, group, name, status, detail="", fix=""):
     out.append({"group": group, "name": name, "status": status, "detail": detail, "fix": fix})
 
 
-def run():
+def run(system=False):
     from . import ai_providers as prov
+    from . import sysconf
     from .models import AIProvider, CheckReport, Report, ReportImage, User
 
     out = []
@@ -42,13 +46,13 @@ def run():
         _item(out, g, "驗證模式", "fail", f"AUTH_MODE={mode}（任何帳號都能登入）", f"在 {DIR}/.env 設定 AUTH_MODE=ldap")
     else:
         _item(out, g, "驗證模式", "ok", "AD（LDAP）")
-    url = cfg.get("LDAP_URL") or ""
-    if mode == "ldap" and (not url or "example" in url or not cfg.get("AD_DOMAIN") or "example" in cfg.get("AD_DOMAIN", "")):
-        _item(out, g, "AD 設定", "warn", "LDAP_URL / AD_DOMAIN 尚未設定，AD 帳號無法登入（本機緊急帳號仍可登入）",
-              f"編輯 {DIR}/.env 的 LDAP_URL、AD_DOMAIN、LDAP_BASE_DN，再執行 sudo bash {DIR}/scripts/dailyreport.sh restart")
+    lc = sysconf.ldap_config()
+    if mode == "ldap" and not sysconf.ldap_configured(lc):
+        _item(out, g, "AD 設定", "warn", "尚未設定 AD 伺服器，AD 帳號無法登入（本機緊急帳號仍可登入）",
+              "用本機緊急帳號登入 → 系統設定 → AD 驗證")
     elif mode == "ldap":
-        _item(out, g, "AD 設定", "ok", f"{url}（網域 {cfg.get('AD_DOMAIN')}）")
-        _ldap_reach(out, g, url)
+        _item(out, g, "AD 設定", "ok", f"{lc['ldap_url']}（網域 {lc['ad_domain']}）")
+        _ldap_reach(out, g, lc["ldap_url"])
     if cfg.get("SESSION_COOKIE_SECURE"):
         _item(out, g, "Cookie", "ok", "只經 HTTPS 傳送")
     else:
@@ -63,7 +67,7 @@ def run():
         path = db.engine.url.database or ""
         size = os.path.getsize(path) / 1e6 if path and os.path.exists(path) else 0
         _item(out, g, "完整性", "ok" if ok == "ok" else "fail", f"{ok}（{path}，{size:.1f} MB）",
-              "" if ok == "ok" else f"從備份還原：sudo bash {DIR}/scripts/dailyreport.sh restore <備份資料夾>")
+              "" if ok == "ok" else "系統設定 → 備份還原：選擇損壞前的備份還原")
         _item(out, g, "WAL 模式", "ok" if mode_j == "wal" else "warn", mode_j,
               "" if mode_j == "wal" else "重新啟動服務後會自動切換")
         n_reports = Report.query.count()
@@ -78,7 +82,7 @@ def run():
             assigned = len(admins) - len(local)
             _item(out, g, "系統管理員", "ok" if assigned else "warn",
                   f"本機緊急帳號 {len(local)} 個、指派 {assigned} 個",
-                  "" if assigned else "AD 帳號登入一次後，在「帳號管理」指派檔案管理員或二線管理員為系統管理員")
+                  "" if assigned else "AD 帳號登入一次後，在「系統設定 → 帳號管理」指派檔案管理員或二線管理員為系統管理員")
     except Exception as e:  # 資料庫打不開時其他檢查也沒有意義
         _item(out, g, "連線", "fail", str(e)[:200], f"檢查 {DIR}/.env 的 DATABASE_URL 與檔案權限")
         return out
@@ -89,8 +93,8 @@ def run():
     if tpl and os.path.isfile(tpl) and os.access(tpl, os.R_OK):
         _item(out, g, "CheckList 範本", "ok", tpl)
     else:
-        _item(out, g, "CheckList 範本", "fail", f"找不到 {tpl}，無法產生 PDF",
-              f"sudo bash {DIR}/scripts/dailyreport.sh template \"/路徑/CFXD SLA - SCADA Daily Inspection CheckList.xlsx\"")
+        _item(out, g, "CheckList 範本", "fail", "尚未上傳，無法產生 PDF",
+              "系統設定 → PDF 與上傳 → 上傳「CFXD SLA - SCADA Daily Inspection CheckList.xlsx」")
     fonts = _fonts()
     missing = [f for f in ("Carlito", "Liberation Sans", "DejaVu Sans") if f not in fonts]
     font_dir = cfg.get("FONT_DIR")
@@ -122,12 +126,12 @@ def run():
     else:
         ai_wait = CheckReport.query.filter_by(ai_status="pending").count()
         _item(out, g, "AI 建議", "ok" if usable else "fail", f"可用服務 {usable}/{providers}、等待產生 {ai_wait} 份",
-              "" if usable else "到「系統設定」新增或啟用 AI 服務，並按「測試連線」")
+              "" if usable else "系統設定 → AI 建議：新增或啟用 AI 服務，並按「測試連線」")
     md_dir = s["check_md_dir"]
     if md_dir:
         writable = os.path.isdir(md_dir) and os.access(md_dir, os.W_OK)
         _item(out, g, "檢查結果.md 匯出", "ok" if writable else "warn", md_dir,
-              "" if writable else f"sudo mkdir -p {md_dir} && sudo chown dailyreport:www-data {md_dir}")
+              "" if writable else f"系統設定 → AI 建議：改成可寫入的位置，或 sudo mkdir -p {md_dir} && sudo chown dailyreport:www-data {md_dir}")
 
     # ---------------------------------------------------------------- 儲存空間
     g = "儲存空間"
@@ -138,7 +142,114 @@ def run():
         _item(out, g, "截圖資料夾", "ok" if writable and free > 5 else ("fail" if not writable else "warn"),
               f"{up}，剩餘 {free:.1f} GB" + ("" if writable else "，無法寫入"),
               "" if writable and free > 5 else f"sudo chown -R dailyreport:www-data {up}；清理磁碟或擴充容量")
+
+    _backup_checks(out)
+    if system:
+        _system_checks(out)
     return out
+
+
+def _backup_checks(out):
+    from . import backup, maint, sysconf
+
+    g = "備份"
+    root = sysconf.backup_dir()
+    err = backup.check_dir(root)
+    if err:
+        _item(out, g, "備份位置", "fail", f"{root} {err}", "系統設定 → 備份還原：改成可寫入的位置")
+        return
+    free = shutil.disk_usage(root).free / 1e9
+    _item(out, g, "備份位置", "ok" if free > 2 else "warn", f"{root}，剩餘 {free:.1f} GB",
+          "" if free > 2 else "系統設定 → 備份還原：減少保留份數，或改到空間較大的位置（NAS）")
+    nxt = maint.next_backup()
+    if nxt:
+        _item(out, g, "排程", "ok", f"每天 {sysconf.get('backup_time')}，保留 {sysconf.get('backup_keep')} 份（下次 {nxt:%m/%d %H:%M}）")
+    else:
+        _item(out, g, "排程", "warn", "自動備份未啟用", "系統設定 → 備份還原：啟用每日自動備份")
+    last = backup.last_backup()
+    if last:
+        age = (datetime.now() - last["time"]).total_seconds() / 3600
+        _item(out, g, "最近一次", "ok" if age <= 48 else "warn",
+              f"{last['name']}（{age:.0f} 小時前，{last['size'] / 1e6:.1f} MB，共 {len(backup.list_backups())} 份）",
+              "" if age <= 48 else "系統設定 → 備份還原 → 立即備份；並確認維護背景服務 dailyreport-maint 執行中")
+    else:
+        _item(out, g, "最近一次", "warn", "還沒有備份", "系統設定 → 備份還原 → 立即備份")
+    from .models import MaintJob
+
+    bad = MaintJob.query.filter_by(kind="backup").order_by(MaintJob.id.desc()).first()
+    if bad and bad.status == "error":
+        _item(out, g, "上次備份工作", "fail", f"{bad.finished_at:%m/%d %H:%M} 失敗：{bad.message[:150]}",
+              "系統設定 → 備份還原：依錯誤訊息修正後按「立即備份」")
+
+
+def _run(cmd, timeout=10):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None, ""
+
+
+SERVICES = ("dailyreport", "dailyreport-ocr", "dailyreport-ai", "dailyreport-maint", "nginx")
+
+
+def _system_checks(out):
+    """以服務帳號（非 root）可以做到的系統檢查；scripts/dailyreport.sh doctor 以 root 做更完整的版本。"""
+    from . import backup, maint
+
+    g = "系統"
+    try:
+        with open("/proc/meminfo") as fh:
+            mem = {ln.split(":")[0]: int(ln.split()[1]) for ln in fh if ":" in ln}
+        avail = mem.get("MemAvailable", 0) // 1024
+        _item(out, g, "可用記憶體", "ok" if avail >= 1024 else "warn", f"{avail} MB",
+              "" if avail >= 1024 else "截圖 OCR 約需 1 GB，建議增加記憶體或 swap")
+    except OSError:
+        pass
+    free = shutil.disk_usage(current_app.instance_path).free / 1e6
+    _item(out, g, "可用磁碟", "ok" if free >= 5000 else ("warn" if free >= 1000 else "fail"),
+          f"{free:.0f} MB（{current_app.instance_path}）", "" if free >= 5000 else "清理舊備份或擴充磁碟")
+    rc, ntp = _run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"])
+    if rc is not None:
+        _item(out, g, "時間同步", "ok" if ntp == "yes" else "warn", "NTP 已同步" if ntp == "yes" else "NTP 未同步（截圖日期檢查依賴正確的系統時間）",
+              "" if ntp == "yes" else "sudo timedatectl set-ntp true")
+    ver = backup.version()
+    if ver:
+        rc, remote = _run(["git", "-c", f"safe.directory={backup.app_dir()}", "-C", backup.app_dir(),
+                           "ls-remote", "origin", "refs/heads/main"], timeout=15)
+        latest = remote.split()[0] if rc == 0 and remote else ""
+        if not latest:
+            _item(out, g, "程式版本", "ok", f"{ver[:7]}（無法連線檢查新版）")
+        elif latest == ver:
+            _item(out, g, "程式版本", "ok", f"{ver[:7]}（最新）")
+        else:
+            _item(out, g, "程式版本", "warn", f"{ver[:7]}，GitHub 上有新版 {latest[:7]}",
+                  f"在主機執行：curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash -s -- upgrade")
+
+    g = "服務"
+    rc, _ = _run(["systemctl", "--version"])
+    if rc is None:
+        _item(out, g, "systemd", "warn", "無法查詢服務狀態（不是以 systemd 執行）")
+    else:
+        for s in SERVICES:
+            _, state = _run(["systemctl", "is-active", s])
+            _item(out, g, s, "ok" if state == "active" else "fail", "執行中" if state == "active" else (state or "未知"),
+                  "" if state == "active" else f"sudo systemctl restart {s}；sudo journalctl -u {s} -n 50")
+    if not maint.worker_alive():
+        _item(out, g, "維護背景服務", "fail", "超過 3 分鐘沒有回應：自動備份與自動健康檢查不會執行",
+              "sudo systemctl restart dailyreport-maint；sudo journalctl -u dailyreport-maint -n 50")
+
+    g = "HTTPS"
+    from .tls import current_cert
+
+    cert = current_cert()
+    if cert is None:
+        _item(out, g, "憑證", "warn", "本機 443 埠沒有 HTTPS（密碼會以明文傳送）", "系統設定 → HTTPS 憑證")
+    else:
+        days = cert["days_left"]
+        _item(out, g, "憑證", "ok" if days > 30 else ("warn" if days > 0 else "fail"),
+              f"{'自簽，' if cert['self_signed'] else ''}{cert['subject']}，剩 {days} 天到期（{cert['not_after']:%Y-%m-%d}）",
+              "" if days > 30 else "系統設定 → HTTPS 憑證：上傳新的憑證")
 
 
 def _ldap_reach(out, g, url):

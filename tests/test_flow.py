@@ -21,6 +21,7 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setenv("CHECK_MD_DIR", str(tmp_path / "check_reports"))
+    monkeypatch.setenv("DR_BACKUP_DIR", str(tmp_path / "backups"))
     monkeypatch.setenv("APPROVER_USERS", "boss,boss2")
     from app import create_app
 
@@ -497,7 +498,7 @@ def test_local_admin(app):
     b.get("/login")
     assert "帳號或密碼錯誤" in b.post("/login", {"username": "sysadmin", "password": "wrong"})  # dev 模式也要驗證本機密碼
     html = b.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
-    assert "系統管理員" in html and "帳號管理" in html
+    assert "系統管理員" in html and "系統設定" in html
 
     other = Browser(app)
     other.login("erin")
@@ -933,7 +934,7 @@ def test_settings_page_and_admin_assignment(app):
         db.session.get(User, bid).sys_admin = False
         db.session.commit()
     root.post("/admin/users", {"user_id": str(bid), "sys_admin": "1"})
-    html = bob.get("/admin/settings/")
+    html = bob.get("/admin/settings/ai")
     assert "系統設定" in html and "AI 服務" in html and "系統管理員" in bob.get("/")
 
     # 指派的系統管理員可以再指派別人、不能移除自己；改成一線使用者時自動移除
@@ -962,7 +963,7 @@ def test_settings_page_and_admin_assignment(app):
         assert p.api_key_hint == "9876" and p.currency == "USD" and "sk-ant" not in p.api_key_enc
         pid = p.id
     assert "末 4 碼 9876" in bob.get(f"/admin/settings/providers/{pid}")
-    assert "外部服務，尚未允許" in bob.get("/admin/settings/")
+    assert "外部服務，尚未允許" in bob.get("/admin/settings/ai")
     assert "請先在一般設定允許" in bob.post(f"/admin/settings/providers/{pid}/test")
 
     # 允許外部服務必須勾選確認
@@ -971,9 +972,9 @@ def test_settings_page_and_admin_assignment(app):
             "check_md_dir": ""}
     assert "請勾選確認" in bob.post("/admin/settings/general", form)
     assert "已儲存設定" in bob.post("/admin/settings/general", {**form, "external_ack": "1"})
-    assert "運作中：1 個服務可用" in bob.get("/admin/settings/")
+    assert "運作中：1 個服務可用" in bob.get("/admin/settings/ai")
     assert "已儲存提示詞" in bob.post("/admin/settings/prompt", {"ai_system_prompt": "自訂規則"})
-    assert "自訂規則" in bob.get("/admin/settings/")
+    assert "自訂規則" in bob.get("/admin/settings/ai")
 
 
 def test_healthz_and_doctor(app):
@@ -987,6 +988,255 @@ def test_healthz_and_doctor(app):
     assert res.exit_code == 0, res.output
     items = {(x["group"], x["name"]): x for x in json.loads(res.output.strip().splitlines()[-1])}
     assert items[("設定", "SECRET_KEY")]["status"] == "fail"  # 測試用 SECRET_KEY 太短
-    assert items[("PDF 輸出", "CheckList 範本")]["status"] == "fail" and "template" in items[("PDF 輸出", "CheckList 範本")]["fix"]
+    assert items[("PDF 輸出", "CheckList 範本")]["status"] == "fail" and "PDF 與上傳" in items[("PDF 輸出", "CheckList 範本")]["fix"]
     assert items[("資料庫", "完整性")]["status"] == "ok"
     assert all(x["status"] in ("ok", "warn", "fail") for x in items.values())
+
+
+def _admin_browser(app):
+    runner = app.test_cli_runner()
+    assert runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "a-very-long-pass"]).exit_code == 0
+    b = Browser(app)
+    b.get("/login")
+    b.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
+    return b
+
+
+def test_admin_ldap_and_local_accounts(app):
+    """AD 設定在設定頁（.env 只是舊版沿用的預設值）、測試不會儲存；本機緊急帳號在帳號管理頁新增 / 重設 / 停用。"""
+    from app import db, sysconf
+    from app.auth import ad_authenticate
+    from app.models import AuditLog, User
+
+    app.config["LDAP_URL"] = "ldaps://old.example.test:636"
+    b = _admin_browser(app)
+    for tab in ("/admin/settings/", "/admin/settings/ldap", "/admin/users", "/admin/settings/backup",
+                "/admin/settings/pdf", "/admin/settings/tls", "/admin/settings/ai"):
+        html = b.get(tab)
+        assert "admin-tabs" in html, tab
+    assert "沿用安裝設定檔" in b.get("/admin/settings/ldap")
+
+    form = {"ldap_url": "ldaps://127.0.0.1:1", "ad_domain": "Corp.Local", "ldap_base_dn": "DC=corp,DC=local",
+            "ldap_required_group": "", "ldap_approver_group": "", "approver_users": "Boss, alice",
+            "ldap_timeout": "2", "ldap_ca_pem": ""}
+    html = b.post("/admin/settings/ldap/test", form)
+    assert "無法連線" in html and "還沒有儲存" in html
+    with app.app_context():
+        assert sysconf.get("ldap_url") == "ldaps://old.example.test:636"  # 測試不儲存
+    assert "格式" in b.post("/admin/settings/ldap", {**form, "ldap_url": "http://x"})
+    assert "CA 憑證不是 PEM" in b.post("/admin/settings/ldap", {**form, "ldap_ca_pem": "garbage"})
+    assert "已儲存 AD 設定" in b.post("/admin/settings/ldap", form)
+    with app.app_context():
+        c = sysconf.ldap_config()
+        assert c["ldap_url"] == "ldaps://127.0.0.1:1" and c["ad_domain"] == "corp.local"
+        assert c["approver_users_set"] == {"alice", "boss"} and sysconf.source("ldap_url") == "db"
+        with app.test_request_context():
+            assert ad_authenticate("alice", "") is None and ad_authenticate("alice", "x") is None  # 連不上 -> 失敗，不例外
+
+    # 本機緊急帳號
+    assert "至少需要 12" in b.post("/admin/settings/local/create", {"username": "breakglass", "password": "short", "password2": "short"})
+    assert "不一致" in b.post("/admin/settings/local/create", {"username": "breakglass", "password": "x" * 12, "password2": "y" * 12})
+    assert "已新增本機緊急帳號 breakglass" in b.post("/admin/settings/local/create",
+                                                 {"username": "breakglass", "password": "p" * 14, "password2": "p" * 14})
+    erin = Browser(app)
+    erin.login("erin")
+    assert "已存在" in b.post("/admin/settings/local/create", {"username": "erin", "password": "p" * 14, "password2": "p" * 14})
+    with app.app_context():
+        me = User.query.filter_by(username="sysadmin").one().id
+        bg = User.query.filter_by(username="breakglass").one().id
+        assert db.session.get(User, bg).is_admin
+    assert "目前的密碼不正確" in b.post(f"/admin/settings/local/{me}/password",
+                                         {"current_password": "nope", "password": "n" * 13, "password2": "n" * 13})
+    assert "已更新 sysadmin" in b.post(f"/admin/settings/local/{me}/password",
+                                       {"current_password": "a-very-long-pass", "password": "n" * 13, "password2": "n" * 13})
+    assert "已更新 breakglass" in b.post(f"/admin/settings/local/{bg}/password", {"password": "q" * 13, "password2": "q" * 13})
+    nb = Browser(app)
+    nb.get("/login")
+    assert "系統設定" in nb.post("/login", {"username": "breakglass", "password": "q" * 13})
+    assert "不能停用自己" in b.post(f"/admin/settings/local/{me}/disable")
+    assert "已停用 breakglass" in b.post(f"/admin/settings/local/{bg}/disable")
+    with app.app_context():
+        u = db.session.get(User, bg)
+        assert not u.is_admin and u.password_hash is None and u.username.startswith("breakglass#")
+        assert AuditLog.query.filter_by(action="local_account").count() == 4
+    assert "<td>breakglass" not in b.get("/admin/users").split("稽核紀錄")[0]
+    nb.get("/admin/settings/", status=403)  # 停用後原本的登入階段也失去權限
+    erin.get("/admin/settings/ldap", status=403)
+    erin.post("/admin/settings/local/create", {"username": "evil", "password": "p" * 14, "password2": "p" * 14}, status=403)
+
+
+def test_admin_backup_restore_and_health(app, tmp_path):
+    """備份 / 還原由維護背景服務執行，格式與 dailyreport.sh 相同；健康檢查結果顯示在設定頁、失敗時頁首提醒。"""
+    import os
+    import subprocess
+
+    from app import backup, db, maint, sysconf
+    from app.models import MaintJob, Report
+
+    app.instance_path = str(tmp_path / "instance")
+    os.makedirs(os.path.join(app.instance_path, "pdf_cache"))
+    os.makedirs(os.path.join(app.instance_path, "fonts"))
+    with open(os.path.join(app.instance_path, "fonts", "a.ttf"), "wb") as fh:
+        fh.write(b"\x00\x01\x00\x00font")
+    b = _admin_browser(app)
+    rid = report_id_from(b.post("/reports/new", {"report_date": "2026-10-01"}))
+
+    assert "必須是絕對路徑" in b.post("/admin/settings/backup/config", {"backup_dir": "rel", "backup_time": "02:30", "backup_keep": "3"})
+    assert "HH:MM" in b.post("/admin/settings/backup/config", {"backup_time": "25:00", "backup_keep": "3"})
+    assert "不能放在資料夾 instance" in b.post("/admin/settings/backup/config", {
+        "backup_dir": os.path.join(app.instance_path, "bk"), "backup_time": "02:30", "backup_keep": "3"})
+    assert "已儲存備份設定" in b.post("/admin/settings/backup/config", {
+        "backup_enabled": "1", "backup_time": "02:30", "backup_keep": "2", "backup_dir": "", "backup_include_env": "1"})
+    assert "已排入備份" in b.post("/admin/settings/backup/now")
+    assert "已有備份或還原工作" in b.post("/admin/settings/backup/now")
+    with app.app_context():
+        maint.tick()
+        job = MaintJob.query.order_by(MaintJob.id.desc()).first()
+        assert job.status == "done", job.message
+        items = backup.list_backups()
+        assert len(items) == 1 and items[0]["meta"]["trigger"] == "manual" and items[0]["meta"]["reports"] == 1
+        name = items[0]["name"]
+        path = backup.path_of(name)
+        # dailyreport.sh restore 用 sha256sum -c 驗證：格式必須相容
+        assert subprocess.run(["sha256sum", "-c", "--quiet", "SHA256SUMS"], cwd=path).returncode == 0
+        assert {"dailyreport.db", "instance.tar.gz", "VERSION", "meta.json", "SHA256SUMS"} <= set(os.listdir(path))
+        import tarfile
+
+        with tarfile.open(os.path.join(path, "instance.tar.gz")) as t:
+            names = t.getnames()
+        assert "instance/fonts/a.ttf" in names and not any("pdf_cache" in n for n in names)
+
+    html = b.get("/admin/settings/backup")
+    assert name in html and "資料庫" in html
+    r = b.c.get(f"/admin/settings/backup/{name}/dailyreport.db")
+    assert r.status_code == 200 and r.data[:15] == b"SQLite format 3"
+    assert b.c.get(f"/admin/settings/backup/{name}/env").status_code == 404
+    assert b.c.get("/admin/settings/backup/../../etc/dailyreport.db").status_code == 404
+
+    # 備份之後的變更，還原後消失；還原前會自動備份
+    b.post(f"/reports/{rid}/delete", {"reason": "x"})
+    rid2 = report_id_from(b.post("/reports/new", {"report_date": "2026-10-02"}))
+    os.remove(os.path.join(app.instance_path, "fonts", "a.ttf"))
+    assert "請輸入備份日期" in b.post(f"/admin/settings/backup/{name}/restore", {"confirm": "x"})
+    assert "已排入還原" in b.post(f"/admin/settings/backup/{name}/restore", {"confirm": name[:8]})
+    with app.app_context():
+        maint.tick()
+        job = MaintJob.query.order_by(MaintJob.id.desc()).first()
+        assert job.kind == "restore" and job.status == "done", job.message
+        assert MaintJob.query.filter(MaintJob.status.in_(("pending", "running"))).count() == 0  # 不會卡住
+        assert db.session.get(Report, rid) is not None and db.session.get(Report, rid2) is None
+        assert os.path.exists(os.path.join(app.instance_path, "fonts", "a.ttf"))
+        triggers = sorted(i["meta"]["trigger"] for i in backup.list_backups())
+        assert triggers == ["manual", "pre_restore"]
+    assert "已還原" in b.get("/admin/settings/backup")
+    assert "還原" in b.get("/admin/users")  # 稽核紀錄
+
+    # 損壞的備份不能還原
+    with app.app_context():
+        with open(os.path.join(backup.path_of(name), "dailyreport.db"), "ab") as fh:
+            fh.write(b"x")
+    assert "檢查碼不符" in b.post(f"/admin/settings/backup/{name}/restore", {"confirm": name[:8]})
+
+    # 排程：到時間才做、同一天只做一次、保留份數
+    from datetime import datetime
+
+    with app.app_context():
+        sysconf.put("backup_last_scheduled", "")
+        db.session.commit()
+        assert maint.backup_due(datetime(2026, 11, 3, 3, 0))
+        sysconf.put("backup_last_scheduled", "2026-11-03T02:31:00")
+        db.session.commit()
+        assert not maint.backup_due(datetime(2026, 11, 3, 23, 0))
+        assert maint.backup_due(datetime(2026, 11, 4, 2, 31))
+        assert not maint.backup_due(datetime(2026, 11, 4, 2, 29))
+
+    # 健康檢查
+    html = b.post("/admin/settings/health/run")
+    assert "健康檢查完成" in html and "備份位置" in html and "服務" in html
+    with app.app_context():
+        last = sysconf.get("health_last")
+        assert last["fail"] >= 1  # 測試環境：SECRET_KEY 太短、沒有範本
+    assert "健康檢查有" in b.get("/")
+    assert "已儲存健康檢查設定" in b.post("/admin/settings/health/config", {"health_enabled": "1", "health_interval_hours": "12"})
+
+
+def test_admin_pdf_upload_and_tls(app, tmp_path):
+    """範本與字型從設定頁上傳（會檢查內容）；上傳上限可調；HTTPS 憑證檢查配對後交給主機套用。"""
+    import datetime as dt
+    import io
+    import json
+    import os
+
+    import openpyxl
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    from app.helpers import SHEETS
+
+    app.instance_path = str(tmp_path / "instance")
+    app.config["PDF_TEMPLATE_XLSX"] = str(tmp_path / "instance" / "templates" / "checklist.xlsx")
+    app.config["FONT_DIR"] = str(tmp_path / "instance" / "fonts")
+    b = _admin_browser(app)
+    assert "尚未上傳範本" in b.get("/admin/settings/pdf")
+
+    def xlsx(sheets):
+        wb = openpyxl.Workbook()
+        wb.active.title = sheets[0]
+        for s in sheets[1:]:
+            wb.create_sheet(s)
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf
+
+    html = b.post("/admin/settings/pdf/template", {"template": (xlsx(["Sheet"]), "x.xlsx")}, content_type="multipart/form-data")
+    assert "缺少工作表" in html
+    html = b.post("/admin/settings/pdf/template", {"template": (io.BytesIO(b"nope"), "x.xlsx")}, content_type="multipart/form-data")
+    assert "無法讀取" in html
+    html = b.post("/admin/settings/pdf/template", {"template": (xlsx(["Alarm Summary", *SHEETS.values()]), "CheckList.xlsx")},
+                  content_type="multipart/form-data")
+    assert "已更新 CheckList 範本" in html and "下載目前的範本" in html
+    assert b.c.get("/admin/settings/pdf/template").status_code == 200
+
+    html = b.post("/admin/settings/pdf/font", {"fonts": [(io.BytesIO(b"\x00\x01\x00\x00abc"), "calibri.ttf"),
+                                                          (io.BytesIO(b"MZ"), "evil.ttf"), (io.BytesIO(b"x"), "a.exe")]},
+                  content_type="multipart/form-data")
+    assert "已上傳 1 個字型" in html and "evil.ttf 不是有效" in html
+    assert os.listdir(app.config["FONT_DIR"]) == ["calibri.ttf"]
+    assert "已刪除 calibri.ttf" in b.post("/admin/settings/pdf/font/delete", {"name": "calibri.ttf"})
+
+    # 上傳上限：1 MB 時 2 MB 的上傳被拒絕
+    assert "1 MB" in b.post("/admin/settings/pdf/upload", {"max_upload_mb": "1"})
+    r = b.c.post("/admin/settings/pdf/font", data={"csrf_token": b.tok, "fonts": (io.BytesIO(b"\0" * (2 << 20)), "big.ttf")},
+                 content_type="multipart/form-data")
+    assert r.status_code == 413
+    b.post("/admin/settings/pdf/upload", {"max_upload_mb": "20"})
+
+    # HTTPS 憑證
+    def make(cn, days=365):
+        key = ec.generate_private_key(ec.SECP256R1())
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+        now = dt.datetime.now(dt.timezone.utc)
+        cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+                .serial_number(x509.random_serial_number()).not_valid_before(now - dt.timedelta(days=1))
+                .not_valid_after(now + dt.timedelta(days=days))
+                .add_extension(x509.SubjectAlternativeName([x509.DNSName(cn)]), critical=False).sign(key, hashes.SHA256()))
+        return (cert.public_bytes(serialization.Encoding.PEM),
+                key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+
+    c1, k1 = make("report.corp.local")
+    c2, k2 = make("other")
+    assert "不配對" in b.post("/admin/settings/tls/upload", {"cert_pem": c1.decode(), "key_pem": k2.decode()})
+    assert "不是 PEM" in b.post("/admin/settings/tls/upload", {"cert_pem": "x", "key_pem": k1.decode()})
+    html = b.post("/admin/settings/tls/upload", {"cert_pem": c1.decode(), "key_pem": k1.decode()})
+    assert "憑證檢查通過（report.corp.local" in html and "正在套用" in html
+    d = os.path.join(app.instance_path, "tls_request")
+    assert json.load(open(os.path.join(d, "request.json")))["action"] == "custom"
+    assert oct(os.stat(os.path.join(d, "key.pem")).st_mode & 0o777) == "0o600"
+    # 主機的 apply-tls 完成後寫回 result.json
+    os.remove(os.path.join(d, "request.json"))
+    with open(os.path.join(d, "result.json"), "w") as fh:
+        json.dump({"ok": True, "at": "2026-11-03 10:00", "message": "已套用 report.corp.local"}, fh)
+    assert "已套用 report.corp.local" in b.get("/admin/settings/tls")

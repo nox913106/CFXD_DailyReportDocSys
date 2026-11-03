@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}PDF 與上傳 - CFXD{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>
+{% include "_admin_nav.html" %}
+
+<section class="card">
+  <h3>CheckList 範本</h3>
+  {% if tpl %}
+  <p><span class="sev sev-ok">已設定</span> 更新於 {{ tpl.mtime.strftime('%Y-%m-%d %H:%M') }}（{{ '%.0f'|format(tpl.size / 1024) }} KB）
+    · <a href="{{ url_for('settings.pdf_template') }}">下載目前的範本</a></p>
+  {% else %}
+  <div class="flash error">尚未上傳範本，日報無法產生 PDF。</div>
+  {% endif %}
+  <p class="hint">PDF 依照「CFXD SLA - SCADA Daily Inspection CheckList.xlsx」的排版產生。上傳時會檢查是否含有必要的工作表；
+    更新後已產生的 PDF 快取會清除，上一版範本保留一份備份。</p>
+  <form method="post" action="{{ url_for('settings.pdf_template') }}" enctype="multipart/form-data" class="actions">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="file" name="template" accept=".xlsx" required class="file-input">
+    <button type="submit">上傳範本</button>
+  </form>
+</section>
+
+<section class="card">
+  <h3>字型</h3>
+  <p class="hint">系統已內建相容字型（Carlito、Liberation、DejaVu、Noto CJK）。要和 Excel 的 PDF 完全一致時，可以從 Windows 的
+    C:\Windows\Fonts 上傳 calibri*.ttf、arial*.ttf、times*.ttf、msjh*.ttc 等字型檔，上傳後優先使用。請確認公司授權允許。</p>
+  {% if fonts %}
+  <table class="list">
+    {% for f in fonts %}
+    <tr><td>{{ f }}</td><td>
+      <form method="post" action="{{ url_for('settings.pdf_font_delete') }}" class="inline" onsubmit="return confirm('刪除 {{ f }}？')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="name" value="{{ f }}">
+        <button type="submit" class="link danger">刪除</button>
+      </form></td></tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="hint">尚未上傳字型，使用內建相容字型。</p>{% endif %}
+  <form method="post" action="{{ url_for('settings.pdf_font') }}" enctype="multipart/form-data" class="actions">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="file" name="fonts" accept=".ttf,.ttc,.otf" multiple required class="file-input">
+    <button type="submit">上傳字型</button>
+  </form>
+</section>
+
+<section class="card">
+  <h3>上傳限制</h3>
+  <form method="post" action="{{ url_for('settings.pdf_upload_limit') }}" class="actions">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="inline">單次上傳上限 <input name="max_upload_mb" type="number" min="1" max="200" value="{{ max_upload_mb }}" class="short"> MB</label>
+    <button type="submit" class="secondary">儲存</button>
+    <span class="hint">截圖、範本、字型的單次上傳總大小（最多 200 MB）。</span>
+  </form>
+</section>
+{% endblock %}

@@ -37,11 +37,10 @@ CheckList 的圓餅圖數值由範本公式（COUNTIFS、Qty / SUM）依日報�
 
 **需要的檔案（不放在 git 裡）：**
 
-- CheckList 範本：把「CFXD SLA - SCADA Daily Inspection CheckList.xlsx」複製為 `instance/templates/checklist.xlsx`
-  （或用 `.env` 的 `PDF_TEMPLATE_XLSX` 指定路徑）。修改範本的版面（欄寬、列高、分頁）後，PDF 會跟著改變。
-- 字型：Ubuntu 需安裝 `fonts-crosextra-carlito fonts-liberation fonts-dejavu-core`（與 Calibri / Arial 字寬相同，版面位置不變）。
-  要連字形都一模一樣，可把 Windows `C:\Windows\Fonts` 的 `calibri*.ttf`、`arial*.ttf`、`times*.ttf` 複製到 `instance/fonts/`
-  （或 `.env` 的 `FONT_DIR`），系統會優先使用。
+- CheckList 範本：在「系統設定 → PDF 與上傳」上傳「CFXD SLA - SCADA Daily Inspection CheckList.xlsx」
+  （會檢查必要的工作表，上一版保留一份）。修改範本的版面（欄寬、列高、分頁）後，PDF 會跟著改變。
+- 字型：安裝腳本已裝好相容字型（與 Calibri / Arial 字寬相同，版面位置不變）。要連字形都一模一樣，
+  可在同一頁上傳 Windows `C:\Windows\Fonts` 的 `calibri*.ttf`、`arial*.ttf`、`times*.ttf`，系統會優先使用。
 
 ### 權限
 
@@ -53,8 +52,8 @@ CheckList 的圓餅圖數值由範本公式（COUNTIFS、Qty / SUM）依日報�
 | 二線管理員 | 送審、新增、編輯、刪除；經檔案管理員授權後可代審核、代指派、代退件、代作廢 |
 | 一線使用者 | 送審、新增、編輯（含別人的草稿 / 退回）、申請作廢 |
 
-- AD 帳號首次登入建立為一線使用者；`APPROVER_USERS` 或 `LDAP_APPROVER_GROUP` 內的帳號首次登入時預設為檔案管理員。
-  之後角色一律由系統管理員在右上角「帳號管理」調整，登入時不會再變更。
+- AD 帳號首次登入建立為一線使用者；「系統設定 → AD 驗證」指定的帳號或群組成員首次登入時預設為檔案管理員。
+  之後角色一律由系統管理員在「系統設定 → 帳號管理」調整，登入時不會再變更。
 - 核准人：每份日報在「基本資料」指定一位檔案管理員為核准人（新日報沿用前一份；只有一位檔案管理員時自動指定）。
   只有該核准人或其授權的二線管理員能核准 / 退件；未指定時任何檔案管理員都可以審核。
 - 職責分離：日報的撰寫人與送審人都不能核准該份日報。被指派的系統管理員同樣受限，只有本機緊急帳號例外。
@@ -64,11 +63,11 @@ CheckList 的圓餅圖數值由範本公式（COUNTIFS、Qty / SUM）依日報�
   一線使用者送出「申請作廢」，由檔案管理員（或其代理人）核定或駁回。
 - **刪除**：移除整份日報與截圖，該日期可重新建立；需輸入文件編號確認，並寫入稽核紀錄。
 
-本機緊急帳號（密碼至少 12 字元）與初次指派：
+本機緊急帳號（密碼至少 12 字元）在「系統設定 → 帳號管理」新增、變更密碼、重設、停用（至少保留一個）。
+安裝時會自動建立 `sysadmin`。忘記所有本機帳號密碼、網頁也無法登入時，才需要在主機上救援：
 
 ```bash
-flask --app wsgi create-admin --username sysadmin      # 建立或重設本機緊急帳號的密碼
-flask --app wsgi grant-admin --username <AD帳號>       # 初次設定時指派系統管理員（之後在「帳號管理」操作）
+sudo -u dailyreport /opt/dailyreport/.venv/bin/flask --app wsgi create-admin --username sysadmin   # 重設密碼
 ```
 
 ### 代理（二線管理員代檔案管理員）
@@ -139,7 +138,23 @@ flask --app wsgi grant-admin --username <AD帳號>       # 初次設定時指派
 
 ### 系統設定（只有系統管理員）
 
-右上角「系統設定」。所有 AI 相關設定都在這裡，存在資料庫，背景服務每次產生前重新讀取，不需要改 `.env` 或重啟。
+右上角「系統設定」。所有日常系統設定都在網頁上完成，存在資料庫、儲存後立即套用，不需要登入主機、改 `.env` 或重啟；
+每一項變更都寫入稽核紀錄。
+
+| 分頁 | 內容 |
+|---|---|
+| 系統狀態 | 健康檢查（設定、資料庫、PDF、背景工作、備份、服務、版本、HTTPS 憑證，每一項附修正方式）；「立即檢查」或每 N 小時自動檢查，有失敗時系統管理員每一頁上方都會看到提醒；最近的維護工作；安裝時決定的項目（唯讀） |
+| AD 驗證 | 網域控制站、網域、Base DN、允許登入的群組、首次登入設為檔案管理員的群組 / 帳號、LDAPS 的公司 CA 憑證（上傳或貼上）。「測試」用表單上的值（不儲存）逐步檢查網路、TLS、帳號登入與群組 |
+| 帳號管理 | AD 帳號的角色與系統管理員指派；本機緊急帳號新增 / 變更密碼 / 重設 / 停用；權限說明；稽核紀錄 |
+| 備份還原 | 每日自動備份時間、保留份數、備份位置（可設 NAS）、是否含 `.env`；立即備份；備份清單（下載資料庫或檔案、刪除）；還原（輸入日期確認，還原前自動備份，不需停服務） |
+| PDF 與上傳 | 上傳 / 下載 CheckList 範本、上傳字型、單次上傳上限 |
+| HTTPS 憑證 | 目前憑證與到期日；上傳公司 CA 憑證（檢查格式、配對、期限後由主機套用到 nginx，失敗自動還原）；改回自簽 |
+| AI 建議 | 見下方 |
+
+備份、還原、自動健康檢查由維護背景服務 `dailyreport-maint` 執行（錯過備份時間，例如當時關機，啟動後會補做）。
+上傳的 HTTPS 憑證由 `dailyreport-tls.path` 偵測後以 root 套用（網頁服務本身沒有 root 權限）。
+
+**AI 建議**分頁：存在資料庫，背景服務每次產生前重新讀取。
 
 - **一般設定**：總開關、送審時自動產生、是否允許公司外部的 AI 服務（開啟時必須勾選確認資料會送到外部）、
   RAG 參考份數、最大字數、逾時、輸出上限、temperature、檢查結果.md 匯出位置（可設 NAS 路徑）。
@@ -198,7 +213,7 @@ pytest -q
 # 安裝：所有步驟自動完成（可重跑，不會覆蓋 .env、資料庫、憑證與緊急帳號密碼）
 curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash
 
-# 也可以一次帶入 AD、主機名稱與範本（都可以之後再補）
+# 也可以一次帶入 AD、主機名稱與範本（都可以之後在系統設定頁補上）
 curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash -s -- install \
   --hostname report.corp.local \
   --ldap-url ldaps://dc01.corp.local:636 --ad-domain corp.local --base-dn DC=corp,DC=local \
@@ -207,37 +222,42 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
 # 檢查部署結果（失敗項目會印出修正指令；有失敗時結束代碼為 1）
 curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash -s -- doctor
 
-# 升級（先備份，再更新程式、相依套件、重啟並健檢）
+# 升級（先備份，再更新程式、相依套件、重啟，最後用 doctor 驗證）
 curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash -s -- upgrade
 ```
 
 安裝腳本（`scripts/dailyreport.sh install`）會：檢查作業系統、記憶體與磁碟 → 安裝 Python、nginx、SQLite、字型與相依套件 →
 建立系統帳號 `dailyreport` 與虛擬環境 → 產生 `.env`（隨機 `SECRET_KEY`）→ 建立本機緊急帳號 `sysadmin`（密碼只在結束時印一次，
 也存在 `/etc/dailyreport/.admin-initial-password`，僅 root 可讀）→ 下載 OCR 模型 → 自簽 HTTPS 憑證（`--tls custom --cert … --key …`
-可換公司 CA 憑證）→ nginx（HTTP 轉 HTTPS、安全標頭）→ 網頁、OCR、AI 三個服務與每日 02:30 備份排程 → 等服務啟動後執行健檢。
+可換公司 CA 憑證，之後也可在系統設定頁上傳）→ nginx（HTTP 轉 HTTPS、安全標頭）→ 網頁、OCR、AI、維護（備份 / 健康檢查）
+四個服務與憑證套用 → 等服務啟動後執行健檢。安裝時帶入的 AD 選項直接寫進系統設定（資料庫），`.env` 只放基礎設施設定。
+
+日常設定都在網頁「系統設定」，不需要登入主機。主機上的指令只用於安裝、升級（升級後自動 doctor 驗證）與網頁無法開啟時的救援：
 
 | 指令（`sudo bash /opt/dailyreport/scripts/dailyreport.sh …`） | 做什麼 |
 |---|---|
-| `doctor` | 檢查系統、版本、權限、設定、資料庫、PDF 範本與字型、OCR / AI 佇列、服務、HTTPS、備份 |
-| `upgrade` | 備份 → 更新程式 → 相依套件 → 重啟 → 健檢 |
-| `backup` | 線上備份資料庫、截圖、`.env`（`/var/backups/dailyreport`，保留 14 份，`DR_BACKUP_KEEP` 可調） |
-| `restore <資料夾>` | 驗證檢查碼後還原；還原前先備份目前的資料 |
-| `template <xlsx>` | 放入或更新 CheckList 範本 |
+| `doctor` | 以 root 檢查系統、版本、套件、權限、設定、資料庫、PDF 範本與字型、OCR / AI 佇列、備份、服務、HTTPS；網頁「系統狀態」是同一套檢查 |
+| `upgrade` | 備份 → 更新程式 → 相依套件 → 重啟 → doctor |
+| `backup` | 立即備份（與網頁相同的位置與格式，另附 `install.conf`） |
+| `restore <資料夾>` | 停止服務後還原（網頁無法開啟時用；平常在網頁還原）；還原前先備份目前的資料 |
+| `template <xlsx>` | 放入或更新 CheckList 範本（平常在網頁上傳） |
 | `restart` / `status` | 重新啟動 / 查看狀態 |
 
-安裝後：設定 AD（若安裝時沒帶，編輯 `/opt/dailyreport/.env` 後 `restart`）→ 放入 CheckList 範本 → 用 AD 帳號登入一次 →
-用緊急帳號在「帳號管理」把檔案管理員指派為系統管理員 →（選用）在「系統設定」設定 AI 服務。
+安裝後用本機緊急帳號登入，在「系統設定」依序：AD 驗證（測試後儲存）→ PDF 與上傳（CheckList 範本）→ 用 AD 帳號登入一次 →
+帳號管理（把檔案管理員指派為系統管理員）→ 備份還原（確認時間與位置，建議 NAS）→ HTTPS 憑證（換成公司 CA 憑證）→（選用）AI 建議。
 
 `/healthz` 不需登入，只回報資料庫是否可用（`{"status": "ok"}`），可給監控使用。
 
-## AD 驗證設定 (.env)
+## AD 驗證
 
-| 變數 | 說明 | 範例 |
+在「系統設定 → AD 驗證」設定（舊版安裝寫在 `.env` 的 `LDAP_URL` 等值會沿用，在設定頁儲存一次後以設定頁為準）。
+
+| 欄位 | 說明 | 範例 |
 |---|---|---|
-| `LDAP_URL` | 網域控制站，建議用 LDAPS | `ldaps://dc01.corp.local:636` |
-| `AD_DOMAIN` | 網域名稱（組成 `user@domain` 登入） | `corp.local` |
-| `LDAP_BASE_DN` | 搜尋使用者的根 DN | `DC=corp,DC=local` |
-| `LDAP_REQUIRED_GROUP` | 選填，只允許此群組（含巢狀）成員登入 | `CN=DailyReportUsers,OU=Groups,DC=corp,DC=local` |
-| `LDAP_CA_CERT` | 選填，內部 CA 憑證路徑（LDAPS 驗證用） | `/etc/ssl/certs/corp-ca.pem` |
+| 伺服器網址 | 網域控制站，建議用 LDAPS | `ldaps://dc01.corp.local:636` |
+| 網域 | 組成 `user@domain` 登入 | `corp.local` |
+| 搜尋起點（Base DN） | 搜尋使用者的根 DN | `DC=corp,DC=local` |
+| 允許登入的群組 | 選填，只允許此群組（含巢狀）成員登入 | `CN=DailyReportUsers,OU=Groups,DC=corp,DC=local` |
+| LDAPS 憑證 | 選填，網域控制站憑證由公司內部 CA 簽發時，上傳或貼上該 CA 憑證（PEM） | |
 
 使用者可輸入 `帳號`、`DOMAIN\帳號` 或 `帳號@domain` 登入。

@@ -2,14 +2,15 @@
 {% block title %}帳號管理 - CFXD{% endblock %}
 {% block content %}
 <p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>
+{% include "_admin_nav.html" %}
 <section class="card">
-  <h2>帳號管理</h2>
+  <h3>AD 帳號</h3>
   <p class="hint">AD 帳號首次登入後才會出現在這裡（預設為一線使用者）。檔案管理員與二線管理員可以被指派為系統管理員
     （AD 帳號也可以），一線使用者不能。改成一線使用者時，系統管理員權限會自動移除；改成非二線管理員時，會一併撤銷其代理授權。
-    本機緊急帳號用 <code>flask --app wsgi create-admin</code> 建立，不經 AD，供 AD 無法驗證時使用。</p>
+    本機緊急帳號在下方管理。</p>
   <table class="list">
     <tr><th>帳號</th><th>顯示名稱</th><th>Email</th><th>最後登入</th><th>角色</th><th>系統管理員</th></tr>
-    {% for u in users %}
+    {% for u in users if not u.is_local_admin and '#' not in u.username %}
     <tr>
       <td>{{ u.username }}</td><td>{{ u.display_name or '' }}</td><td>{{ u.email or '' }}</td>
       <td>{{ u.last_login.strftime('%Y-%m-%d %H:%M') if u.last_login }}</td>
@@ -43,11 +44,53 @@
   </table>
 </section>
 
+<section class="card" id="local">
+  <h3>本機緊急帳號</h3>
+  <p class="hint">不經 AD、密碼存在本系統（雜湊），具系統管理員權限。供 AD 或網域控制站故障時使用，平時不要使用。
+    至少要保留一個；密碼至少 {{ min_pw }} 個字元。</p>
+  <table class="list">
+    <tr><th>帳號</th><th>顯示名稱</th><th>最後登入</th><th>密碼</th><th></th></tr>
+    {% for u in local_accounts %}
+    <tr>
+      <td>{{ u.username }}{% if u.id == current_user.id %} <span class="sev sev-info">目前登入</span>{% endif %}</td>
+      <td>{{ u.display_name or '' }}</td>
+      <td>{{ u.last_login.strftime('%Y-%m-%d %H:%M') if u.last_login else '從未' }}</td>
+      <td>
+        <details><summary>{{ '變更我的密碼' if u.id == current_user.id else '重設密碼' }}</summary>
+          <form method="post" action="{{ url_for('settings.local_password', uid=u.id) }}" class="stack">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if u.id == current_user.id %}<input name="current_password" type="password" placeholder="目前的密碼" autocomplete="current-password" required>{% endif %}
+            <input name="password" type="password" placeholder="新密碼（至少 {{ min_pw }} 個字元）" minlength="{{ min_pw }}" autocomplete="new-password" required>
+            <input name="password2" type="password" placeholder="再輸入一次" minlength="{{ min_pw }}" autocomplete="new-password" required>
+            <button type="submit" class="secondary small">更新密碼</button>
+          </form>
+        </details>
+      </td>
+      <td>{% if u.id != current_user.id and local_accounts|length > 1 %}
+        <form method="post" action="{{ url_for('settings.local_disable', uid=u.id) }}" class="inline" onsubmit="return confirm('停用 {{ u.username }}？')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="link danger">停用</button>
+        </form>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <details class="top-gap"><summary>新增本機緊急帳號</summary>
+    <form method="post" action="{{ url_for('settings.local_create') }}" class="form-grid top-gap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>帳號（英數字與 . _ -，不能和 AD 帳號同名）<input name="username" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]{2,63}" autocomplete="off"></label>
+      <label>顯示名稱<input name="display_name" placeholder="System Administrator"></label>
+      <label>密碼<input name="password" type="password" minlength="{{ min_pw }}" autocomplete="new-password" required></label>
+      <label>再輸入一次<input name="password2" type="password" minlength="{{ min_pw }}" autocomplete="new-password" required></label>
+      <div><button type="submit">新增</button></div>
+    </form>
+  </details>
+</section>
+
 <section class="card">
-  <h2>權限說明</h2>
+  <h3>權限說明</h3>
   <table class="list">
     <tr><th>角色</th><th>可執行的動作</th></tr>
-    <tr><td>系統管理員</td><td>所有動作，另可管理帳號與「系統設定」（AI 服務等）。由檔案管理員或二線管理員兼任（AD 帳號可），一線使用者強制排除。
+    <tr><td>系統管理員</td><td>所有動作，另可管理「系統設定」（AD 驗證、帳號、備份還原、健康檢查、PDF 範本、HTTPS 憑證、AI 服務）。由檔案管理員或二線管理員兼任（AD 帳號可），一線使用者強制排除。
       仍受職責分離限制：不能審核自己撰寫或送審的日報</td></tr>
     <tr><td>本機緊急帳號</td><td>系統管理員權限的本機帳號，不經 AD；AD 無法驗證時使用，平時不使用</td></tr>
     <tr><td>檔案管理員</td><td>指派（撰寫人、核准人）、審核、退件、作廢、送審、新增、編輯、刪除；授權二線管理員代理</td></tr>
@@ -57,13 +100,12 @@
 </section>
 
 <section class="card">
-  <h2>稽核紀錄（最近 50 筆）</h2>
+  <h3>稽核紀錄（最近 50 筆）</h3>
   <table class="list">
     <tr><th>時間</th><th>動作</th><th>操作者</th><th>對象</th><th>內容</th></tr>
     {% for l in logs %}
     <tr><td>{{ l.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-      <td>{{ {'delete_report': '刪除日報', 'set_role': '變更角色', 'set_admin': '系統管理員', 'ai_settings': 'AI 設定',
-            'ai_provider_add': '新增 AI 服務', 'ai_provider_edit': '修改 AI 服務', 'ai_provider_delete': '刪除 AI 服務'}.get(l.action, l.action) }}</td>
+      <td>{{ audit_labels.get(l.action, l.action) }}</td>
       <td>{{ l.actor.name if l.actor else '指令' }}</td><td>{{ l.target }}</td><td>{{ l.detail }}</td></tr>
     {% else %}<tr><td colspan="5" class="hint">尚無紀錄。</td></tr>{% endfor %}
   </table>

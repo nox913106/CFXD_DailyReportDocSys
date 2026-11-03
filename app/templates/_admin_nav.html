@@ -1,0 +1,13 @@
+<h2>系統設定</h2>
+<nav class="tabs admin-tabs">
+  {% for key, endpoint, label in [
+      ('status', 'settings.index', '系統狀態'),
+      ('ldap', 'settings.ldap', 'AD 驗證'),
+      ('users', 'views.users', '帳號管理'),
+      ('backup', 'settings.backup', '備份還原'),
+      ('pdf', 'settings.pdf', 'PDF 與上傳'),
+      ('tls', 'settings.tls', 'HTTPS 憑證'),
+      ('ai', 'settings.ai', 'AI 建議')] %}
+  <a href="{{ url_for(endpoint) }}" class="{{ 'active' if tab == key }}">{{ label }}</a>
+  {% endfor %}
+</nav>

@@ -2,7 +2,7 @@ import os
 import sqlite3
 
 from dotenv import load_dotenv
-from flask import Flask
+from flask import Flask, Request
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from flask_login import LoginManager
@@ -30,9 +30,23 @@ def _sqlite_pragmas(dbapi_conn, _record):
         cur.close()
 
 
+class _Request(Request):
+    """單次上傳上限由「系統設定 → PDF 與上傳」決定（nginx 固定放寬到 sysconf.UPLOAD_CEILING_MB）。"""
+
+    @property
+    def max_content_length(self):
+        from . import sysconf
+
+        try:
+            return sysconf.max_upload_bytes()
+        except Exception:  # 資料庫還沒建立等情況
+            return super().max_content_length
+
+
 def create_app():
     load_dotenv()
     app = Flask(__name__, instance_relative_config=True)
+    app.request_class = _Request
     os.makedirs(app.instance_path, exist_ok=True)
 
     app.config.update(
@@ -53,6 +67,8 @@ def create_app():
         FONT_DIR=os.environ.get("FONT_DIR") or os.path.join(app.instance_path, "fonts"),
         # 檢查結果.md 匯出位置的預設值；實際位置在「系統設定」頁設定
         CHECK_MD_DIR=os.environ.get("CHECK_MD_DIR", os.path.join(app.instance_path, "check_reports")),
+        # 備份位置的預設值；實際位置在「系統設定 → 備份還原」設定
+        BACKUP_DIR=os.environ.get("DR_BACKUP_DIR", ""),
         SESSION_COOKIE_HTTPONLY=True,
         # 部署在 HTTPS（nginx）後方時，cookie 只經 HTTPS 傳送
         SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE") == "1",
@@ -95,6 +111,21 @@ def create_app():
                                  REVIEW_ACTION_LABELS=models.REVIEW_ACTION_LABELS,
                                  ocr_status=ocr.status_for, ocr_clock=ocr.clock_of)
     app.jinja_env.filters["ai_html"] = ai.md_to_html
+
+    @app.context_processor
+    def _admin_alert():
+        """系統管理員每一頁都看得到最近一次自動健康檢查的失敗項目。"""
+        from flask_login import current_user
+
+        from . import sysconf
+
+        if not getattr(current_user, "is_authenticated", False) or not current_user.is_admin:
+            return {}
+        try:
+            last = sysconf.get("health_last") or {}
+        except Exception:
+            return {}
+        return {"health_alert": last if last.get("fail") else None}
     app.jinja_env.tests["ocr_is"] = lambda img, code, day: ocr.status_for(img, day)[0] == code
 
     with app.app_context():

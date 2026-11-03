@@ -1,0 +1,18 @@
+[Unit]
+Description=CFXD Daily Report maintenance worker (backup, restore, health check)
+After=network.target dailyreport.service
+
+[Service]
+User=dailyreport
+Group=www-data
+WorkingDirectory=/opt/dailyreport
+EnvironmentFile=/opt/dailyreport/.env
+# 備份時間、保留份數、備份位置、健康檢查間隔都在「系統設定」頁設定，每一輪重新讀取
+ExecStart=/opt/dailyreport/.venv/bin/flask --app wsgi maint-worker
+Restart=always
+RestartSec=10
+Nice=10
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,8 @@
+[Unit]
+Description=CFXD Daily Report: apply HTTPS certificate uploaded on the settings page
+
+[Path]
+PathExists=/opt/dailyreport/instance/tls_request/request.json
+
+[Install]
+WantedBy=paths.target

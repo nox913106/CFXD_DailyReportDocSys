@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}AD 驗證 - CFXD{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>
+{% include "_admin_nav.html" %}
+
+{% if steps is not none %}
+<section class="card">
+  <h3>測試結果</h3>
+  <table class="list">
+    {% for ok, name, detail in steps %}
+    <tr><td class="nw">{% if ok %}<span class="sev sev-ok">通過</span>{% elif ok is none %}<span class="sev sev-info">提示</span>{% else %}<span class="sev sev-fail">失敗</span>{% endif %}</td>
+      <td class="nw">{{ name }}</td><td>{{ detail }}</td></tr>
+    {% endfor %}
+  </table>
+  <p class="hint">測試用的是下面表單目前的內容，<strong>還沒有儲存</strong>。確認無誤後按「儲存」。</p>
+</section>
+{% endif %}
+
+<section class="card">
+  <h3>AD 驗證</h3>
+  <p class="hint">使用者用自己的 AD 帳號密碼登入（系統不保存 AD 密碼）。儲存後下一次登入就套用，不需要重啟。
+    設定錯誤時 AD 帳號會無法登入，本機緊急帳號不受影響；建議先按「測試」再儲存。</p>
+  {% if sources and 'env' in sources.values() %}
+  <div class="flash">目前的值沿用安裝設定檔（.env）。在這裡儲存一次後，就以這一頁為準。</div>
+  {% endif %}
+  <form method="post" action="{{ url_for('settings.ldap') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="form-grid">
+      <label>伺服器網址<input name="ldap_url" value="{{ c.ldap_url }}" placeholder="ldaps://dc01.corp.local:636"></label>
+      <label>網域<input name="ad_domain" value="{{ c.ad_domain }}" placeholder="corp.local"></label>
+      <label class="wide">搜尋起點（Base DN）<input name="ldap_base_dn" value="{{ c.ldap_base_dn }}" placeholder="DC=corp,DC=local"></label>
+      <label class="wide">只允許這個群組登入（群組 DN，含巢狀群組；空白 = 所有 AD 帳號）
+        <input name="ldap_required_group" value="{{ c.ldap_required_group }}" placeholder="CN=CFXD-DailyReport,OU=Groups,DC=corp,DC=local"></label>
+      <label class="wide">首次登入設為檔案管理員的群組（群組 DN，選填）
+        <input name="ldap_approver_group" value="{{ c.ldap_approver_group }}"></label>
+      <label class="wide">首次登入設為檔案管理員的帳號（逗號分隔，選填）
+        <input name="approver_users" value="{{ c.approver_users }}" placeholder="alice,bob"></label>
+      <label>連線逾時（秒）<input name="ldap_timeout" type="number" min="1" max="60" value="{{ c.ldap_timeout }}"></label>
+    </div>
+    <p class="hint">首次登入之後，角色一律在「帳號管理」調整，登入時不會再依群組改變。</p>
+
+    <h3>LDAPS 憑證</h3>
+    {% if c.ldap_ca_pem %}<p>已設定公司 CA 憑證。
+      <label class="inline"><input type="checkbox" name="clear_ca" value="1"> 清除，改用系統預設 CA</label></p>
+    {% else %}<p class="hint">目前使用系統預設 CA。網域控制站的憑證由公司內部 CA 簽發時，請上傳或貼上該 CA 憑證（PEM）。</p>{% endif %}
+    <div class="form-grid">
+      <label>上傳 CA 憑證檔（.pem / .crt，PEM 格式）<input type="file" name="ldap_ca_file" accept=".pem,.crt,.cer"></label>
+      <label class="wide">或貼上 PEM 內容（空白 = 不變更）<textarea name="ldap_ca_pem" rows="4" placeholder="-----BEGIN CERTIFICATE-----">{{ carry_pem or '' }}</textarea></label>
+    </div>
+
+    <h3>測試</h3>
+    <div class="form-grid">
+      <label>測試帳號（選填）<input name="test_user" value="{{ test_user or '' }}" autocomplete="off"></label>
+      <label>測試密碼<input name="test_password" type="password" autocomplete="new-password"></label>
+    </div>
+    <p class="hint">不填測試帳號時只測試網路與 TLS；填了會實際登入並檢查群組。測試不會建立帳號，也不會保存密碼。</p>
+    <div class="actions">
+      <button type="submit" formaction="{{ url_for('settings.ldap_test') }}" class="secondary">測試</button>
+      <button type="submit">儲存</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

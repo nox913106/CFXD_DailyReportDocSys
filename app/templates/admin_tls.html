@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}HTTPS 憑證 - CFXD{% endblock %}
+{% block head %}{% if st.pending %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>
+{% include "_admin_nav.html" %}
+
+{% if st.pending %}<div class="flash">正在套用新的憑證……這一頁每 5 秒自動重新整理。超過 1 分鐘仍未完成時，請確認主機上的 dailyreport-tls.path 已啟用。</div>
+{% elif st.result %}
+<div class="flash {{ 'success' if st.result.ok else 'error' }}">{{ st.result.at }}：{{ st.result.message }}</div>
+{% endif %}
+
+<section class="card">
+  <h3>目前的憑證</h3>
+  {% if cert %}
+  <table class="list">
+    <tr><th class="nw">主體</th><td>{{ cert.subject }}{% if cert.self_signed %} <span class="sev sev-warn">自簽</span>{% endif %}</td></tr>
+    <tr><th class="nw">簽發者</th><td>{{ cert.issuer }}</td></tr>
+    <tr><th class="nw">適用名稱</th><td>{{ cert.names|join('、') }}</td></tr>
+    <tr><th class="nw">有效期限</th><td>{{ cert.not_before.strftime('%Y-%m-%d') }} ～ {{ cert.not_after.strftime('%Y-%m-%d') }}
+      （{% if cert.days_left > 30 %}剩 {{ cert.days_left }} 天{% else %}<span class="fail">剩 {{ cert.days_left }} 天</span>{% endif %}）</td></tr>
+  </table>
+  {% if cert.self_signed %}<p class="hint">自簽憑證會讓瀏覽器顯示警告。建議換成公司 CA 簽發的憑證，使用者就不會再看到警告。</p>{% endif %}
+  {% else %}
+  <div class="flash error">本機 443 埠沒有 HTTPS：密碼會以明文傳送。</div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h3>更換憑證</h3>
+  <p class="hint">上傳公司 CA 簽發的憑證（PEM，可含中繼憑證，伺服器憑證放第一個）與對應的私鑰（未加密）。
+    會先檢查格式、私鑰是否配對、有效期限，再由主機套用到 nginx；套用失敗會自動還原成原本的憑證。</p>
+  <form method="post" action="{{ url_for('settings.tls_upload') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="form-grid">
+      <label>憑證檔（.pem / .crt）<input type="file" name="cert" accept=".pem,.crt,.cer"></label>
+      <label>私鑰檔（.key / .pem）<input type="file" name="key" accept=".key,.pem"></label>
+      <label class="wide">或貼上憑證 PEM<textarea name="cert_pem" rows="3" placeholder="-----BEGIN CERTIFICATE-----"></textarea></label>
+      <label class="wide">或貼上私鑰 PEM<textarea name="key_pem" rows="3" placeholder="-----BEGIN PRIVATE KEY-----"></textarea></label>
+    </div>
+    <div class="actions">
+      <button type="submit" {{ 'disabled' if st.pending }}>檢查並套用</button>
+    </div>
+  </form>
+  {% if cert and not cert.self_signed %}
+  <form method="post" action="{{ url_for('settings.tls_self_signed') }}" class="top-gap" onsubmit="return confirm('改回自簽憑證？瀏覽器會再顯示警告。')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="secondary" {{ 'disabled' if st.pending }}>改回自簽憑證</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}AI 服務 - CFXD{% endblock %}
 {% block content %}
-<p><a href="{{ url_for('settings.index') }}#providers">← 系統設定</a></p>
+<p><a href="{{ url_for('settings.ai') }}#providers">← AI 建議設定</a></p>
 <section class="card">
   <h2>{{ '編輯' if p.id else '新增' }} AI 服務：{{ preset.label or p.name }}</h2>
   {% if preset.hint %}<p class="hint">{{ preset.hint }}</p>{% endif %}
@@ -67,7 +67,7 @@
     </details>
     <div class="actions">
       <button type="submit">儲存</button>
-      <a class="button secondary" href="{{ url_for('settings.index') }}#providers">取消</a>
+      <a class="button secondary" href="{{ url_for('settings.ai') }}#providers">取消</a>
     </div>
   </form>
   {% if p.id %}

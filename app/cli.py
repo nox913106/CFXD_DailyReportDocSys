@@ -102,6 +102,53 @@ def register_cli(app):
                 n += 1
         click.echo(f"已匯入 {n} 份，略過 {skipped} 份已存在的檔案 → {dest_root}")
 
+    @app.cli.command("maint-worker")
+    @click.option("--once", is_flag=True, help="做完目前的工作與到期的排程就結束")
+    def maint_worker(once):
+        """維護背景服務：備份、還原、自動健康檢查（由 systemd 以單一程序執行）。"""
+        from .maint import run_worker
+
+        run_worker(app, once=once)
+
+    @app.cli.command("backup")
+    @click.option("--no-prune", is_flag=True, help="不刪除超過保留份數的舊備份（還原前的保險備份用）")
+    def backup_cmd(no_prune):
+        """立即備份到「系統設定 → 備份還原」設定的位置（以服務帳號執行）。"""
+        from .backup import create
+
+        name, size = create("cli", prune=not no_prune)
+        click.echo(f"{name}\t{size}")
+
+    @app.cli.command("config-get")
+    @click.argument("key")
+    def config_get(key):
+        """讀取一項系統設定（安裝腳本用）。"""
+        from . import sysconf
+
+        v = sysconf.backup_dir() if key == "backup_dir" else sysconf.get(key)
+        click.echo("" if v is None else v)
+
+    @app.cli.command("config-set")
+    @click.argument("key")
+    @click.argument("value")
+    def config_set(key, value):
+        """寫入一項系統設定（安裝腳本帶入 --ldap-url 等選項時用；平常請在系統設定頁修改）。"""
+        from . import db, sysconf
+        from .models import AuditLog
+
+        if key not in sysconf.DEFAULTS:
+            raise click.ClickException(f"不認得的設定 {key}")
+        default = sysconf.DEFAULTS[key]
+        v = value
+        if isinstance(default, bool):
+            v = value.lower() in ("1", "true", "yes", "on")
+        elif isinstance(default, int):
+            v = int(value)
+        sysconf.put(key, v)
+        db.session.add(AuditLog(action="sys_settings", target=key, detail=f"{key}={v}（指令）"[:500]))
+        db.session.commit()
+        click.echo(f"{key} 已設定。")
+
     @app.cli.command("doctor-json")
     def doctor_json():
         """部署健檢（應用程式內部項目），輸出 JSON 給 scripts/dailyreport.sh doctor。"""

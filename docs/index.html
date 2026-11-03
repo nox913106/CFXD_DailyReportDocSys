@@ -169,9 +169,9 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
       <div class="card"><h3><span class="ico">🔐</span><span class="zh">角色、代簽、作廢</span><span class="en">Roles, delegation, voiding</span></h3>
         <p class="zh">四種角色與職責分離；檔案管理員可授權二線管理員代簽，文件仍顯示核准人；作廢保留流水號。</p>
         <p class="en">Four roles with separation of duties; file managers can delegate approval while the document still shows the approver; voiding keeps the serial number.</p></div>
-      <div class="card"><h3><span class="ico">🛠️</span><span class="zh">一行部署與健檢</span><span class="en">One-line install and doctor</span></h3>
-        <p class="zh">一行 curl 完成套件、HTTPS、服務、備份排程；健檢逐項列出問題與修正指令。</p>
-        <p class="en">One curl line installs packages, HTTPS, services and backups; the doctor lists every problem with the command that fixes it.</p></div>
+      <div class="card"><h3><span class="ico">🛠️</span><span class="zh">一行部署，網頁管理</span><span class="en">One-line install, web admin</span></h3>
+        <p class="zh">一行 curl 完成安裝。之後 AD、帳號、備份還原、健康檢查、範本、HTTPS 憑證都在「系統設定」頁完成，不需要登入主機。</p>
+        <p class="en">One curl line installs everything. After that, AD, accounts, backup and restore, health checks, templates and HTTPS certificates are all managed on the settings page, no shell needed.</p></div>
     </div>
   </div>
 </section>
@@ -296,10 +296,16 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
           <figcaption><b class="zh">告警歷程</b><b class="en">Alarm history</b> <span class="zh">— 持續天數、這次開始、上次發生。</span><span class="en">— days running, start date, last occurrence.</span></figcaption></figure>
       </div>
       <div class="two">
-        <figure><img src="shots/settings.webp" alt="系統設定" loading="lazy" width="1400" height="1023">
-          <figcaption><b class="zh">系統設定</b><b class="en">Settings</b> <span class="zh">— AI 服務的順序、計費、本期用量與連線測試。</span><span class="en">— provider order, billing, usage and connection tests.</span></figcaption></figure>
-        <figure><img src="shots/users.webp" alt="帳號管理" loading="lazy" width="1400" height="700">
-          <figcaption><b class="zh">帳號管理</b><b class="en">Accounts</b> <span class="zh">— 角色與系統管理員指派，一線使用者不可指派。</span><span class="en">— roles and admin grants; first-line users excluded.</span></figcaption></figure>
+        <figure><img src="shots/status.webp" alt="系統狀態" loading="lazy" width="1400" height="1000">
+          <figcaption><b class="zh">系統狀態</b><b class="en">System status</b> <span class="zh">— 健康檢查逐項附修正方式，可定時自動檢查。</span><span class="en">— health check with a fix for every item, runs on a schedule.</span></figcaption></figure>
+        <figure><img src="shots/backup.webp" alt="備份還原" loading="lazy" width="1400" height="1000">
+          <figcaption><b class="zh">備份還原</b><b class="en">Backup and restore</b> <span class="zh">— 排程、保留份數、NAS 位置，網頁上直接還原。</span><span class="en">— schedule, retention, NAS target and one-click restore.</span></figcaption></figure>
+      </div>
+      <div class="two">
+        <figure><img src="shots/settings.webp" alt="AI 建議設定" loading="lazy" width="1400" height="1023">
+          <figcaption><b class="zh">AI 建議設定</b><b class="en">AI settings</b> <span class="zh">— AI 服務的順序、計費、本期用量與連線測試。</span><span class="en">— provider order, billing, usage and connection tests.</span></figcaption></figure>
+        <figure><img src="shots/ldap.webp" alt="AD 驗證" loading="lazy" width="1400" height="1000">
+          <figcaption><b class="zh">AD 驗證</b><b class="en">AD sign-in</b> <span class="zh">— 儲存前先測試網路、TLS、帳號與群組。</span><span class="en">— test network, TLS, account and groups before saving.</span></figcaption></figure>
       </div>
     </div>
   </div>
@@ -326,19 +332,19 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
           <li>檢查作業系統、記憶體、磁碟</li><li>安裝 Python、nginx、SQLite、字型與相依套件</li>
           <li>建立系統帳號與虛擬環境、下載 OCR 模型</li><li>產生 .env 與隨機 SECRET_KEY</li>
           <li>建立本機緊急帳號，密碼只印一次</li><li>自簽 HTTPS 憑證（可換公司憑證）、HTTP 轉 HTTPS</li>
-          <li>網頁、OCR、AI 三個服務與每日備份排程</li><li>啟動後自動執行健檢</li>
+          <li>網頁、OCR、AI、維護（備份 / 健康檢查）四個服務</li><li>啟動後自動執行健檢</li>
         </ul>
         <ul class="check en">
           <li>Checks OS, memory and disk</li><li>Installs Python, nginx, SQLite, fonts and dependencies</li>
           <li>Creates the service account and venv, downloads OCR models</li><li>Writes .env with a random SECRET_KEY</li>
           <li>Creates the break-glass admin and prints its password once</li><li>Self-signed HTTPS (or your CA certificate), HTTP → HTTPS</li>
-          <li>Web, OCR and AI services plus a daily backup timer</li><li>Runs the doctor when done</li>
+          <li>Web, OCR, AI and maintenance (backup / health) services</li><li>Runs the doctor when done</li>
         </ul></div>
       <div class="card"><b class="zh">可以重跑</b><b class="en">Safe to re-run</b>
         <p class="zh">中途失敗時修正問題後重跑同一行即可；已存在的 .env、資料庫、憑證與緊急帳號密碼都不會被覆蓋。</p>
         <p class="en">If a step fails, fix it and run the same line again; an existing .env, database, certificate and admin password are never overwritten.</p>
-        <p class="note zh">安裝後的下一步：設定 AD（若安裝時沒帶）、放入 CheckList 範本、用 AD 帳號登入一次，再用緊急帳號指派系統管理員。</p>
-        <p class="note en">Next steps: configure AD if not given, add the CheckList template, sign in once with AD, then grant system admin with the break-glass account.</p></div>
+        <p class="note zh">安裝後用緊急帳號登入「系統設定」：AD 驗證、上傳 CheckList 範本、指派系統管理員、確認備份位置、換 HTTPS 憑證。</p>
+        <p class="note en">Then sign in with the break-glass account and open Settings: AD, CheckList template, admin grants, backup target and HTTPS certificate.</p></div>
     </div>
 
     <h3 style="margin-top:28px"><span class="zh">2. 檢查部署結果</span><span class="en">2. Check the deployment</span></h3>
@@ -351,7 +357,7 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
   <span class="ok">✔</span> 完整性           ok（/opt/dailyreport/instance/dailyreport.db，0.3 MB）
   <span class="ok">✔</span> WAL 模式         wal
   <span class="wa">!</span> 系統管理員       本機緊急帳號 1 個、指派 0 個
-      <span class="dim">→ AD 帳號登入一次後，在「帳號管理」指派檔案管理員或二線管理員為系統管理員</span>
+      <span class="dim">→ AD 帳號登入一次後，在「系統設定 → 帳號管理」指派檔案管理員或二線管理員為系統管理員</span>
 服務
   <span class="ok">✔</span> dailyreport      執行中
   <span class="fa">✘</span> dailyreport-ocr  inactive
@@ -362,22 +368,44 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
 
 結果：<span class="ok">正常 31</span>、<span class="wa">注意 3</span>、<span class="fa">失敗 1</span></div>
 
-    <h3 style="margin-top:28px"><span class="zh">3. 日常維護</span><span class="en">3. Day-to-day</span></h3>
+    <h3 style="margin-top:28px"><span class="zh">3. 日常維護：在網頁「系統設定」</span><span class="en">3. Day-to-day: the Settings page</span></h3>
+    <div class="tablewrap">
+    <table class="t zh">
+      <tr><th>分頁</th><th>做什麼</th></tr>
+      <tr><td>系統狀態</td><td>健康檢查（與 doctor 同一套），可定時自動檢查，失敗時每一頁上方提醒</td></tr>
+      <tr><td>AD 驗證</td><td>網域控制站、群組、LDAPS CA 憑證；儲存前先測試</td></tr>
+      <tr><td>帳號管理</td><td>角色、系統管理員指派、本機緊急帳號、稽核紀錄</td></tr>
+      <tr><td>備份還原</td><td>每日備份時間、保留份數、NAS 位置；立即備份、下載、還原</td></tr>
+      <tr><td>PDF 與上傳</td><td>CheckList 範本、字型、上傳上限</td></tr>
+      <tr><td>HTTPS 憑證</td><td>上傳公司 CA 憑證，檢查後自動套用到 nginx，失敗會還原</td></tr>
+      <tr><td>AI 建議</td><td>AI 服務、計費、提示詞、用量</td></tr>
+    </table>
+    <table class="t en">
+      <tr><th>Tab</th><th>What it does</th></tr>
+      <tr><td>System status</td><td>Health check (same checks as doctor), scheduled runs, banner on failure</td></tr>
+      <tr><td>AD</td><td>Domain controller, groups, LDAPS CA certificate; test before saving</td></tr>
+      <tr><td>Accounts</td><td>Roles, admin grants, break-glass accounts, audit log</td></tr>
+      <tr><td>Backup</td><td>Daily time, retention, NAS target; back up now, download, restore</td></tr>
+      <tr><td>PDF &amp; uploads</td><td>CheckList template, fonts, upload limit</td></tr>
+      <tr><td>HTTPS</td><td>Upload a CA-signed certificate; applied to nginx after checks, rolled back on failure</td></tr>
+      <tr><td>AI</td><td>Providers, billing, prompt, usage</td></tr>
+    </table>
+    </div>
+    <p class="zh">主機上的指令只用於升級（升級後自動 doctor 驗證）與網頁無法開啟時的救援：</p>
+    <p class="en">Shell commands are only for upgrades (verified by the doctor afterwards) and for rescue when the web UI is down:</p>
     <div class="tablewrap">
     <table class="t zh">
       <tr><th>指令</th><th>做什麼</th></tr>
-      <tr><td>… | sudo bash -s -- upgrade</td><td>先備份，再更新程式、相依套件、重啟服務並健檢</td></tr>
-      <tr><td>dailyreport.sh backup</td><td>線上備份資料庫、截圖與設定（每天 02:30 自動執行，保留 14 份）</td></tr>
-      <tr><td>dailyreport.sh restore &lt;資料夾&gt;</td><td>驗證檢查碼後還原，還原前會先備份目前的資料</td></tr>
-      <tr><td>dailyreport.sh template &lt;xlsx&gt;</td><td>放入或更新 CheckList 範本</td></tr>
+      <tr><td>… | sudo bash -s -- upgrade</td><td>先備份，再更新程式、相依套件、重啟服務，最後 doctor 驗證</td></tr>
+      <tr><td>… | sudo bash -s -- doctor</td><td>以 root 做完整的部署檢查</td></tr>
+      <tr><td>dailyreport.sh restore &lt;資料夾&gt;</td><td>網頁無法開啟時，停止服務後從備份還原</td></tr>
       <tr><td>dailyreport.sh restart / status</td><td>重新啟動 / 查看服務狀態</td></tr>
     </table>
     <table class="t en">
       <tr><th>Command</th><th>What it does</th></tr>
-      <tr><td>… | sudo bash -s -- upgrade</td><td>Backs up, updates code and dependencies, restarts and runs the doctor</td></tr>
-      <tr><td>dailyreport.sh backup</td><td>Online backup of database, screenshots and settings (daily at 02:30, keeps 14)</td></tr>
-      <tr><td>dailyreport.sh restore &lt;dir&gt;</td><td>Verifies checksums and restores, after backing up the current data</td></tr>
-      <tr><td>dailyreport.sh template &lt;xlsx&gt;</td><td>Installs or replaces the CheckList template</td></tr>
+      <tr><td>… | sudo bash -s -- upgrade</td><td>Backs up, updates code and dependencies, restarts, then verifies with the doctor</td></tr>
+      <tr><td>… | sudo bash -s -- doctor</td><td>Full deployment check as root</td></tr>
+      <tr><td>dailyreport.sh restore &lt;dir&gt;</td><td>Restore with services stopped, when the web UI is down</td></tr>
       <tr><td>dailyreport.sh restart / status</td><td>Restart / show service status</td></tr>
     </table>
     </div>
