@@ -435,13 +435,11 @@ def test_role_permissions(app):
     alice.get("/admin/users", status=403)
     alice.get("/delegations", status=403)
 
-    # 二線：可編輯 / 刪除，不能送審；未授權不能指派
+    # 二線：可編輯 / 刪除；未授權不能指派
     sl.get(f"/reports/{rid}/basic")
     sl.post(f"/reports/{rid}/basic", {"author_id": str(dave_id), "approver_id": str(boss_id), "revision": "0"})
     with app.app_context():
         assert db.session.get(Report, rid).author_id == alice_id
-    sl.get(f"/reports/{rid}")
-    assert "只有一線使用者可以送審" in sl.post(f"/reports/{rid}/submit")
 
     # 檔案管理員：指派撰寫人
     boss.get(f"/reports/{rid}/basic")
@@ -540,3 +538,34 @@ def test_add_missing_columns(tmp_path, monkeypatch):
     create_app()
     cols = {r[1] for r in sqlite3.connect(db_path).execute("PRAGMA table_info(report)")}
     assert {"approver_id", "reviewed_on_behalf_of_id", "approver_name"} <= cols
+
+
+def test_managers_can_submit_but_not_approve_own_submission(app):
+    boss, dave, alice = Browser(app), Browser(app), Browser(app)
+    boss.login("boss")
+    dave.login("dave")
+    alice.login("alice")
+    set_role(app, "boss", "file_manager")
+    dave_id = set_role(app, "dave", "second_line")
+
+    # 二線管理員送審（日報由一線建立）；即使有代理授權，也不能核准自己送審的日報
+    rid = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-20"}))
+    fill_checklist(dave, rid)
+    dave.get(f"/reports/{rid}")
+    assert "已送出審核" in dave.post(f"/reports/{rid}/submit")
+    boss.get("/delegations")
+    boss.post("/delegations", {"delegate_id": str(dave_id), "start_date": "2020-01-01"})
+    dave.get(f"/reports/{rid}")
+    assert "不能審核自己送審" in dave.post(f"/reports/{rid}/review", {"action": "approve"})
+    boss.get(f"/reports/{rid}")
+    assert "已核准" in boss.post(f"/reports/{rid}/review", {"action": "approve"})
+
+    # 檔案管理員送審別人的日報後，也不能自己核准；交由代理人核准，文件仍顯示 boss
+    rid2 = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-21"}))
+    fill_checklist(boss, rid2)
+    boss.get(f"/reports/{rid2}")
+    assert "已送出審核" in boss.post(f"/reports/{rid2}/submit")
+    boss.get(f"/reports/{rid2}")
+    assert "不能審核自己送審" in boss.post(f"/reports/{rid2}/review", {"action": "approve"})
+    dave.get(f"/reports/{rid2}")
+    assert "代 boss 簽核" in dave.post(f"/reports/{rid2}/review", {"action": "approve"})

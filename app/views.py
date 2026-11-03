@@ -150,6 +150,7 @@ def submit(report_id):
 
     report.status = "submitted"
     report.submitted_at = datetime.now()
+    report.submitted_by_id = current_user.id
     report.updated_by_id = current_user.id
     db.session.commit()
     flash("已送出審核。", "success")
@@ -161,9 +162,8 @@ def review(report_id):
     report = get_report(report_id)
     d = perm.can_review(current_user, report)
     if not d:
-        if report.status == "submitted" and report.author_id != current_user.id:
-            abort(403)
-        if current_user.role == "first_line":
+        own = d.reason.startswith("不能審核自己")  # 職責分離：撰寫人 / 送審人
+        if current_user.role == "first_line" or (report.status == "submitted" and not own):
             abort(403)
         flash(d.reason, "error")
         return redirect(url_for("views.detail", report_id=report.id))

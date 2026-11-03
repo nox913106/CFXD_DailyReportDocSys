@@ -123,6 +123,8 @@ class Report(db.Model):
 
     status = db.Column(db.String(16), default="draft", nullable=False, index=True)
     submitted_at = db.Column(db.DateTime)
+    submitted_by_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    submitted_by = db.relationship("User", foreign_keys=[submitted_by_id])
     reviewed_by_id = db.Column(db.Integer, db.ForeignKey("user.id"))
     reviewed_by = db.relationship("User", foreign_keys=[reviewed_by_id])
     reviewed_at = db.Column(db.DateTime)

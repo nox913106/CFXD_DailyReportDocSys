@@ -2,8 +2,8 @@
 
 角色：
   系統管理員 admin         所有動作（本機帳號，平時不使用）
-  檔案管理員 file_manager  指派、審核、退件、作廢、新增、編輯、刪除
-  二線管理員 second_line   新增、編輯、刪除；經檔案管理員授權後可「代」審核 / 指派 / 退件 / 作廢
+  檔案管理員 file_manager  指派、審核、退件、作廢、送審、新增、編輯、刪除
+  二線管理員 second_line   送審、新增、編輯、刪除；經檔案管理員授權後可「代」審核 / 指派 / 退件 / 作廢
   一線使用者 first_line    送審、新增、編輯、申請作廢
 
 代理（二線代檔案管理員）時，文件上的 Approval / Document Approved 仍顯示檔案管理員本人。
@@ -95,7 +95,8 @@ def can_delete(user, report):
 def can_submit(user, report):
     if not report.editable:
         return Decision(False, None, "此日報目前不能送審。")
-    return Decision(user.role in ("admin", "first_line"), None, "只有一線使用者可以送審。")
+    # 送審不涉及核准權限，所有可編輯日報的角色都可以送審；送審者不能核准自己送審的日報（見 can_review）
+    return Decision(user.role in ("admin", "file_manager", "second_line", "first_line"))
 
 
 def can_review(user, report):
@@ -104,6 +105,8 @@ def can_review(user, report):
         return Decision(False, None, "此日報不是待審核狀態。")
     if report.author_id == user.id and user.role != "admin":
         return Decision(False, None, "不能審核自己撰寫的日報。")
+    if report.submitted_by_id == user.id and user.role != "admin":
+        return Decision(False, None, "不能審核自己送審的日報。")
     return _manager_action(user, report, True, "核准")
 
 
