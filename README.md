@@ -206,8 +206,23 @@ pytest -q
 
 介紹首頁：<https://nox913106.github.io/CFXD_DailyReportDocSys/>（`docs/index.html`，GitHub Pages）
 
-支援 Ubuntu 24.04 / 26.04、Debian 13（x86_64 / aarch64，Python 3.12 以上；已實測 Ubuntu 24.04，其餘未實測）；建議 2 核心、4 GB 記憶體、20 GB 磁碟。
-主機需要能連到 GitHub、PyPI 與 OCR 模型下載站（公司有 Proxy 時先設定 `https_proxy`；私有 PyPI 鏡像用 `PIP_INDEX_URL`）。
+### 硬體與系統需求
+
+| 項目 | 最低 | 建議 |
+|---|---|---|
+| CPU | 1 核心（x86_64 / aarch64） | 2 核心 |
+| 記憶體 | 2 GB（建議另加 swap） | 4 GB |
+| 磁碟 | 3 GB 可用空間 | 20 GB 以上（依截圖量與備份保留份數） |
+| 作業系統 | Ubuntu 24.04 / 26.04、Debian 13（Python 3.12 以上） | Ubuntu 24.04（已實測，其餘未實測） |
+| 網路 | 安裝與更新時能連到 GitHub、PyPI 與 OCR 模型下載站 | 公司有 Proxy 時先設定 `https_proxy`；私有 PyPI 鏡像用 `PIP_INDEX_URL` |
+
+- **記憶體**：截圖 OCR 背景服務（`dailyreport-ocr`）約需 1 GB，是最大宗；網頁、AI、維護服務與 nginx 用量小。
+  記憶體少於 4 GB 時網頁最多 2 個 worker；系統狀態頁可用記憶體低於 1 GB 會警告。
+- **磁碟**：主要是截圖與備份。備份預設在 `/var/backups/dailyreport`、保留 14 份，每份含完整資料庫與截圖，
+  約佔目前資料量的 14 倍；可在「系統設定 → 備份還原」改到 NAS 或減少保留份數。
+- **安裝檢查**：CPU 架構或作業系統不符、磁碟可用空間不足 3 GB 會停止安裝（`DR_SKIP_OS_CHECK=1` 可略過作業系統檢查）；
+  記憶體少於 2 GB 只會警告。
+- 一般部門每天幾份日報、幾十張截圖，2 核心 / 4 GB / 20 GB 即足夠。
 
 ```bash
 # 安裝：所有步驟自動完成（可重跑，不會覆蓋 .env、資料庫、憑證與緊急帳號密碼）

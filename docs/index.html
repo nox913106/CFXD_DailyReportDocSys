@@ -314,8 +314,26 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
 <section id="deploy">
   <div class="wrap">
     <h2><span class="zh">部署</span><span class="en">Deployment</span></h2>
-    <p class="sub zh">支援 Ubuntu 24.04 / 26.04 LTS、Debian 13（x86_64 / aarch64；已實測 Ubuntu 24.04）。建議 2 核心、4 GB 記憶體、20 GB 磁碟，需要能連到 GitHub、PyPI 與 OCR 模型下載站。</p>
-    <p class="sub en">Ubuntu 24.04 / 26.04 LTS or Debian 13 (x86_64 / aarch64; tested on Ubuntu 24.04). Recommended 2 cores, 4 GB RAM, 20 GB disk, with access to GitHub, PyPI and the OCR model download site.</p>
+    <p class="sub zh">支援 Ubuntu 24.04 / 26.04 LTS、Debian 13（x86_64 / aarch64；已實測 Ubuntu 24.04）。安裝與更新時需要能連到 GitHub、PyPI 與 OCR 模型下載站。</p>
+    <p class="sub en">Ubuntu 24.04 / 26.04 LTS or Debian 13 (x86_64 / aarch64; tested on Ubuntu 24.04). Installs and updates need access to GitHub, PyPI and the OCR model download site.</p>
+
+    <h3><span class="zh">硬體需求</span><span class="en">Hardware requirements</span></h3>
+    <div class="tablewrap">
+    <table class="t zh">
+      <tr><th>項目</th><th>最低</th><th>建議</th></tr>
+      <tr><td>CPU</td><td>1 核心（x86_64 / aarch64）</td><td>2 核心</td></tr>
+      <tr><td>記憶體</td><td>2 GB（建議另加 swap）</td><td>4 GB</td></tr>
+      <tr><td>磁碟</td><td>3 GB 可用空間</td><td>20 GB 以上（依截圖量與備份保留份數）</td></tr>
+    </table>
+    <table class="t en">
+      <tr><th>Item</th><th>Minimum</th><th>Recommended</th></tr>
+      <tr><td>CPU</td><td>1 core (x86_64 / aarch64)</td><td>2 cores</td></tr>
+      <tr><td>Memory</td><td>2 GB (add swap)</td><td>4 GB</td></tr>
+      <tr><td>Disk</td><td>3 GB free</td><td>20 GB+ (depends on screenshots and backups kept)</td></tr>
+    </table>
+    </div>
+    <p class="zh">截圖 OCR 背景服務約需 1 GB 記憶體，是最大宗。磁碟主要是截圖與備份：預設保留 14 份完整備份，約佔資料量的 14 倍，可在系統設定改到 NAS 或減少份數。一般部門每天幾份日報、幾十張截圖，2 核心 / 4 GB / 20 GB 即足夠。</p>
+    <p class="en">Screenshot OCR takes about 1 GB of memory, the largest share. Disk goes mostly to screenshots and backups: 14 full backups are kept by default (about 14× the data), which can be moved to a NAS or reduced in the settings. For a typical team with a few reports and dozens of screenshots a day, 2 cores / 4 GB / 20 GB is enough.</p>
 
     <h3><span class="zh">1. 安裝</span><span class="en">1. Install</span></h3>
     <div class="cmdbox" data-copy><div class="cmd"><span class="c"># <span class="zh">最小化系統先裝 curl</span><span class="en">minimal systems need curl first</span></span>
