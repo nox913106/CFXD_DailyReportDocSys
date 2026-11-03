@@ -153,3 +153,4 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .ocr-pending, .ocr-running { background: #f3f4f6; color: #6b7280; }
 .ocr-summary { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 8px; }
 .ocr-summary button { margin-left: auto; }
+.history td.long { color: var(--warn, #b26a00); font-weight: bold; }

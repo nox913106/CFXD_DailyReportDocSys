@@ -79,4 +79,24 @@
   </details>
   {% endif %}
   {% endif %}
+  {% if checks.history %}
+  {% set today = report.report_date %}
+  <details open>
+    <summary>告警歷程：持續天數與上次發生（回溯 {{ checks.history_days }} 天，只計已核准日報）</summary>
+    <table class="list history">
+      <tr><th>#</th><th>Category</th><th>Item</th><th>Device</th><th>Description</th><th>持續</th><th>這次開始</th><th>上次發生</th></tr>
+      {% for h in checks.history %}
+      <tr>
+        <td>{{ h.alarm.order }}</td><td>{{ h.alarm.category }}</td><td>{{ h.alarm.item }}</td>
+        <td>{{ h.alarm.device_name }}</td><td>{{ h.alarm.description }}</td>
+        <td class="{{ 'long' if h.truncated or h.days >= 30 }}">{% if h.truncated %}超過 {{ checks.history_days }} 天{% elif h.is_new %}今日新增{% else %}第 {{ h.days }} 天{% endif %}</td>
+        <td>{{ '—' if h.truncated else h.since }}</td>
+        <td>{% if h.last_seen %}{{ h.last_seen }}<span class="hint">（{{ h.days_ago(today) }} 天前，{{ h.last_doc_no }}）</span>
+            {%- elif h.truncated %}—{% else %}<span class="hint">{{ checks.history_days }} 天內沒有</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="hint">「上次發生」是這次連續出現之前、最後一次出現的日期。沒有已核准日報的日子（例如未寫或仍在審核）不會中斷連續天數。此資訊只顯示在檢查結果，不會出現在日報 PDF。</p>
+  </details>
+  {% endif %}
 </section>

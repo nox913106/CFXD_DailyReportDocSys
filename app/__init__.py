@@ -1,7 +1,10 @@
 import os
+import sqlite3
 
 from dotenv import load_dotenv
 from flask import Flask
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 from flask_login import LoginManager
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf.csrf import CSRFProtect
@@ -15,6 +18,16 @@ login_manager.login_message = "請先登入。"
 
 def _split_list(value):
     return {v.strip().lower() for v in (value or "").split(",") if v.strip()}
+
+
+@event.listens_for(Engine, "connect")
+def _sqlite_pragmas(dbapi_conn, _record):
+    # WAL：網頁讀取（檢查、告警歷程）不會被 OCR 背景服務的寫入擋住；busy_timeout：同時寫入時等待而不是直接失敗
+    if isinstance(dbapi_conn, sqlite3.Connection):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=10000")
+        cur.close()
 
 
 def create_app():

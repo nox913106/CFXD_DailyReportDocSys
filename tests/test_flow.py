@@ -642,3 +642,69 @@ def test_report_checks(app):
     assert "檢查結果" in html and ("無誤" in html or "警告" in html)
     html = boss.get(f"/reports/{rid2}")
     assert "檢查結果" in html and "告警差異：新增 1" in html and "2026-11-01" in html
+
+
+def test_alarm_history(app):
+    """告警歷程：連續天數（沒有已核准日報的日子不中斷）、上次發生、超過 365 天截斷、提醒。"""
+    import datetime as dt
+
+    from app import db
+    from app.checks import alarm_history, run_checks
+    from app.models import AlarmSummaryRow, Report, User
+
+    def alarm(dev, desc="Status Check", order=1):
+        return AlarmSummaryRow(order=order, category="Physical Devices", item="1.1", device_name=dev,
+                               description=desc, reason="r", false_alarm="N")
+
+    with app.app_context():
+        u = User(username="hist", display_name="Hist")
+        u.set_role("first_line")
+        db.session.add(u)
+        db.session.flush()
+        today = dt.date(2026, 11, 3)
+
+        def report(day, status, devs):
+            r = Report(report_date=day, doc_no=f"D{day:%Y%m%d}", contractor_doc_no="x", revision=0,
+                       author_id=u.id, status=status)
+            for n, d in enumerate(devs, 1):
+                r.alarm_rows.append(alarm(d, order=n))
+            db.session.add(r)
+            return r
+
+        # LONG：一年多每天都有 -> 截斷；RUN：10/20 起連續（10/25 沒有日報、10/28 退回不中斷）
+        # BACK：10/01–10/05 出現、解除、今天再發生；OLD：只有 400 天前出現過 -> 超出回溯期間
+        for n in range(1, 400):
+            day = today - dt.timedelta(days=n)
+            if day == dt.date(2026, 10, 25):
+                continue
+            devs = ["LONG"]
+            if day >= dt.date(2026, 10, 20):
+                devs.append("RUN")
+            if dt.date(2026, 10, 1) <= day <= dt.date(2026, 10, 5):
+                devs.append("BACK")
+            if n == 399:
+                devs.append("OLD")
+            report(day, "rejected" if day == dt.date(2026, 10, 28) else "approved", devs)
+        cur = report(today, "submitted", ["LONG", "RUN", "BACK", "OLD", "NEW"])
+        db.session.commit()
+
+        h = {x.alarm.device_name: x for x in alarm_history(cur, list(cur.alarm_rows))}
+        assert h["LONG"].truncated and h["LONG"].last_seen is None
+        assert not h["RUN"].truncated and h["RUN"].since == dt.date(2026, 10, 20) and h["RUN"].days == 15
+        assert h["BACK"].is_new and h["BACK"].last_seen == dt.date(2026, 10, 5)
+        assert h["BACK"].last_doc_no == "D20261005"
+        assert h["OLD"].is_new and h["OLD"].last_seen is None  # 400 天前 -> 超出 365 天，不查
+        assert h["NEW"].is_new and h["NEW"].last_seen is None
+        assert [x.alarm.device_name for x in alarm_history(cur, list(cur.alarm_rows))][:2] == ["LONG", "RUN"]
+
+        chk = run_checks(cur)
+        notes = {i.message: i.obj for i in chk.issues if i.area == "告警歷程"}
+        assert any("LONG" in o and "超過 365" in o and "RUN" not in o for o in notes.values())
+        assert any("BACK" in o and "上次 2026-10-05" in o for o in notes.values())
+        assert not run_checks(cur, history=False).history
+        cur_id = cur.id
+
+    page = Browser(app)
+    page.login("hist")
+    html = page.get(f"/reports/{cur_id}")
+    assert "告警歷程" in html and "超過 365 天" in html and "第 15 天" in html

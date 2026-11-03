@@ -48,7 +48,7 @@ def index():
         .all()
     )
     pending, void_requests = pending_for(current_user)
-    pending_checks = {r.id: run_checks(r).counts() for r in pending}
+    pending_checks = {r.id: run_checks(r, history=False).counts() for r in pending}
     return render_template(
         "index.html", reports=reports, month=month, pending=pending, void_requests=void_requests,
         pending_checks=pending_checks,

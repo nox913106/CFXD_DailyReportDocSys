@@ -9,13 +9,20 @@
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 
+from . import db
 from .helpers import SHEETS
-from .models import ChecklistItem, ChecklistResult, Report, ScreenshotSection
+from .models import AlarmSummaryRow, ChecklistItem, ChecklistResult, Report, ScreenshotSection
 
 ALARM_CATEGORY = {"vm": "Virtual Machines", "software": "Software", "physical": "Physical Devices", "pi": "PI"}
 SEVERITY_ORDER = {"錯誤": 0, "警告": 1, "提醒": 2}
 RESULT = {"N": "Normal", "W": "Warning", "F": "Failed", None: "未勾選"}
+
+# 告警歷程只回溯一年：查詢量固定（約 365 份 × 26 筆），不會隨資料累積變慢；連續超過一年就顯示「超過 365 天」
+HISTORY_DAYS = 365
+LONG_RUNNING_DAYS = 30  # 持續達到這個天數就提醒
+RECUR_WITHIN_DAYS = 30  # 新增告警在這段期間內曾出現過 -> 提醒「解除後又再發生」
 
 
 @dataclass
@@ -31,6 +38,23 @@ class Issue:
 
 
 @dataclass
+class AlarmHistory:
+    alarm: object
+    since: date  # 這次連續出現的第一天
+    days: int  # 持續天數（含當天）
+    truncated: bool  # 連續到回溯上限，實際持續更久
+    last_seen: date | None  # 上一次（中斷之前）出現的最後一天；一年內沒有則為 None
+    last_doc_no: str = ""
+
+    @property
+    def is_new(self):
+        return self.days == 1 and not self.truncated
+
+    def days_ago(self, today):
+        return (today - self.last_seen).days if self.last_seen else None
+
+
+@dataclass
 class CheckResult:
     issues: list = field(default_factory=list)
     baseline: Report | None = None
@@ -41,6 +65,8 @@ class CheckResult:
     continued: int = 0
     status_changes: list = field(default_factory=list)  # (item, 基準結果, 今日結果, 基準備註, 今日備註)
     summary_diff: list = field(default_factory=list)  # (分頁, 分類, 基準 (N,W,F), 今日 (N,W,F))
+    history: list = field(default_factory=list)  # AlarmHistory，依持續天數由長到短
+    history_days: int = HISTORY_DAYS
 
     def add(self, *args, **kw):
         self.issues.append(Issue(*args, **kw))
@@ -87,7 +113,8 @@ def _results(report):
     return [(res, item) for res, item in rows]
 
 
-def run_checks(report):
+def run_checks(report, history=True):
+    """history=False 時不計算告警歷程（待審清單只顯示錯誤 / 警告數，不需要）。"""
     r = CheckResult()
     results = _results(report)
     alarms = list(report.alarm_rows)
@@ -111,6 +138,8 @@ def run_checks(report):
             r.add("提醒", "跨日比對", f"比對對象是 {base.report_date} 的日報，中間有 {r.gap_days - 1} 天沒有已核准日報",
                   obj=base.doc_no)
         _compare(r, report, results, alarms, base)
+    if history and alarms:
+        _alarm_history(r, report, alarms)
     return r
 
 
@@ -347,3 +376,61 @@ def _compare(r, report, results, alarms, base):
     for k in sorted(set(today) | set(before), key=lambda k: (list(SHEETS).index(k[0]), k[1])):
         if tuple(today[k]) != tuple(before[k]):
             r.summary_diff.append((SHEETS[k[0]], k[1] or "（整頁）", tuple(before[k]), tuple(today[k])))
+
+
+# ---------------------------------------------------------------- 告警歷程
+
+
+def alarm_history(report, alarms, days=HISTORY_DAYS):
+    """每筆告警已連續出現多少天、上一次出現是什麼時候。
+
+    只看日期早於本日報、且在回溯期間內的「已核准」日報，固定兩次查詢：
+    日期清單一次、告警鍵一次（report_date 有唯一索引，alarm_summary_row.report_id 有索引）。
+    沒有已核准日報的日子（假日沒寫、還在審核）不會中斷連續天數。
+    """
+    start = report.report_date - timedelta(days=days)
+    approved = (Report.status == "approved", Report.report_date < report.report_date, Report.report_date >= start)
+    docs = dict(db.session.query(Report.report_date, Report.doc_no).filter(*approved).all())
+    dates = sorted(docs, reverse=True)
+    seen = defaultdict(set)
+    rows = (db.session.query(Report.report_date, AlarmSummaryRow.category, AlarmSummaryRow.item,
+                             AlarmSummaryRow.device_name, AlarmSummaryRow.description)
+            .join(Report, Report.id == AlarmSummaryRow.report_id).filter(*approved))
+    for d, cat, item, dev, desc in rows:
+        seen[(_key(cat), (item or "").strip(), _key(dev), _key(desc))].add(d)
+    older = dates and db.session.query(
+        Report.query.filter(Report.status == "approved", Report.report_date < start).exists()).scalar()
+
+    out = []
+    for a in alarms:
+        ds = seen.get(_alarm_key(a), set())
+        since, i = report.report_date, 0
+        while i < len(dates) and dates[i] in ds:
+            since = dates[i]
+            i += 1
+        last = next((d for d in dates[i:] if d in ds), None)
+        out.append(AlarmHistory(a, since, (report.report_date - since).days + 1,
+                                truncated=bool(i and i == len(dates) and older), last_seen=last,
+                                last_doc_no=docs.get(last, "")))
+    out.sort(key=lambda h: (not h.truncated, -h.days, h.alarm.order or 0))
+    return out
+
+
+def _desc(a):
+    return " ".join(x for x in (a.device_name, a.item, a.description) if x)
+
+
+def _alarm_history(r, report, alarms):
+    r.history = alarm_history(report, alarms)
+    today = report.report_date
+    long = [h for h in r.history if h.truncated or h.days >= LONG_RUNNING_DAYS]
+    if long:
+        r.add("提醒", "告警歷程", f"{len(long)} 項告警已連續出現 {LONG_RUNNING_DAYS} 天以上，請確認仍在追蹤處理",
+              obj="、".join(f"{_desc(h.alarm)}（{'超過 365' if h.truncated else h.days} 天）" for h in long[:6])
+              + ("…" if len(long) > 6 else ""), link="alarms")
+    recur = [h for h in r.history if h.is_new and h.last_seen and h.days_ago(today) <= RECUR_WITHIN_DAYS]
+    if recur:
+        r.add("提醒", "告警歷程", f"{len(recur)} 項新增告警在 {RECUR_WITHIN_DAYS} 天內曾出現過（解除後又再發生），"
+              "請確認是否為同一問題反覆發生",
+              obj="、".join(f"{_desc(h.alarm)}（上次 {h.last_seen}）" for h in recur[:6])
+              + ("…" if len(recur) > 6 else ""), link="alarms")
