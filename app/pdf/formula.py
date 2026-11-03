@@ -80,13 +80,18 @@ class Evaluator:
         self.get = get_value
 
     def eval(self, formula, sheet):
-        self.toks = tokenize(formula.lstrip("="))
-        self.i = 0
-        self.sheet = sheet
-        v = self.expr()
-        if self.i != len(self.toks):
-            raise FormulaError("多餘的符號")
-        return v
+        # 參照其他儲存格時會遞迴呼叫 eval，必須保存並還原解析狀態
+        saved = (getattr(self, "toks", None), getattr(self, "i", 0), getattr(self, "sheet", None))
+        try:
+            self.toks = tokenize(formula.lstrip("="))
+            self.i = 0
+            self.sheet = sheet
+            v = self.expr()
+            if self.i != len(self.toks):
+                raise FormulaError("多餘的符號")
+            return v
+        finally:
+            self.toks, self.i, self.sheet = saved
 
     # 遞迴下降：比較 < 串接 < 加減 < 乘除 < 一元 < 基本
     def peek(self):

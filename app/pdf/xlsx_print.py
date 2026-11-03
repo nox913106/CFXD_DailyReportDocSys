@@ -713,7 +713,12 @@ class SheetPainter:
         s = self.s
         for (fx, frow, foff), (tx, trow, toff), chart in s.charts:
             if frow not in self.row_y:
-                continue
+                # 錨點落在隱藏列（高度 0）時，Excel 會從下一個可見列開始畫
+                nxt = next((r for r in rows if r > frow), None)
+                if nxt is None or s.row_h.get(frow, 1) != 0 or any(
+                        s.row_h.get(k, 0) for k in range(frow, nxt)):
+                    continue
+                frow, foff = nxt, 0.0
             y1 = self.row_y[frow] + foff
             y2 = (self.row_y[trow] + toff) if trow in self.row_y else (self.row_y[rows[-1]] + s.row_h[rows[-1]])
             x1, y1p = self.X(fx), self.Y(y1)

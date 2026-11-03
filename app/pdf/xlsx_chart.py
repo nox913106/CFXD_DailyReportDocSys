@@ -233,7 +233,7 @@ def _pattern(cv, path_fn, fill, bbox, fs):
     else:  # pct 系列：點狀
         density = int(prst[3:]) / 100 if prst.startswith("pct") and prst[3:].isdigit() else 0.5
         cell = 1.1
-        dot = cell * math.sqrt(density) * 0.95
+        dot = cell * math.sqrt(density) * 0.7
         _set_fill(cv, fill["fg"])
         y = y0
         row = 0
