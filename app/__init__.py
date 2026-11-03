@@ -63,8 +63,12 @@ def create_app():
     app.register_blueprint(editors_bp)
     app.register_blueprint(images_bp)
 
+    from . import ocr
+
     app.jinja_env.globals.update(STATUS_LABELS=models.STATUS_LABELS, RESULT_LABELS=models.RESULT_LABELS,
-                                 REVIEW_ACTION_LABELS=models.REVIEW_ACTION_LABELS)
+                                 REVIEW_ACTION_LABELS=models.REVIEW_ACTION_LABELS,
+                                 ocr_status=ocr.status_for, ocr_clock=ocr.clock_of)
+    app.jinja_env.tests["ocr_is"] = lambda img, code, day: ocr.status_for(img, day)[0] == code
 
     with app.app_context():
         db.create_all()

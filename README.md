@@ -92,7 +92,15 @@ flask --app wsgi create-admin --username sysadmin      # 建立或重設密碼
 | 基本資料 / 截圖 | 值班人員、核准人空白；沒有上傳截圖的章節 |
 | 跨日比對 | 新增 / 解除 / 內容變更 / 延續的告警；New Alarm 數 = 實際新增數；Known Alarm 數 = 延續數；檢查結果與統計數字的變化 |
 
+| 截圖日期（OCR） | 截圖右下角工作列 / 右上角的系統時間必須是文件日期；有日期但讀不出來、只有時間、沒有時鐘分開列出；尚未辨識完成也會提示 |
+
 嚴重度：錯誤（建議退回）、警告（請確認）、提醒（參考）。說明欄的連結可直接跳到要修正的分頁。
+
+**截圖日期 OCR** 是確認截圖確實是當天畫面的唯一依據，規則沿用 DDoc_compare（只辨識兩個時鐘位置，
+不會把畫面內容的日期誤當截圖時間）。截圖上傳後排隊，由背景服務 `dailyreport-ocr`（單一程序，約 1 GB 記憶體）
+依序辨識，每張約 2 秒、85 張約 3 分鐘，網頁不會被拖慢。截圖分頁顯示每張的辨識結果，可「全部重新辨識」；
+更新規則後可執行 `flask --app wsgi ocr-requeue [--date YYYY-MM-DD]`。
+以 2026-11-03 的 85 張實際截圖驗證：77 張日期正確，8 張 12 NVR 畫面本身沒有日期（6 張只有時間、2 張沒有時鐘）。
 
 ### 檢查表主檔
 
@@ -139,8 +147,10 @@ sudo chown -R dailyreport:www-data /opt/dailyreport
 sudo chmod 640 .env
 sudo -u dailyreport .venv/bin/flask --app wsgi create-admin --username sysadmin   # 本機系統管理員
 
-sudo cp deploy/dailyreport.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now dailyreport
+sudo .venv/bin/python -c "from rapidocr import RapidOCR; RapidOCR()"   # 預先下載 OCR 模型（需要網路）
+
+sudo cp deploy/dailyreport.service deploy/dailyreport-ocr.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now dailyreport dailyreport-ocr
 
 sudo cp deploy/nginx-dailyreport.conf /etc/nginx/sites-available/dailyreport
 sudo ln -s /etc/nginx/sites-available/dailyreport /etc/nginx/sites-enabled/

@@ -99,6 +99,7 @@ def run_checks(report):
     _check_records(r, report)
     _check_basic(r, report)
     _check_screenshots(r, report)
+    _check_screenshot_clocks(r, report)
 
     base = baseline_for(report)
     r.baseline = base
@@ -248,6 +249,51 @@ def _check_screenshots(r, report):
     if missing:
         r.add("警告", "截圖", f"{len(missing)} 個章節沒有上傳截圖", obj="、".join(f"{s.code} {s.title}" for s in missing[:12])
               + ("…" if len(missing) > 12 else ""), link="screenshots")
+
+
+def _check_screenshot_clocks(r, report):
+    """截圖系統日期（OCR）必須是文件日期。這是確認截圖確實是當天畫面的唯一依據。"""
+    from .ocr import clock_of, status_for
+
+    doc = report.report_date.isoformat()
+    sections = {s.id: s for s in ScreenshotSection.query}
+    shots = sorted((i for i in report.images if i.kind == "screenshot"),
+                   key=lambda i: (sections[i.section_id].order if i.section_id in sections else 0, i.order, i.id))
+    waiting, failed, merged = [], [], {}
+    for n, img in enumerate(shots, 1):
+        sec = sections.get(img.section_id)
+        obj = f"{sec.code} {sec.title}" if sec else ""
+        st, _ = status_for(img, doc)
+        rec = clock_of(img) or {}
+        ref = f"第{n}張"
+        if st in ("pending", "running"):
+            waiting.append(img)
+        elif st == "error":
+            failed.append(obj)
+        elif st == "mismatch":
+            r.add("錯誤", "截圖日期", "截圖系統日期與文件日期不同", ref=ref, obj=obj, a=f"文件日期「{doc}」",
+                  b=f"截圖「{', '.join(rec.get('dates', []))} {rec.get('time', '')}」", link="screenshots")
+        elif st == "ok" and len(rec.get("dates", [])) > 1:
+            r.add("提醒", "截圖日期", "時鐘區域讀到多個日期，請人工確認", ref=ref, obj=obj,
+                  b=f"「{', '.join(rec['dates'])}」", link="screenshots")
+        elif st == "unreadable":
+            txt = " / ".join(t for t in rec.get("ocr", {}).values() if t.strip())
+            r.add("警告", "截圖日期", "截圖上有日期，但 OCR 無法辨識，請人工看圖確認", ref=ref, obj=obj,
+                  a=f"文件日期「{doc}」", b=f"OCR 讀到「{txt[:80]}」", link="screenshots")
+        elif st in ("time_only", "no_clock"):
+            merged.setdefault((st, obj), []).append(rec.get("time", ""))
+    for (st, obj), times in merged.items():
+        msg = ("截圖畫面只顯示時間、沒有日期（不是辨識失敗），無法驗證截圖日期" if st == "time_only"
+               else "截圖畫面沒有時鐘（全螢幕或裁切畫面，不是辨識失敗），無法驗證截圖日期")
+        ts = sorted(t for t in times if t)
+        r.add("提醒", "截圖日期", msg, ref=f"{len(times)} 張", obj=obj,
+              b=(f"時間「{ts[0]}」" if len(set(ts)) == 1 else f"時間「{ts[0]} → {ts[-1]}」") if ts else "")
+    if waiting:
+        r.add("警告", "截圖日期", f"{len(waiting)} 張截圖尚未完成日期辨識，結果出來前無法確認截圖日期",
+              b="OCR 背景服務處理中（約每張 1–2 秒）", link="screenshots")
+    if failed:
+        r.add("警告", "截圖日期", f"{len(failed)} 張截圖辨識失敗，請重新辨識或人工確認",
+              obj="、".join(sorted(set(failed))[:6]), link="screenshots")
 
 
 # ---------------------------------------------------------------- 跨日比對

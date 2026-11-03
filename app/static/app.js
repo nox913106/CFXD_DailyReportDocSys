@@ -48,6 +48,11 @@
       t.closest("tr").remove();
     } else if (t.matches("[data-delete-image]")) {
       deleteImage(t.closest(".thumb"));
+    } else if (t.matches("[data-requeue-ocr]")) {
+      if (!confirm("重新辨識這份日報的所有截圖日期？")) return;
+      api(t.dataset.requeueOcr, { method: "POST" })
+        .then(function () { location.reload(); })
+        .catch(function (err) { alert(err.message); });
     } else if (t.matches("[data-move]")) {
       moveImage(t.closest(".thumb"), t.dataset.move);
     }

@@ -1,0 +1,18 @@
+[Unit]
+Description=CFXD Daily Report screenshot date OCR worker
+After=network.target dailyreport.service
+
+[Service]
+User=dailyreport
+Group=www-data
+WorkingDirectory=/opt/dailyreport
+EnvironmentFile=/opt/dailyreport/.env
+# 單一程序依序辨識排隊中的截圖（OCR 引擎約 1 GB 記憶體，不放在網頁 worker 裡）
+ExecStart=/opt/dailyreport/.venv/bin/flask --app wsgi ocr-worker
+Restart=always
+RestartSec=10
+Nice=10
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target

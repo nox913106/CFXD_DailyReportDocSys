@@ -3,7 +3,18 @@
 {% block tab %}
 <section class="card">
   <h3>CFXD SLA Daily Report_Screenshot</h3>
-  <p class="hint">圖片上傳後立即儲存，不需要按儲存。可用 ◀ ▶ 調整同一章節內的順序。</p>
+  <p class="hint">圖片上傳後立即儲存，不需要按儲存。可用 ◀ ▶ 調整同一章節內的順序。
+    上傳後系統會在背景辨識截圖右下角 / 右上角的系統時間（每張約 1–2 秒），確認是 {{ report.report_date }} 當天的畫面。</p>
+  {% set shots = report.images|selectattr('kind', 'equalto', 'screenshot')|list %}
+  {% if shots %}
+  <div class="ocr-summary">
+    {% for code, label in [('ok', '日期正確'), ('mismatch', '日期不符'), ('unreadable', '無法辨識'), ('time_only', '只有時間'), ('no_clock', '沒有時鐘'), ('pending', '等待辨識'), ('running', '辨識中'), ('error', '辨識失敗')] %}
+      {% set n = shots|select('ocr_is', code, report.report_date.isoformat())|list|length %}
+      {% if n %}<span class="ocr ocr-{{ code }}">{{ label }} {{ n }}</span>{% endif %}
+    {% endfor %}
+    {% if report.editable %}<button type="button" class="secondary" data-requeue-ocr="{{ url_for('images.requeue_ocr', report_id=report.id) }}">全部重新辨識</button>{% endif %}
+  </div>
+  {% endif %}
   <ul class="toc">
     {% for s in sections %}
     <li class="level{{ s.level }}"><a href="#sec-{{ s.id }}">{{ s.code }} {{ s.title }}</a>

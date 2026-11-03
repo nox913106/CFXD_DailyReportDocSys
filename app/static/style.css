@@ -143,3 +143,13 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .checks details { margin-top: 12px; }
 .checks details summary { cursor: pointer; font-weight: 600; }
 .checks h3 .hint { font-weight: normal; font-size: 13px; margin-left: 6px; }
+
+.ocr { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; margin: 4px 4px 0 0; background: #eef2f7; color: #374151; }
+.thumb .ocr { display: block; border-radius: 6px; margin: 4px 0 0; }
+.ocr-ok { background: #dcfce7; color: #166534; }
+.ocr-mismatch, .ocr-error { background: #fde2e2; color: #b91c1c; font-weight: 600; }
+.ocr-unreadable { background: #fef3c7; color: #92400e; }
+.ocr-time_only, .ocr-no_clock { background: #e0f2fe; color: #075985; }
+.ocr-pending, .ocr-running { background: #f3f4f6; color: #6b7280; }
+.ocr-summary { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 8px; }
+.ocr-summary button { margin-left: auto; }

@@ -271,6 +271,12 @@ class ReportImage(db.Model):
     order = db.Column(db.Integer, default=0)
     uploaded_by_id = db.Column(db.Integer, db.ForeignKey("user.id"))
     created_at = db.Column(db.DateTime, default=datetime.now)
+    # 截圖系統時間 OCR（背景服務處理）：pending / running / done / error
+    ocr_status = db.Column(db.String(12), index=True)
+    ocr_result = db.Column(db.Text)  # JSON：status, dates, time, region, text, ocr
+    ocr_error = db.Column(db.Text)
+    ocr_started_at = db.Column(db.DateTime)
+    ocr_at = db.Column(db.DateTime)
 
 
 class ApprovalDelegation(db.Model):

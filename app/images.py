@@ -9,6 +9,7 @@ from flask_login import current_user, login_required
 from . import db
 from .helpers import get_report
 from .models import ReportImage, ScreenshotSection
+from .ocr import queue_image
 
 bp = Blueprint("images", __name__, url_prefix="/reports/<int:report_id>/images")
 
@@ -111,6 +112,7 @@ def upload(report_id):
             order=order,
             uploaded_by_id=current_user.id,
         )
+        queue_image(img)  # 截圖排入背景 OCR
         db.session.add(img)
         saved.append(img)
     db.session.commit()
@@ -149,3 +151,16 @@ def move(report_id, image_id):
             s.order = n
         db.session.commit()
     return jsonify(ok=True)
+
+
+@bp.route("/ocr", methods=["POST"])
+def requeue_ocr(report_id):
+    """重新辨識這份日報的所有截圖。"""
+    report = _editable_report(report_id)
+    n = 0
+    for img in report.images:
+        if img.kind == "screenshot":
+            queue_image(img)
+            n += 1
+    db.session.commit()
+    return jsonify(ok=True, queued=n)

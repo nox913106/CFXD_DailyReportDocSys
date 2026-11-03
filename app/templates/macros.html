@@ -55,6 +55,10 @@
 {% set src = url_for('images.show', report_id=report.id, image_id=img.id) %}
 <figure class="thumb" data-url="{{ src }}">
   <a href="{{ src }}" target="_blank"><img src="{{ src }}" alt="{{ img.original_name }}" loading="lazy"></a>
+  {% if img.kind == 'screenshot' %}{% set st = ocr_status(img, report.report_date.isoformat()) %}{% set rec = ocr_clock(img) %}
+  <div class="ocr ocr-{{ st[0] }}" title="{{ (rec.text or (rec.ocr.values()|join(' / '))) if rec else '' }}">
+    {{ st[1] }}{% if rec and (rec.dates or rec.time) %}：{{ rec.dates|join(', ') }} {{ rec.time }}{% endif %}</div>
+  {% endif %}
   {% if editable %}
   <figcaption>
     <button type="button" class="link" data-move="up" title="往前">◀</button>
