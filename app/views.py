@@ -1,17 +1,11 @@
 from datetime import date, datetime
 
-from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
+from flask import Blueprint, Response, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 
 from . import db, docno
-from .helpers import SHEETS, checklist_stats, get_report
-from .models import (
-    AlarmSummaryRow,
-    ChecklistItem,
-    ChecklistResult,
-    Report,
-    ScreenshotSection,
-)
+from .helpers import get_report
+from .models import AlarmSummaryRow, ChecklistItem, ChecklistResult, Report
 
 bp = Blueprint("views", __name__)
 
@@ -103,39 +97,9 @@ def create():
 
 @bp.route("/reports/<int:report_id>")
 def detail(report_id):
-    """完整日報檢視（審核用，也是之後 PDF 排版的基礎）。"""
+    """完整日報檢視：嵌入與原始範本相同排版的 PDF，並提供送審/審核操作。"""
     report = get_report(report_id)
-    month_start = report.report_date.replace(day=1)
-    control = (
-        Report.query.filter(Report.report_date >= month_start, Report.report_date <= report.report_date)
-        .order_by(Report.report_date)
-        .all()
-    )
-    abnormal = (
-        ChecklistResult.query.filter(
-            ChecklistResult.report_id == report.id, ChecklistResult.result.in_(["W", "F"])
-        )
-        .join(ChecklistItem)
-        .order_by(ChecklistItem.sheet, ChecklistItem.order)
-        .all()
-    )
-    sections = ScreenshotSection.query.order_by(ScreenshotSection.order).all()
-    images_by_section = {}
-    for img in report.images:
-        if img.kind == "screenshot":
-            images_by_section.setdefault(img.section_id, []).append(img)
-    return render_template(
-        "report_detail.html",
-        report=report,
-        control=control,
-        stats=checklist_stats(report),
-        sheets=SHEETS,
-        abnormal=abnormal,
-        sections=sections,
-        images_by_section=images_by_section,
-        onsite_images=[i for i in report.images if i.kind == "onsite"],
-        alarm_images=[i for i in report.images if i.kind == "alarm"],
-    )
+    return render_template("report_detail.html", report=report)
 
 
 @bp.route("/reports/<int:report_id>/submit", methods=["POST"])
@@ -189,3 +153,21 @@ def review(report_id):
     report.review_comment = comment
     db.session.commit()
     return redirect(url_for("views.detail", report_id=report.id))
+
+
+@bp.route("/reports/<int:report_id>/pdf")
+def pdf(report_id):
+    """與原始範本相同排版的完整日報 PDF。?download=1 會以附件下載。"""
+    from .pdf.report_pdf import TemplateMissing, build_pdf, pdf_filename
+
+    report = get_report(report_id)
+    try:
+        data = build_pdf(report)
+    except TemplateMissing as e:
+        return Response(str(e), status=503, mimetype="text/plain; charset=utf-8")
+    disposition = "attachment" if request.args.get("download") else "inline"
+    return Response(
+        data,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f'{disposition}; filename="{pdf_filename(report)}"'},
+    )

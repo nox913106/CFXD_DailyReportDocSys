@@ -35,6 +35,9 @@ def create_app():
         APPROVER_USERS=_split_list(os.environ.get("APPROVER_USERS")),
         UPLOAD_DIR=os.environ.get("UPLOAD_DIR", os.path.join(app.instance_path, "uploads")),
         MAX_CONTENT_LENGTH=int(os.environ.get("MAX_UPLOAD_MB", "20")) * 1024 * 1024,
+        PDF_TEMPLATE_XLSX=os.environ.get("PDF_TEMPLATE_XLSX")
+        or os.path.join(app.instance_path, "templates", "checklist.xlsx"),
+        FONT_DIR=os.environ.get("FONT_DIR") or os.path.join(app.instance_path, "fonts"),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
     )

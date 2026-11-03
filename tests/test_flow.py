@@ -234,7 +234,7 @@ def test_full_flow(app):
 
     alice.get(f"/reports/{rid}/checklist")
     html = alice.get(f"/reports/{rid}")
-    assert "Disk full" in html
+    assert f"/reports/{rid}/pdf" in html
     html = alice.post(f"/reports/{rid}/submit")
     assert "已送出審核" in html
     with app.app_context():

@@ -16,7 +16,28 @@
    新日報會沿用前一份的值班人員、核准人、Alarm Summary 清單與檢查表備註；檢查結果每天重新勾選。
 2. 填寫各分頁，檢查表每項都要勾選 Normal / Warning / Failed。「從檢查表帶入異常」可把 Warning/Failed 項目加入 Alarm Summary。
 3. 「送出審核」→ 審核者在「完整檢視」頁核准或退回（退回須填原因，撰寫人可修改後再送）。不能審核自己寫的日報。
-4. 核准後日報鎖定；「完整檢視」頁可直接列印。PDF 輸出待後續開發。
+4. 核准後日報鎖定。「完整檢視」頁顯示完整日報 PDF，可開啟列印或下載。
+
+### PDF 輸出
+
+`/reports/<id>/pdf` 依資料庫內容產生與原始範本**相同排版**的完整日報（不經 Word/Excel 轉檔，直接繪製）：
+
+| 頁次 | 來源 | 做法 |
+|---|---|---|
+| Coverpage（8 頁起） | `app/pdf/cover.py` | 依原始 Word 輸出量測的座標、字型與列高繪製；記錄筆數多時自動換頁並更新目錄頁碼與 Page x of N |
+| CheckList（25 頁） | `app/pdf/xlsx_print.py`、`xlsx_chart.py`、`formula.py` | 讀取 CheckList 範本 xlsx 本身的欄寬、列高、合併儲存格、框線、列印範圍、縮放、分頁、頁首 Logo 與圓餅圖，重算公式後畫出，等同 Excel 的列印結果 |
+| Screenshot（52 頁起） | `app/pdf/screenshot.py` | 封面、含頁碼的目錄、46 個章節與上傳的截圖 |
+
+檔名沿用原本格式：`CFXD-SCA-RLY-DPR-000896_0_IFI_2026-11-03_CFXD_SLA_Daily_Work_Report.pdf`。
+產生一次約 20 秒，結果會快取在 `instance/pdf_cache/`，日報或截圖有變動時自動重產。
+
+**需要的檔案（不放在 git 裡）：**
+
+- CheckList 範本：把「CFXD SLA - SCADA Daily Inspection CheckList.xlsx」複製為 `instance/templates/checklist.xlsx`
+  （或用 `.env` 的 `PDF_TEMPLATE_XLSX` 指定路徑）。修改範本的版面（欄寬、列高、分頁）後，PDF 會跟著改變。
+- 字型：Ubuntu 需安裝 `fonts-crosextra-carlito fonts-liberation fonts-dejavu-core`（與 Calibri / Arial 字寬相同，版面位置不變）。
+  要連字形都一模一樣，可把 Windows `C:\Windows\Fonts` 的 `calibri*.ttf`、`arial*.ttf`、`times*.ttf` 複製到 `instance/fonts/`
+  （或 `.env` 的 `FONT_DIR`），系統會優先使用。
 
 ### 權限
 
@@ -54,13 +75,16 @@ pytest -q
 ## 部署到 Ubuntu 24.04
 
 ```bash
-sudo apt update && sudo apt install -y python3-venv nginx git
+sudo apt update && sudo apt install -y python3-venv nginx git \
+    fonts-crosextra-carlito fonts-liberation fonts-dejavu-core
 sudo useradd --system --home /opt/dailyreport --shell /usr/sbin/nologin dailyreport
 sudo git clone https://github.com/nox913106/CFXD_DailyReportDocSys.git /opt/dailyreport
 cd /opt/dailyreport
 sudo python3 -m venv .venv
 sudo .venv/bin/pip install -r requirements.txt
 sudo cp .env.example .env && sudo nano .env      # 填入 SECRET_KEY 與 AD 設定
+sudo mkdir -p instance/templates                  # 放入 CheckList 範本（見「PDF 輸出」）
+sudo cp "/path/to/CFXD SLA - SCADA Daily Inspection CheckList.xlsx" instance/templates/checklist.xlsx
 sudo chown -R dailyreport:www-data /opt/dailyreport
 sudo chmod 640 .env
 
