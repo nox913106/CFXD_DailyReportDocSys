@@ -42,6 +42,15 @@ FLASK_DEBUG=1 flask --app wsgi run
 
 > `AUTH_MODE=dev` 允許任何帳號登入，只能在 `FLASK_DEBUG=1` 下啟用，正式環境請用 `ldap`。
 
+### 測試
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+`tests/test_flow.py` 涵蓋登入、建立日報、各分頁編輯、檢查表、截圖上傳、送審、退回、核准，以及隔天日報沿用前日資料。測試使用暫存資料庫，不會動到 `instance/`。
+
 ## 部署到 Ubuntu 24.04
 
 ```bash

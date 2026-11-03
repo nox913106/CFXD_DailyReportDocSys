@@ -10,7 +10,14 @@
     <span class="badge {{ report.status }}">{{ report.status_label }}</span>
   </div>
   <div class="actions">
-    {% if report.editable %}<a class="button secondary" href="{{ url_for('editors.basic', report_id=report.id) }}">編輯</a>{% endif %}
+    {% if report.editable %}
+    <a class="button secondary" href="{{ url_for('editors.basic', report_id=report.id) }}">編輯</a>
+    <form method="post" action="{{ url_for('views.submit', report_id=report.id) }}" class="inline"
+          onsubmit="return confirm('確定送出審核？送出後不能再修改。')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">送出審核</button>
+    </form>
+    {% endif %}
     <button type="button" class="secondary" onclick="window.print()">列印</button>
   </div>
 </div>
