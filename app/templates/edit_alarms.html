@@ -1,0 +1,54 @@
+{% extends "report_base.html" %}
+{% import "macros.html" as m %}
+{% block tab %}
+<form method="post" data-dirty-guard>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <fieldset {{ 'disabled' if not report.editable }}>
+  <section class="card">
+    <h3>4 Daily Alarm Inspection</h3>
+    <div class="form-grid narrow">
+      <label>New Alarm<input type="number" min="0" name="alarm_new" value="{{ report.alarm_new }}"></label>
+      <label>Known Alarm<input type="number" min="0" name="alarm_known" value="{{ report.alarm_known }}"></label>
+      <label>False Alarm<input type="number" min="0" name="alarm_false" value="{{ report.alarm_false }}"></label>
+    </div>
+    <p class="hint">Alarm Summary 目前共 {{ report.alarm_rows|length }} 筆。</p>
+  </section>
+  </fieldset>
+
+  {{ m.record_list('truealarm', 'True Alarm Record（真實告警）', true_alarm_fields, report.true_alarms, report.editable) }}
+
+  <section class="card">
+    <div class="row-between">
+      <h3>CheckList Alarm Summary（告警清單）</h3>
+      {% if report.editable %}
+      <div class="actions">
+        <button type="submit" form="import-form" class="secondary"
+                title="把檢查表中勾選 Warning/Failed 的項目加入清單。本頁未儲存的修改會遺失，請先儲存。">從檢查表帶入異常</button>
+        <button type="button" class="secondary" data-add-row="alarmrow">＋ 新增一列</button>
+      </div>
+      {% endif %}
+    </div>
+    <div class="table-scroll">
+    <table class="grid-table" data-row-container="alarmrow" data-next="{{ report.alarm_rows|length }}">
+      <thead><tr><th>No.</th>{% for f, label in alarm_row_fields %}<th>{{ label }}</th>{% endfor %}{% if report.editable %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+      {% for row in report.alarm_rows %}{{ m.alarm_row(loop.index0, loop.index, row, alarm_row_fields, report.editable) }}{% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% if report.editable %}<template data-row-template="alarmrow">{{ m.alarm_row('__i__', '', none, alarm_row_fields, true) }}</template>{% endif %}
+    <datalist id="alarm-categories">{% for c in alarm_categories %}<option value="{{ c }}">{% endfor %}</datalist>
+  </section>
+
+  {% if report.editable %}<div class="sticky-save"><button type="submit">儲存</button></div>{% endif %}
+</form>
+<form method="post" id="import-form" action="{{ url_for('editors.import_alarms', report_id=report.id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+</form>
+
+<section class="card">
+  <h3>True Alarm Screenshot（告警截圖）</h3>
+  {{ m.image_zone(report, 'alarm', alarm_images, report.editable) }}
+</section>
+{% endblock %}
+

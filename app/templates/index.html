@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+{% if pending %}
+<section class="card">
+  <h2>待我審核（{{ pending|length }}）</h2>
+  <table class="list">
+    <tr><th>日期</th><th>文件編號</th><th>撰寫人</th><th>送審時間</th><th></th></tr>
+    {% for r in pending %}
+    <tr>
+      <td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td><td>{{ r.author.name }}</td>
+      <td>{{ r.submitted_at.strftime('%Y-%m-%d %H:%M') if r.submitted_at }}</td>
+      <td><a href="{{ url_for('views.detail', report_id=r.id) }}">審核</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endif %}
+
+<section class="card">
+  <div class="row-between">
+    <h2>日報清單</h2>
+    <form method="post" action="{{ url_for('views.create') }}" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="date" name="report_date" value="{{ today }}" required>
+      <button type="submit">新增日報</button>
+    </form>
+  </div>
+  <form method="get" class="inline">
+    <label class="inline">月份 <input type="month" name="month" value="{{ month }}" onchange="this.form.submit()"></label>
+  </form>
+  <table class="list">
+    <tr><th>日期</th><th>文件編號</th><th>撰寫人</th><th>狀態</th><th>最後更新</th><th></th></tr>
+    {% for r in reports %}
+    <tr>
+      <td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td><td>{{ r.author.name }}</td>
+      <td><span class="badge {{ r.status }}">{{ r.status_label }}</span></td>
+      <td>{{ r.updated_at.strftime('%m-%d %H:%M') if r.updated_at }}{% if r.updated_by %} {{ r.updated_by.name }}{% endif %}</td>
+      <td>
+        {% if r.editable %}<a href="{{ url_for('editors.basic', report_id=r.id) }}">編輯</a> · {% endif %}
+        <a href="{{ url_for('views.detail', report_id=r.id) }}">檢視</a>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="hint">這個月還沒有日報。</td></tr>
+    {% endfor %}
+  </table>
+</section>
+{% endblock %}

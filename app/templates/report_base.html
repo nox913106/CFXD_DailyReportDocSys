@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ report.report_date }} 日報 - CFXD{% endblock %}
+{% block content %}
+<div class="report-head">
+  <div>
+    <h1>{{ report.report_date }} Daily Work Report</h1>
+    <div class="hint">{{ report.doc_no }} · Rev. {{ report.revision }} · 撰寫人 {{ report.author.name }}
+      · <span class="badge {{ report.status }}">{{ report.status_label }}</span></div>
+  </div>
+  <div class="actions">
+    <a class="button secondary" href="{{ url_for('views.detail', report_id=report.id) }}">完整檢視</a>
+    {% if report.editable %}
+    <form method="post" action="{{ url_for('views.submit', report_id=report.id) }}" class="inline"
+          onsubmit="return confirm('確定送出審核？送出後不能再修改。')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">送出審核</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% if report.status == 'rejected' and report.review_comment %}
+<div class="flash error">退回原因（{{ report.reviewed_by.name if report.reviewed_by }}）：{{ report.review_comment }}</div>
+{% endif %}
+<nav class="tabs">
+  {% set tabs = [
+    ('basic', '基本資料', url_for('editors.basic', report_id=report.id)),
+    ('records', '值班 / 問題 / 現場記錄', url_for('editors.records', report_id=report.id)),
+    ('alarms', '告警', url_for('editors.alarms', report_id=report.id)),
+    ('checklist', '檢查表', url_for('editors.checklist_overview', report_id=report.id)),
+    ('screenshots', '截圖', url_for('editors.screenshots', report_id=report.id)),
+  ] %}
+  {% for key, label, href in tabs %}
+  <a href="{{ href }}" class="{{ 'active' if tab == key }}">{{ label }}</a>
+  {% endfor %}
+</nav>
+{% if not report.editable %}<div class="flash">此日報為「{{ report.status_label }}」，僅供檢視。</div>{% endif %}
+{% block tab %}{% endblock %}
+{% endblock %}

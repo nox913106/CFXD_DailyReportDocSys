@@ -1,0 +1,100 @@
+{# 可增減列的記錄表：欄位名稱 prefix-<n>-<field> #}
+
+{% macro record_list(prefix, title, fields, rows, editable) %}
+<section class="card records">
+  <div class="row-between">
+    <h3>{{ title }}</h3>
+    {% if editable %}<button type="button" class="secondary" data-add-record="{{ prefix }}">＋ 新增一筆</button>{% endif %}
+  </div>
+  <div class="record-container" data-prefix="{{ prefix }}" data-next="{{ rows|length }}">
+    {% for row in rows %}{{ record_fields(prefix, loop.index0, fields, row, editable) }}{% endfor %}
+  </div>
+  <p class="hint empty-hint" {% if rows %}hidden{% endif %}>無記錄（文件中顯示 N/A）。</p>
+  {% if editable %}
+  <template data-record-template="{{ prefix }}">{{ record_fields(prefix, '__i__', fields, none, true) }}</template>
+  {% endif %}
+</section>
+{% endmacro %}
+
+{% macro record_fields(prefix, i, fields, row, editable) %}
+{% set LONG_FIELDS = ('description', 'further_action', 'risk_info', 'follow_up', 'reason', 'note') %}
+<div class="record">
+  <div class="record-grid">
+    {% for f, label in fields %}
+    {% set v = (row|attr(f)) if row is not none else '' %}
+    <label class="{{ 'wide' if f in LONG_FIELDS }}">{{ label }}
+      {% if f in LONG_FIELDS %}
+      <textarea name="{{ prefix }}-{{ i }}-{{ f }}" rows="2" {{ 'disabled' if not editable }}>{{ v or '' }}</textarea>
+      {% else %}
+      <input name="{{ prefix }}-{{ i }}-{{ f }}" value="{{ v or '' }}" {{ 'disabled' if not editable }}>
+      {% endif %}
+    </label>
+    {% endfor %}
+  </div>
+  {% if editable %}<button type="button" class="link danger" data-remove-record>刪除此筆</button>{% endif %}
+</div>
+{% endmacro %}
+
+{# 圖片上傳區：拖曳、選檔或點選後 Ctrl+V 貼上 #}
+{% macro image_zone(report, kind, images, editable, section_id=none) %}
+<div class="image-zone" data-upload-url="{{ url_for('images.upload', report_id=report.id) }}"
+     data-kind="{{ kind }}" data-section-id="{{ section_id or '' }}">
+  <div class="thumbs">
+    {% for img in images %}{{ thumb(report, img, editable) }}{% endfor %}
+  </div>
+  {% if editable %}
+  <div class="drop" tabindex="0">
+    點這裡後按 <kbd>Ctrl</kbd>+<kbd>V</kbd> 貼上截圖、拖曳圖片到這裡，或
+    <label class="link">選擇檔案<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden></label>
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% macro thumb(report, img, editable) %}
+{% set src = url_for('images.show', report_id=report.id, image_id=img.id) %}
+<figure class="thumb" data-url="{{ src }}">
+  <a href="{{ src }}" target="_blank"><img src="{{ src }}" alt="{{ img.original_name }}" loading="lazy"></a>
+  {% if editable %}
+  <figcaption>
+    <button type="button" class="link" data-move="up" title="往前">◀</button>
+    <button type="button" class="link" data-move="down" title="往後">▶</button>
+    <button type="button" class="link danger" data-delete-image>刪除</button>
+  </figcaption>
+  {% endif %}
+</figure>
+{% endmacro %}
+
+{# Alarm Summary 表格的一列 #}
+{% macro alarm_row(i, no, row, fields, editable) %}
+<tr>
+  <td class="center">{{ no }}</td>
+  {% for f, label in fields %}
+  {% set v = (row|attr(f)) if row is not none else ('N' if f == 'false_alarm' else '') %}
+  <td>
+    {% if f == 'false_alarm' %}
+    <select name="alarmrow-{{ i }}-{{ f }}" {{ 'disabled' if not editable }}>
+      <option value="N" {{ 'selected' if v != 'Y' }}>N</option>
+      <option value="Y" {{ 'selected' if v == 'Y' }}>Y</option>
+    </select>
+    {% elif f in ('description', 'reason', 'note') %}
+    <textarea name="alarmrow-{{ i }}-{{ f }}" rows="2" {{ 'disabled' if not editable }}>{{ v or '' }}</textarea>
+    {% else %}
+    <input name="alarmrow-{{ i }}-{{ f }}" value="{{ v or '' }}" {{ 'list=alarm-categories' if f == 'category' }}
+           {{ 'disabled' if not editable }} class="{{ 'short' if f == 'item' }}">
+    {% endif %}
+  </td>
+  {% endfor %}
+  {% if editable %}<td><button type="button" class="link danger" data-remove-row>刪除</button></td>{% endif %}
+</tr>
+{% endmacro %}
+
+{# 唯讀的「欄位 / 值」表 #}
+{% macro kv_table(title, fields, record) %}
+<table class="kv">
+  <tr><th colspan="2">{{ title }}</th></tr>
+  {% for f, label in fields %}
+  <tr><td>{{ label }}</td><td class="pre">{{ (record|attr(f) if record is not none else '') or 'N/A' }}</td></tr>
+  {% endfor %}
+</table>
+{% endmacro %}

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}登入 - CFXD 日報系統{% endblock %}
+{% block content %}
+<form method="post" class="card login">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <h1>登入</h1>
+  <p class="hint">請使用公司 AD 帳號（電腦登入帳號）</p>
+  <label>帳號<input name="username" autocomplete="username" required autofocus></label>
+  <label>密碼<input name="password" type="password" autocomplete="current-password"></label>
+  <button type="submit">登入</button>
+</form>
+{% endblock %}

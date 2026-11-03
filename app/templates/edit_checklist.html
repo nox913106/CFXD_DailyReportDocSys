@@ -1,0 +1,52 @@
+{% extends "report_base.html" %}
+{% block tab %}
+<nav class="subtabs">
+  {% for key, title in sheets.items() %}
+  <a href="{{ url_for('editors.checklist', report_id=report.id, sheet=key) }}" class="{{ 'active' if key == sheet }}">{{ title }}</a>
+  {% endfor %}
+</nav>
+<form method="post" class="card checklist" data-dirty-guard>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="row-between">
+    <h3>{{ sheet_title }}</h3>
+    <span class="progress" data-checklist-progress>已勾選 0 / 0</span>
+  </div>
+  <div class="table-scroll">
+  <table class="grid-table">
+    <thead>
+      <tr>
+        <th>No.</th><th>Device</th><th>Item</th>
+        {% if show_location %}<th>Location</th>{% endif %}
+        <th>Status Type / Description</th>
+        <th class="result-col">Normal</th><th class="result-col">Warning</th><th class="result-col">Failed</th>
+        <th>Note</th>
+      </tr>
+    </thead>
+    {% for no, rows in groups %}
+    <tbody class="group">
+      {% for res in rows %}
+      {% set it = res.item %}
+      <tr class="result-{{ res.result or 'none' }}">
+        {% if loop.first %}
+        <td rowspan="{{ rows|length }}" class="center">{{ no }}</td>
+        {% endif %}
+        <td>{% if it.device_type and (loop.first or it.device_name != rows[loop.index0 - 1].item.device_name) %}<div class="hint">{{ it.device_type }}</div>{% endif %}{{ it.device_name }}</td>
+        <td class="nowrap">{{ it.item_no }}</td>
+        {% if show_location %}<td>{{ it.location }}</td>{% endif %}
+        <td>{% if it.status_type %}<b>{{ it.status_type }}</b><br>{% endif %}<span class="hint">{{ it.description }}</span></td>
+        {% for code in ('N', 'W', 'F') %}
+        <td class="result-col">
+          <input type="radio" name="r_{{ res.id }}" value="{{ code }}" {{ 'checked' if res.result == code }}
+                 {{ 'disabled' if not report.editable }} aria-label="{{ it.item_no }} {{ RESULT_LABELS[code] }}">
+        </td>
+        {% endfor %}
+        <td><textarea name="n_{{ res.id }}" rows="1" {{ 'disabled' if not report.editable }}>{{ res.note }}</textarea></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    {% endfor %}
+  </table>
+  </div>
+  {% if report.editable %}<div class="sticky-save"><button type="submit">儲存本頁</button></div>{% endif %}
+</form>
+{% endblock %}

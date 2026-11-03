@@ -1,0 +1,20 @@
+{% extends "report_base.html" %}
+{% import "macros.html" as m %}
+{% block tab %}
+<section class="card">
+  <h3>CFXD SLA Daily Report_Screenshot</h3>
+  <p class="hint">圖片上傳後立即儲存，不需要按儲存。可用 ◀ ▶ 調整同一章節內的順序。</p>
+  <ul class="toc">
+    {% for s in sections %}
+    <li class="level{{ s.level }}"><a href="#sec-{{ s.id }}">{{ s.code }} {{ s.title }}</a>
+      <span class="count">{{ (by_section.get(s.id) or [])|length }}</span></li>
+    {% endfor %}
+  </ul>
+</section>
+{% for s in sections %}
+<section class="card shot-section level{{ s.level }}" id="sec-{{ s.id }}">
+  <h3>{{ s.code }} {{ s.title }}</h3>
+  {{ m.image_zone(report, 'screenshot', by_section.get(s.id) or [], report.editable, s.id) }}
+</section>
+{% endfor %}
+{% endblock %}

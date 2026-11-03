@@ -1,0 +1,19 @@
+{% extends "report_base.html" %}
+{% block tab %}
+<section class="card">
+  <h3>SCADA Daily Inspection CheckList</h3>
+  <p class="hint">每個項目都必須勾選 Normal / Warning / Failed 才能送審。備註會從前一份日報帶入。</p>
+  <table class="list">
+    <tr><th>分頁</th><th>Normal</th><th>Warning</th><th>Failed</th><th>未勾選</th><th>合計</th><th></th></tr>
+    {% for key, title in sheets.items() %}
+    {% set s = stats[key] %}
+    <tr>
+      <td>{{ title }}</td>
+      <td>{{ s.N }}</td><td class="warn">{{ s.W }}</td><td class="fail">{{ s.F }}</td>
+      <td class="{{ 'fail' if s.blank }}">{{ s.blank }}</td><td>{{ s.total }}</td>
+      <td><a href="{{ url_for('editors.checklist', report_id=report.id, sheet=key) }}">{{ '填寫' if report.editable else '檢視' }}</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endblock %}

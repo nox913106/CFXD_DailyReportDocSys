@@ -1,0 +1,7 @@
+Flask==3.0.3
+Flask-SQLAlchemy==3.1.1
+Flask-Login==0.6.3
+Flask-WTF==1.2.1
+ldap3==2.9.1
+python-dotenv==1.0.1
+gunicorn==23.0.0
