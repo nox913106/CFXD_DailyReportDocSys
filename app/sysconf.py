@@ -8,6 +8,7 @@
 
 import json
 import os
+import re
 
 from flask import current_app
 
@@ -21,7 +22,7 @@ DEFAULTS = {
     "ldap_url": "",
     "ad_domain": "",
     "ldap_base_dn": "",
-    "ldap_required_group": "",
+    "ldap_required_group": "",  # 群組 DN，可多個（一行一個；.env / 指令可用 ; 分隔）
     "ldap_approver_group": "",
     "approver_users": "",  # 首次登入就設為檔案管理員的帳號（逗號分隔）
     "ldap_ca_pem": "",  # LDAPS 驗證用的公司 CA 憑證（PEM）；空白 = 系統預設 CA
@@ -113,7 +114,19 @@ def many(keys):
 def ldap_config():
     c = many(LDAP_KEYS)
     c["approver_users_set"] = {v.strip().lower() for v in (c["approver_users"] or "").split(",") if v.strip()}
+    c["required_groups"] = group_list(c["ldap_required_group"])
+    c["approver_groups"] = group_list(c["ldap_approver_group"])
     return c
+
+
+def group_list(value):
+    """群組 DN 清單：一行一個，也接受 ; 分隔（DN 本身用逗號，所以不能用逗號分隔）；去除空白與重複。"""
+    out = []
+    for part in re.split(r"(?<!\\);|\r?\n", value or ""):
+        dn = part.strip()
+        if dn and dn.lower() not in {d.lower() for d in out}:
+            out.append(dn)
+    return out
 
 
 def ldap_configured(c=None):

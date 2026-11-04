@@ -80,6 +80,8 @@ def _ldap_from_form():
     f = request.form
     c = {k: f.get(k, "").strip() for k in LDAP_FORM}
     c["ad_domain"] = c["ad_domain"].lower()
+    for k in ("ldap_required_group", "ldap_approver_group"):
+        c[k] = "\n".join(sysconf.group_list(f.get(k, "")))
     c["approver_users"] = ",".join(sorted({u.strip().lower() for u in c["approver_users"].split(",") if u.strip()}))
     c["ldap_timeout"] = _int("ldap_timeout", 1, 60, 5)
     pem = f.get("ldap_ca_pem", "").strip()
@@ -104,6 +106,10 @@ def _check_ldap(c):
             x509.load_pem_x509_certificates(c["ldap_ca_pem"].encode())
         except ValueError:
             return "CA 憑證不是 PEM 格式（應以 -----BEGIN CERTIFICATE----- 開頭）"
+    for k, label in (("ldap_required_group", "允許登入的群組"), ("ldap_approver_group", "檔案管理員群組")):
+        bad = [g for g in sysconf.group_list(c[k]) if not re.match(r"^(CN|OU)=.+,DC=", g, re.I)]
+        if bad:
+            return f"{label}：「{bad[0]}」不是群組 DN（應類似 CN=群組,OU=…,DC=corp,DC=local；多個群組一行一個）"
     return None
 
 

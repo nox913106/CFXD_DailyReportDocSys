@@ -30,10 +30,10 @@
       <label>伺服器網址<input name="ldap_url" value="{{ c.ldap_url }}" placeholder="ldaps://dc01.corp.local:636"></label>
       <label>網域<input name="ad_domain" value="{{ c.ad_domain }}" placeholder="corp.local"></label>
       <label class="wide">搜尋起點（Base DN）<input name="ldap_base_dn" value="{{ c.ldap_base_dn }}" placeholder="DC=corp,DC=local"></label>
-      <label class="wide">只允許這個群組登入（群組 DN，含巢狀群組；空白 = 所有 AD 帳號）
-        <input name="ldap_required_group" value="{{ c.ldap_required_group }}" placeholder="CN=CFXD-DailyReport,OU=Groups,DC=corp,DC=local"></label>
-      <label class="wide">首次登入設為檔案管理員的群組（群組 DN，選填）
-        <input name="ldap_approver_group" value="{{ c.ldap_approver_group }}"></label>
+      <label class="wide">只允許這些群組登入（群組 DN，一行一個，屬於任一群組即可，含巢狀群組；空白 = 所有 AD 帳號）
+        <textarea name="ldap_required_group" rows="3" spellcheck="false" placeholder="CN=CFXD-DailyReport,OU=Groups,DC=corp,DC=local">{{ c.ldap_required_group }}</textarea></label>
+      <label class="wide">首次登入設為檔案管理員的群組（群組 DN，一行一個，選填）
+        <textarea name="ldap_approver_group" rows="3" spellcheck="false" placeholder="CN=MIS,OU=MIS,DC=corp,DC=local&#10;CN=ITI,OU=ITI,DC=corp,DC=local">{{ c.ldap_approver_group }}</textarea></label>
       <label class="wide">首次登入設為檔案管理員的帳號（逗號分隔，選填）
         <input name="approver_users" value="{{ c.approver_users }}" placeholder="alice,bob"></label>
       <label>連線逾時（秒）<input name="ldap_timeout" type="number" min="1" max="60" value="{{ c.ldap_timeout }}"></label>

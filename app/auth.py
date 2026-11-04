@@ -14,12 +14,13 @@ from .models import User
 bp = Blueprint("auth", __name__)
 
 
-def _in_group_filter(username, group_dn):
+def _in_group_filter(username, groups):
+    """帳號是 groups 任一群組的成員（含巢狀群組）。groups 可以是單一 DN 或清單。"""
+    if isinstance(groups, str):
+        groups = [groups]
     # 1.2.840.113556.1.4.1941 = 遞迴群組成員檢查（含巢狀群組）
-    return (
-        f"(&(sAMAccountName={escape_filter_chars(username)})"
-        f"(memberOf:1.2.840.113556.1.4.1941:={escape_filter_chars(group_dn)}))"
-    )
+    terms = "".join(f"(memberOf:1.2.840.113556.1.4.1941:={escape_filter_chars(g)})" for g in groups)
+    return f"(&(sAMAccountName={escape_filter_chars(username)}){terms if len(groups) == 1 else f'(|{terms})'})"
 
 
 def _server(c):
@@ -33,9 +34,9 @@ def _server(c):
 
 def _lookup(conn, c, username):
     """回傳 (entry, is_approver)；不在允許群組內或找不到時 entry 為 None。"""
-    group = c["ldap_required_group"]
-    if group:
-        search_filter = _in_group_filter(username, group)
+    groups = c.get("required_groups") or sysconf.group_list(c["ldap_required_group"])
+    if groups:
+        search_filter = _in_group_filter(username, groups)
     else:
         search_filter = f"(sAMAccountName={escape_filter_chars(username)})"
     conn.search(c["ldap_base_dn"], search_filter, SUBTREE, attributes=["displayName", "mail"])
@@ -43,10 +44,21 @@ def _lookup(conn, c, username):
         return None, False
     entry = conn.entries[0]
     is_approver = False
-    if c["ldap_approver_group"]:
-        conn.search(c["ldap_base_dn"], _in_group_filter(username, c["ldap_approver_group"]), SUBTREE)
+    approver_groups = c.get("approver_groups") or sysconf.group_list(c["ldap_approver_group"])
+    if approver_groups:
+        conn.search(c["ldap_base_dn"], _in_group_filter(username, approver_groups), SUBTREE)
         is_approver = bool(conn.entries)
     return entry, is_approver
+
+
+def _member_of(conn, c, username, groups):
+    """測試用：逐一列出帳號屬於哪些群組。"""
+    hit = []
+    for g in groups:
+        conn.search(c["ldap_base_dn"], _in_group_filter(username, g), SUBTREE)
+        if conn.entries:
+            hit.append(g)
+    return hit
 
 
 def ad_authenticate(username, password, c=None):
@@ -127,13 +139,23 @@ def ldap_test(c, username="", password=""):
                           if c["ldap_required_group"] else "在搜尋起點下找不到這個帳號，確認 Base DN"))
             return steps
         name = str(entry.displayName) if entry.displayName else username
+        req = sysconf.group_list(c["ldap_required_group"])
+        hit = _member_of(conn, c, username, req) if len(req) > 1 else req
         steps.append((True, "搜尋帳號", f"{name}" + (f"（{entry.mail}）" if entry.mail else "")
-                      + ("，是允許登入群組的成員" if c["ldap_required_group"] else "")))
-        if c["ldap_approver_group"]:
-            steps.append((True, "檔案管理員群組", "是成員（首次登入會設為檔案管理員）" if is_approver else "不是成員"))
+                      + (f"，是允許登入群組的成員（{_short(hit)}）" if req else "")))
+        appr = sysconf.group_list(c["ldap_approver_group"])
+        if appr:
+            hit = _member_of(conn, c, username, appr) if is_approver else []
+            steps.append((True, "檔案管理員群組", f"是 {_short(hit)} 的成員（首次登入會設為檔案管理員）" if is_approver
+                          else f"不是 {len(appr)} 個群組中任何一個的成員"))
     finally:
         conn.unbind()
     return steps
+
+
+def _short(dns):
+    """CN=MIS,OU=…  →  MIS"""
+    return "、".join(d.split(",", 1)[0].split("=", 1)[-1] for d in dns)
 
 
 def _tls_hint(e):

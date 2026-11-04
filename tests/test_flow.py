@@ -1026,6 +1026,60 @@ def _admin_browser(app):
     return b
 
 
+def test_ldap_multiple_groups(app, monkeypatch):
+    """允許登入群組與檔案管理員群組都可以設定多個（屬於任一個即可）。"""
+    import re
+
+    from app import auth, sysconf
+
+    assert sysconf.group_list("CN=A,DC=x\r\n\n CN=B,DC=x ;CN=a,DC=x;CN=C\\;D,DC=x") == ["CN=A,DC=x", "CN=B,DC=x", "CN=C\\;D,DC=x"]
+    f = auth._in_group_filter("bob", ["CN=A,DC=x", "CN=B (x),DC=x"])
+    assert f == ("(&(sAMAccountName=bob)(|(memberOf:1.2.840.113556.1.4.1941:=CN=A,DC=x)"
+                 "(memberOf:1.2.840.113556.1.4.1941:=CN=B \\28x\\29,DC=x)))")
+    assert auth._in_group_filter("bob", "CN=A,DC=x") == "(&(sAMAccountName=bob)(memberOf:1.2.840.113556.1.4.1941:=CN=A,DC=x))"
+
+    # 假的 AD：bob 屬於 ITI，carl 屬於 hsadmin，dave 都不屬於
+    member = {"bob": {"cn=iti,dc=ad,dc=tw", "cn=staff,dc=ad,dc=tw"}, "carl": {"cn=hsadmin,dc=ad,dc=tw", "cn=staff,dc=ad,dc=tw"},
+              "dave": {"cn=staff,dc=ad,dc=tw"}}
+
+    class Entry:
+        displayName = mail = None
+
+    class FakeConn:
+        def __init__(self, server, user, password, auto_bind):
+            self.user, self.entries = user.split("@")[0], []
+
+        def search(self, base, flt, scope, attributes=None):
+            groups = {g.lower() for g in re.findall(r"1941:=([^)]*)\)", flt)}
+            ok = not groups or groups & member.get(self.user, set())
+            self.entries = [Entry()] if ok else []
+
+        def unbind(self):
+            pass
+
+    monkeypatch.setattr(auth, "Connection", FakeConn)
+    import socket
+
+    class FakeSock:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(socket, "create_connection", lambda *a, **k: FakeSock())
+    with app.app_context():
+        for k, v in {"ldap_url": "ldaps://dc.ad.tw:636", "ad_domain": "ad.tw", "ldap_base_dn": "DC=ad,DC=tw",
+                     "ldap_required_group": "", "ldap_approver_group": "CN=MIS,DC=ad,DC=tw\nCN=hsadmin,DC=ad,DC=tw\nCN=ITI,DC=ad,DC=tw"}.items():
+            sysconf.put(k, v)
+        assert auth.ad_authenticate("bob", "pw")[2] is True  # 第三個群組
+        assert auth.ad_authenticate("carl", "pw")[2] is True  # 第二個群組
+        assert auth.ad_authenticate("dave", "pw")[2] is False
+        sysconf.put("ldap_required_group", "CN=ITI,DC=ad,DC=tw\nCN=hsadmin,DC=ad,DC=tw")
+        assert auth.ad_authenticate("bob", "pw") and auth.ad_authenticate("carl", "pw")
+        assert auth.ad_authenticate("dave", "pw") is None  # 兩個允許群組都不屬於
+        c = {**sysconf.ldap_config()}
+        steps = auth.ldap_test(c, "carl", "pw")
+        assert any("hsadmin" in d and "檔案管理員" in d for _, s, d in steps if s == "檔案管理員群組"), steps
+
+
 def test_admin_ldap_and_local_accounts(app):
     """AD 設定在設定頁（.env 只是舊版沿用的預設值）、測試不會儲存；本機緊急帳號在帳號管理頁新增 / 重設 / 停用。"""
     from app import db, sysconf
@@ -1049,6 +1103,12 @@ def test_admin_ldap_and_local_accounts(app):
         assert sysconf.get("ldap_url") == "ldaps://old.example.test:636"  # 測試不儲存
     assert "格式" in b.post("/admin/settings/ldap", {**form, "ldap_url": "http://x"})
     assert "CA 憑證不是 PEM" in b.post("/admin/settings/ldap", {**form, "ldap_ca_pem": "garbage"})
+    assert "不是群組 DN" in b.post("/admin/settings/ldap", {**form, "ldap_approver_group": "CN=MIS,DC=corp,DC=local\nMIS"})
+    groups = "CN=MIS,OU=MIS,DC=corp,DC=local\r\n\r\nCN=ITI,OU=ITI,DC=corp,DC=local\r\nCN=MIS,OU=MIS,DC=corp,DC=local"
+    assert "已儲存 AD 設定" in b.post("/admin/settings/ldap", {**form, "ldap_approver_group": groups})
+    with app.app_context():
+        assert sysconf.ldap_config()["approver_groups"] == ["CN=MIS,OU=MIS,DC=corp,DC=local", "CN=ITI,OU=ITI,DC=corp,DC=local"]
+    assert "CN=ITI,OU=ITI,DC=corp,DC=local</textarea>" in b.get("/admin/settings/ldap")
     assert "已儲存 AD 設定" in b.post("/admin/settings/ldap", form)
     with app.app_context():
         c = sysconf.ldap_config()

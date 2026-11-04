@@ -18,6 +18,7 @@
 #   --tls self-signed|custom|none   預設 self-signed（自動產生自簽憑證）；custom 需搭配 --cert / --key
 #   --cert <檔案> --key <檔案>
 #   --ldap-url <ldaps://…> --ad-domain <網域> --base-dn <DN> --required-group <DN> --approver-group <DN>
+#                            （群組可重複指定多次，或用 ; 分隔多個 DN）
 #   --approver-users <帳號,帳號>
 #   --template <CheckList.xlsx>
 #   --workers <數量>         gunicorn worker 數（預設依 CPU 與記憶體自動決定）
@@ -460,8 +461,8 @@ cmd_install() {
       --ldap-url) OPT_LDAP_URL="$2"; shift 2 ;;
       --ad-domain) OPT_AD_DOMAIN="$2"; shift 2 ;;
       --base-dn) OPT_BASE_DN="$2"; shift 2 ;;
-      --required-group) OPT_REQUIRED_GROUP="$2"; shift 2 ;;
-      --approver-group) OPT_APPROVER_GROUP="$2"; shift 2 ;;
+      --required-group) OPT_REQUIRED_GROUP="${OPT_REQUIRED_GROUP:+$OPT_REQUIRED_GROUP;}$2"; shift 2 ;;
+      --approver-group) OPT_APPROVER_GROUP="${OPT_APPROVER_GROUP:+$OPT_APPROVER_GROUP;}$2"; shift 2 ;;
       --approver-users) OPT_APPROVER_USERS="$2"; shift 2 ;;
       --template) OPT_TEMPLATE="$2"; shift 2 ;;
       --workers) WORKERS="$2"; shift 2 ;;
@@ -469,7 +470,7 @@ cmd_install() {
       --skip-ocr-model) OPT_SKIP_OCR=1; shift ;;
       --ntp) NTP="$2"; shift 2 ;;
       --no-prompt) OPT_NO_PROMPT=1; shift ;;
-      -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+      -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
       *) die "不認得的選項 $1（--help 查看說明）" ;;
     esac
   done
