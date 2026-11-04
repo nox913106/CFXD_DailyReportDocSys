@@ -6,8 +6,15 @@
     <h3>封面 Document Information</h3>
     <div class="form-grid">
       <label>Date<input value="{{ report.report_date.strftime('%Y.%m.%d') }}" disabled></label>
+      {% if can_doc_no %}
+      <label>Document No.{% if report.doc_no != auto_doc_no %}<span class="hint">（已覆寫，自動編號 {{ auto_doc_no }}）</span>{% endif %}
+        <input name="doc_no" value="{{ report.doc_no }}" maxlength="64" placeholder="{{ auto_doc_no }}"></label>
+      <label>Contractor Doc No.{% if report.contractor_doc_no != auto_contractor_doc_no %}<span class="hint">（已覆寫，自動編號 {{ auto_contractor_doc_no }}）</span>{% endif %}
+        <input name="contractor_doc_no" value="{{ report.contractor_doc_no }}" maxlength="64" placeholder="{{ auto_contractor_doc_no }}"></label>
+      {% else %}
       <label>Document No.<input value="{{ report.doc_no }}" disabled></label>
       <label>Contractor Doc No.<input value="{{ report.contractor_doc_no }}" disabled></label>
+      {% endif %}
       <label>Revision<input type="number" min="0" name="revision" value="{{ report.revision }}"></label>
       <label>Issue Purpose<input name="issue_purpose" value="{{ report.issue_purpose }}"></label>
       <label>Inspection Time（檢查表）<input name="inspection_time" value="{{ report.inspection_time }}"></label>
@@ -33,7 +40,7 @@
       <label class="wide">Second Line Backup Support<input name="second_line_support" value="{{ report.second_line_support }}"
              placeholder="例：Akshay Sampath / Allen Tsai / Jhengyu Wu"></label>
     </div>
-    <p class="hint">文件編號依日期自動產生；新增日報時會沿用前一份日報的值班人員與核准人。
+    <p class="hint">文件編號依日期自動產生{% if can_doc_no %}，可以直接修改（清空後儲存 = 恢復自動編號；變更會記在審核歷程）{% else %}，二線管理員以上可以修改{% endif %}；新增日報時會沿用前一份日報的值班人員與核准人。
       {% if can_assign %}{% if can_assign.principal %}您以 {{ can_assign.principal.name }} 的代理人身分指派。{% endif %}
       {% else %}撰寫人與核准人由檔案管理員（或其授權的二線管理員）指派。{% endif %}
       二線管理員代為核准時，文件上的 Approval / Document Approved 仍顯示核准人本人。</p>

@@ -118,6 +118,13 @@ def can_assign(user, report):
     return _manager_action(user, report, False, "指派")
 
 
+def can_override_doc_no(user, report):
+    """Document No. / Contractor Doc No. 覆寫：二線管理員以上（二線、檔案管理員、本機系統管理員），草稿或退回時。"""
+    if not report.editable:
+        return Decision(False, None, "只能在草稿或退回狀態變更文件編號。")
+    return Decision(user.role in ("admin", "file_manager", "second_line"), None, "只有二線管理員以上可以變更文件編號。")
+
+
 def can_void(user, report):
     if report.status == "voided":
         return Decision(False, None, "此日報已作廢。")

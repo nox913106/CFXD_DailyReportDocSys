@@ -329,6 +329,7 @@ REVIEW_ACTION_LABELS = {
     "approve": "核准",
     "reject": "退回",
     "assign": "指派",
+    "doc_no": "變更文件編號",
     "void": "作廢",
     "void_request": "申請作廢",
     "void_request_reject": "駁回作廢申請",

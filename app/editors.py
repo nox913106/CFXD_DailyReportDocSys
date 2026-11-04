@@ -6,7 +6,7 @@ from flask import Blueprint, abort, flash, redirect, render_template, request, u
 from flask_login import current_user, login_required
 from sqlalchemy.orm import contains_eager
 
-from . import db
+from . import db, docno
 from . import approval as perm
 from .approval import approvers
 from .helpers import SHEETS, checklist_stats, get_report, locked_redirect, parse_rows
@@ -18,6 +18,7 @@ from .models import (
     OnsiteRecord,
     ScreenshotSection,
     SystemUpdateRecord,
+    Report,
     ReviewLog,
     TrueAlarmRecord,
     User,
@@ -105,6 +106,11 @@ def basic(report_id):
     if request.method == "POST":
         if (r := locked_redirect(report)) is not None:
             return r
+        if perm.can_override_doc_no(current_user, report):
+            err = _doc_numbers(report)
+            if err:
+                flash(err, "error")
+                return redirect(url_for("editors.basic", report_id=report.id))
         report.revision = _int(request.form.get("revision"))
         for f in ("issue_purpose", "inspection_time", "first_line_officer", "second_line_support"):
             setattr(report, f, request.form.get(f, "").strip())
@@ -120,7 +126,32 @@ def basic(report_id):
         choices.append(report.approver)
     authors = User.query.filter(User.role != "admin").order_by(User.display_name, User.username).all()
     return render_template("edit_basic.html", report=report, tab="basic", approvers=choices, authors=authors,
-                           can_assign=perm.can_assign(current_user, report))
+                           can_assign=perm.can_assign(current_user, report),
+                           can_doc_no=perm.can_override_doc_no(current_user, report),
+                           auto_doc_no=docno.doc_no(report.report_date),
+                           auto_contractor_doc_no=docno.contractor_doc_no(report.report_date))
+
+
+DOC_FIELDS = (("doc_no", "Document No.", docno.doc_no), ("contractor_doc_no", "Contractor Doc No.", docno.contractor_doc_no))
+
+
+def _doc_numbers(report):
+    """二線以上覆寫文件編號；空白 = 恢復依日期自動產生。回傳錯誤訊息或 None。"""
+    new = {}
+    for field, label, auto in DOC_FIELDS:
+        v = " ".join(request.form.get(field, "").split()) or auto(report.report_date)
+        if len(v) > 64 or not v.isprintable():
+            return f"{label} 最多 64 個字元，不能有特殊控制字元。"
+        dup = Report.query.filter(Report.id != report.id, db.func.lower(getattr(Report, field)) == v.lower()).first()
+        if dup:
+            return f"{label} {v} 已用在 {dup.report_date} 的日報（作廢的日報編號也保留不再使用）。"
+        new[field] = v
+    changes = [f"{label} {getattr(report, f)} → {new[f]}" for f, label, _ in DOC_FIELDS if new[f] != getattr(report, f)]
+    if changes:
+        for f in new:
+            setattr(report, f, new[f])
+        db.session.add(ReviewLog(report_id=report.id, action="doc_no", actor_id=current_user.id, comment="；".join(changes)))
+    return None
 
 
 def _assign(report, principal):

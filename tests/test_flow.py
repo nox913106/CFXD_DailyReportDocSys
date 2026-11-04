@@ -1376,3 +1376,49 @@ def test_admin_pdf_upload_and_tls(app, tmp_path):
     with open(os.path.join(d, "result.json"), "w") as fh:
         json.dump({"ok": True, "at": "2026-11-03 10:00", "message": "已套用 report.corp.local"}, fh)
     assert "已套用 report.corp.local" in b.get("/admin/settings/tls")
+
+
+def test_doc_no_override(app):
+    """二線管理員以上可以覆寫 Document No. / Contractor Doc No.；一線使用者不行；不能與其他日報重複。"""
+    from app import db
+    from app.models import Report, ReviewLog
+
+    alice = Browser(app)
+    alice.login("alice")
+    rid = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-04"}))
+    rid2 = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-05"}))
+    base = {"revision": "0", "issue_purpose": "IFI - Issue for Information", "inspection_time": "10:00 AM",
+            "first_line_officer": "Alice", "second_line_support": ""}
+    with app.app_context():
+        assert db.session.get(Report, rid).doc_no == "CFXD-SCA-RLY-DPR-000897"
+
+    # 一線使用者：欄位唯讀，送出也不會改
+    html = alice.get(f"/reports/{rid}/basic")
+    assert 'name="doc_no"' not in html and "二線管理員以上可以修改" in html
+    alice.post(f"/reports/{rid}/basic", {**base, "doc_no": "HACK-1", "contractor_doc_no": "HACK-2"})
+    with app.app_context():
+        assert db.session.get(Report, rid).doc_no == "CFXD-SCA-RLY-DPR-000897"
+
+    carol = Browser(app)
+    carol.login("carol")
+    set_role(app, "carol", "second_line")
+    assert 'name="doc_no"' in carol.get(f"/reports/{rid}/basic")
+    html = carol.post(f"/reports/{rid}/basic", {**base, "doc_no": " CFXD-SCA-RLY-DPR-000900 ",
+                                                "contractor_doc_no": "RT230018-CFXD SLA-RP-000800"})
+    assert "已儲存" in html and "已覆寫，自動編號 CFXD-SCA-RLY-DPR-000897" in html
+    with app.app_context():
+        r = db.session.get(Report, rid)
+        assert (r.doc_no, r.contractor_doc_no) == ("CFXD-SCA-RLY-DPR-000900", "RT230018-CFXD SLA-RP-000800")
+        log = ReviewLog.query.filter_by(report_id=rid, action="doc_no").one()
+        assert "000897 → CFXD-SCA-RLY-DPR-000900" in log.comment
+    # 與另一份日報重複：拒絕，整筆不儲存
+    html = carol.post(f"/reports/{rid2}/basic", {**base, "revision": "3", "doc_no": "cfxd-sca-rly-dpr-000900",
+                                                 "contractor_doc_no": ""})
+    assert "已用在 2026-11-04 的日報" in html
+    with app.app_context():
+        assert db.session.get(Report, rid2).revision == 0
+    # 清空 = 恢復自動編號
+    carol.post(f"/reports/{rid}/basic", {**base, "doc_no": "", "contractor_doc_no": ""})
+    with app.app_context():
+        r = db.session.get(Report, rid)
+        assert (r.doc_no, r.contractor_doc_no) == ("CFXD-SCA-RLY-DPR-000897", "RT230018-CFXD SLA-RP-000797")
