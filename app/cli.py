@@ -179,20 +179,32 @@ def register_cli(app):
     @click.option("--username", default="sysadmin", show_default=True, help="本機系統管理員帳號")
     @click.password_option(help="密碼（至少 12 個字元）；也可用環境變數 DR_ADMIN_PASSWORD 傳入", envvar="DR_ADMIN_PASSWORD")
     @click.option("--if-missing", is_flag=True, help="已經有本機緊急帳號時不做任何事（安裝腳本用）")
-    def create_admin(username, password, if_missing):
+    @click.option("--rename-from", default="", help="把這個還沒登入過的本機帳號改名（安裝後引導用）")
+    def create_admin(username, password, if_missing, rename_from):
         """建立或重設本機系統管理員帳號。"""
         from . import db
+        from .admin_views import MIN_PASSWORD, USERNAME_RE
         from .models import AuditLog, User
 
         if if_missing and User.query.filter_by(role="admin").filter(User.password_hash.isnot(None)).first():
             click.echo("已有本機緊急帳號，略過。")
             return
-        if len(password) < 12:
-            raise click.ClickException("密碼至少需要 12 個字元。")
+        if len(password) < MIN_PASSWORD:
+            raise click.ClickException(f"密碼至少需要 {MIN_PASSWORD} 個字元。")
         username = username.strip().lower()
+        if not USERNAME_RE.match(username):
+            raise click.ClickException("帳號名稱需 3～64 個字元，只能用小寫英數字與 . _ -（開頭必須是英數字）。")
         user = User.query.filter_by(username=username).first()
         if user and not user.password_hash and user.last_login:
             raise click.ClickException(f"{username} 已是 AD 帳號，請換一個系統管理員帳號名稱。")
+        old = User.query.filter_by(username=rename_from.strip().lower()).first() if rename_from else None
+        if old and old.username != username:
+            if user:
+                raise click.ClickException(f"{username} 已存在，請換一個名稱。")
+            if not old.password_hash or old.last_login:
+                raise click.ClickException(f"{old.username} 已經使用過，不能改名；請用新名稱另外建立。")
+            old.username = username
+            user = old
         if not user:
             user = User(username=username, display_name="System Administrator")
             db.session.add(user)

@@ -520,6 +520,30 @@ def test_local_admin(app):
     assert "已作廢" in b.post(f"/reports/{rid}/void", {"reason": "測試"})
 
 
+def test_create_admin_rename_from(app):
+    """安裝後引導：把剛建立、還沒登入過的 sysadmin 改成操作者自己的帳號與密碼。"""
+    from werkzeug.security import check_password_hash
+
+    from app.models import User
+
+    runner = app.test_cli_runner()
+    assert runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "random-initial-pw"]).exit_code == 0
+    res = runner.invoke(args=["create-admin", "--username", "Ops.Admin", "--rename-from", "sysadmin",
+                              "--password", "my-own-password"])
+    assert res.exit_code == 0, res.output
+    with app.app_context():
+        assert User.query.filter_by(username="sysadmin").first() is None
+        u = User.query.filter_by(username="ops.admin").one()
+        assert u.role == "admin" and check_password_hash(u.password_hash, "my-own-password")
+    assert runner.invoke(args=["create-admin", "--username", "bad name!", "--password", "my-own-password"]).exit_code != 0
+    # 已登入過的帳號不能被改名
+    b = Browser(app)
+    b.get("/login")
+    b.post("/login", {"username": "ops.admin", "password": "my-own-password"})
+    res = runner.invoke(args=["create-admin", "--username", "third", "--rename-from", "ops.admin", "--password", "my-own-password"])
+    assert res.exit_code != 0 and "不能改名" in res.output
+
+
 def test_add_missing_columns(tmp_path, monkeypatch):
     """舊版資料庫（沒有代簽欄位）啟動時自動補欄位。"""
     import sqlite3

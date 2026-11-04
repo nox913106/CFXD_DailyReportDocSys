@@ -246,7 +246,8 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
 建立系統帳號 `dailyreport` 與虛擬環境 → 產生 `.env`（隨機 `SECRET_KEY`）→ 建立本機緊急帳號 `sysadmin`（密碼只在結束時印一次，
 也存在 `/etc/dailyreport/.admin-initial-password`，僅 root 可讀）→ 下載 OCR 模型 → 自簽 HTTPS 憑證（`--tls custom --cert … --key …`
 可換公司 CA 憑證，之後也可在系統設定頁上傳）→ nginx（HTTP 轉 HTTPS、安全標頭）→ 網頁、OCR、AI、維護（備份 / 健康檢查）
-四個服務與憑證套用 → 等服務啟動後執行健檢。安裝時帶入的 AD 選項直接寫進系統設定（資料庫），`.env` 只放基礎設施設定。
+四個服務與憑證套用 → 等服務啟動後，**首次安裝會詢問本機管理員帳號名稱與密碼**（至少 12 字元，輸入不顯示；
+`curl … | sudo bash` 也能輸入；直接按 Enter 沿用 `sysadmin` 與隨機密碼；自動化安裝加 `--no-prompt`，沒有終端機時也會略過）→ 執行健檢。安裝時帶入的 AD 選項直接寫進系統設定（資料庫），`.env` 只放基礎設施設定。
 
 日常設定都在網頁「系統設定」，不需要登入主機。主機上的指令只用於安裝、升級（升級後自動 doctor 驗證）與網頁無法開啟時的救援：
 

@@ -22,6 +22,7 @@
 #   --template <CheckList.xlsx>
 #   --workers <數量>         gunicorn worker 數（預設依 CPU 與記憶體自動決定）
 #   --admin-user <帳號>      本機緊急帳號名稱（預設 sysadmin）
+#   --no-prompt              不詢問本機管理員帳號與密碼（自動化安裝用；使用 --admin-user 與隨機密碼）
 #   --skip-ocr-model         不預先下載 OCR 模型（離線安裝時用，之後再跑 install 補上）
 #   --ntp <伺服器,…>|none     優先使用的時間伺服器（預設 Google：time.google.com 等）；none = 不變更主機設定
 set -euo pipefail
@@ -270,6 +271,43 @@ init_app() {
   fi
 }
 
+# 首次安裝：讓操作者把隨機密碼的緊急帳號換成自己的帳號與密碼。
+# 用 /dev/tty 讀取，`curl … | sudo bash` 也能輸入；沒有終端機（自動化安裝）時沿用隨機密碼。
+tty_ok() { [[ "${OPT_NO_PROMPT:-0}" != 1 ]] && { : < /dev/tty; } 2>/dev/null; }
+
+prompt_admin() {
+  [[ -n "${ADMIN_PW:-}" ]] && tty_ok || return 0
+  step "設定本機管理員帳號"
+  info "AD 尚未設定前，只能用本機帳號登入網頁；之後忘記 AD 或 AD 故障時也用它救援。"
+  info "目前已建立 ${B}$ADMIN_USER${N}（隨機密碼）。可以改成你自己的帳號與密碼。"
+  local name pw pw2 out tries=0
+  while :; do
+    read -r -p "    帳號名稱 [直接按 Enter 沿用 $ADMIN_USER 與隨機密碼]：" name < /dev/tty || return 0
+    name="$(tr '[:upper:]' '[:lower:]' <<< "${name// /}")"
+    [[ -z "$name" ]] && { info "沿用 $ADMIN_USER 與隨機密碼"; return 0; }
+    [[ "$name" =~ ^[a-z0-9][a-z0-9._-]{2,63}$ ]] && break
+    warn "帳號名稱需 3～64 個字元，只能用英數字與 . _ -（開頭必須是英數字）"
+  done
+  while (( tries++ < 5 )); do
+    read -r -s -p "    密碼（至少 12 個字元，不會顯示）：" pw < /dev/tty || return 0; echo > /dev/tty
+    if (( ${#pw} < 12 )); then warn "密碼至少需要 12 個字元"; continue; fi
+    if [[ "$pw" == *"$name"* ]]; then warn "密碼不能包含帳號名稱"; continue; fi
+    read -r -s -p "    再輸入一次：" pw2 < /dev/tty || return 0; echo > /dev/tty
+    [[ "$pw" == "$pw2" ]] || { warn "兩次輸入的密碼不一致"; continue; }
+    if out="$(as_app env DR_ADMIN_PASSWORD="$pw" "$VENV/bin/flask" --app wsgi create-admin \
+        --username "$name" --rename-from "$ADMIN_USER" 2>&1)"; then
+      ADMIN_USER="$name" ADMIN_PW="" ADMIN_CUSTOM=1
+      rm -f "$ETC/.admin-initial-password"
+      save_conf
+      info "已設定本機管理員 ${B}$name${N}（使用你剛輸入的密碼；隨機密碼已作廢）"
+      return 0
+    fi
+    warn "${out##*Error: }"
+    return 0
+  done
+  warn "嘗試太多次，沿用 $ADMIN_USER 與隨機密碼"
+}
+
 download_ocr_model() {
   step "下載截圖 OCR 模型"
   if [[ "${OPT_SKIP_OCR:-0}" == 1 ]]; then warn "略過（--skip-ocr-model）"; return; fi
@@ -430,7 +468,8 @@ cmd_install() {
       --admin-user) ADMIN_USER="$2"; shift 2 ;;
       --skip-ocr-model) OPT_SKIP_OCR=1; shift ;;
       --ntp) NTP="$2"; shift 2 ;;
-      -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
+      --no-prompt) OPT_NO_PROMPT=1; shift ;;
+      -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
       *) die "不認得的選項 $1（--help 查看說明）" ;;
     esac
   done
@@ -452,6 +491,7 @@ cmd_install() {
   setup_nginx
   setup_systemd
   wait_healthy
+  prompt_admin
   local scheme=https; [[ "$TLS" == none ]] && scheme=http
   echo
   echo "${G}${B}安裝完成${N}（$(( SECONDS - t0 )) 秒）"
@@ -459,6 +499,8 @@ cmd_install() {
   if [[ -n "${ADMIN_PW:-}" ]]; then
     echo "  本機緊急帳號：${B}$ADMIN_USER${N}  密碼：${B}$ADMIN_PW${N}"
     echo "  ${D}（只顯示這一次；也存在 $ETC/.admin-initial-password，記下後可刪除）${N}"
+  elif [[ "${ADMIN_CUSTOM:-0}" == 1 ]]; then
+    echo "  本機管理員帳號：${B}$ADMIN_USER${N}（密碼是你剛設定的）"
   elif [[ -f "$ETC/.admin-initial-password" ]]; then
     echo "  本機緊急帳號的初始密碼：sudo cat $ETC/.admin-initial-password（記下後可刪除）"
   fi
