@@ -23,6 +23,7 @@
 #   --workers <數量>         gunicorn worker 數（預設依 CPU 與記憶體自動決定）
 #   --admin-user <帳號>      本機緊急帳號名稱（預設 sysadmin）
 #   --skip-ocr-model         不預先下載 OCR 模型（離線安裝時用，之後再跑 install 補上）
+#   --ntp <伺服器,…>|none     優先使用的時間伺服器（預設 Google：time.google.com 等）；none = 不變更主機設定
 set -euo pipefail
 # 1b42019 以前的 backup 會把 umask 改成 077 且沒有還原，升級時由舊版 exec 過來會繼承：一律重設
 umask 022
@@ -39,6 +40,7 @@ INSTANCE="$DIR/instance"
 PORT=8000
 SERVICES=(dailyreport dailyreport-ocr dailyreport-ai dailyreport-maint)
 UPLOAD_CEILING_MB=200   # 與 app/sysconf.py 相同；實際上限在系統設定頁設定
+DEFAULT_NTP="time.google.com,time1.google.com,time2.google.com,time3.google.com,time4.google.com"
 BOOTSTRAP_URL="https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh"
 
 if [[ -t 1 ]]; then G=$'\e[32m'; Y=$'\e[33m'; R=$'\e[31m'; B=$'\e[1m'; D=$'\e[2m'; N=$'\e[0m'; else G='' Y='' R='' B='' D='' N=''; fi
@@ -53,7 +55,7 @@ flask_app() { as_app "$VENV/bin/flask" --app wsgi "$@"; }
 # ---------------------------------------------------------------- 安裝設定（記住主機名稱、TLS 等，升級時沿用）
 
 load_conf() {
-  HOST="" TLS="self-signed" CERT="" KEY="" WORKERS="" ADMIN_USER="sysadmin"
+  HOST="" TLS="self-signed" CERT="" KEY="" WORKERS="" ADMIN_USER="sysadmin" NTP="$DEFAULT_NTP"
   # shellcheck disable=SC1091
   [[ -f "$ETC/install.conf" ]] && source "$ETC/install.conf"
   return 0
@@ -69,6 +71,7 @@ CERT='$CERT'
 KEY='$KEY'
 WORKERS='$WORKERS'
 ADMIN_USER='$ADMIN_USER'
+NTP='$NTP'
 EOF
   chmod 640 "$ETC/install.conf"
 }
@@ -133,6 +136,40 @@ install_packages() {
   py=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
   python3 -c 'import sys; sys.exit(sys.version_info < (3, 12))' || die "需要 Python 3.12 以上，目前是 $py。"
   info "Python $py、nginx $(nginx -v 2>&1 | sed 's/.*\///')"
+}
+
+# 截圖日期檢查依賴正確的系統時間：優先使用指定的時間伺服器（預設 Google），原本的伺服器保留當備援
+setup_ntp() {
+  step "時間同步"
+  if [[ "$NTP" == none ]]; then info "略過（--ntp none）"; return; fi
+  local servers s
+  IFS=', ' read -r -a servers <<< "$NTP"
+  ((${#servers[@]})) || { warn "--ntp 沒有伺服器，略過"; return; }
+  if systemctl list-unit-files chrony.service >/dev/null 2>&1 && [[ -d /etc/chrony ]]; then
+    # Ubuntu 25.10 以後預設 chrony：prefer 讓這些伺服器優先，其他來源（Ubuntu NTS、DHCP）當備援
+    install -d /etc/chrony/sources.d
+    { echo "# 由 dailyreport.sh install 產生（--ntp 可變更）"
+      for s in "${servers[@]}"; do echo "server $s iburst prefer"; done; } > /etc/chrony/sources.d/dailyreport.sources
+    grep -qE '^\s*sourcedir\s+/etc/chrony/sources\.d' /etc/chrony/chrony.conf 2>/dev/null \
+      || echo "sourcedir /etc/chrony/sources.d" >> /etc/chrony/chrony.conf
+    systemctl enable -q chrony 2>/dev/null || true
+    systemctl restart chrony
+    info "chrony：優先 ${servers[*]}"
+  else
+    systemctl list-unit-files systemd-timesyncd.service >/dev/null 2>&1 \
+      || apt-get install -y -qq --no-install-recommends systemd-timesyncd >/dev/null
+    install -d /etc/systemd/timesyncd.conf.d
+    printf '# 由 dailyreport.sh install 產生（--ntp 可變更）\n[Time]\nNTP=%s\n' "${servers[*]}" \
+      > /etc/systemd/timesyncd.conf.d/dailyreport.conf
+    systemctl restart systemd-timesyncd
+    info "systemd-timesyncd：${servers[*]}"
+  fi
+  timedatectl set-ntp true 2>/dev/null || true
+  for _ in $(seq 15); do
+    [[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" == yes ]] && { info "已同步"; return; }
+    sleep 1
+  done
+  warn "時間尚未同步（可能需要再等一下）。若一直未同步，請確認防火牆允許 UDP 123 連到 ${servers[0]}，或改用公司時間伺服器：install --ntp <伺服器>"
 }
 
 create_user() {
@@ -392,7 +429,8 @@ cmd_install() {
       --workers) WORKERS="$2"; shift 2 ;;
       --admin-user) ADMIN_USER="$2"; shift 2 ;;
       --skip-ocr-model) OPT_SKIP_OCR=1; shift ;;
-      -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+      --ntp) NTP="$2"; shift 2 ;;
+      -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
       *) die "不認得的選項 $1（--help 查看說明）" ;;
     esac
   done
@@ -400,6 +438,7 @@ cmd_install() {
   local t0=$SECONDS
   preflight
   install_packages
+  setup_ntp
   create_user
   setup_venv
   setup_dirs
@@ -459,6 +498,7 @@ cmd_post_upgrade() {
   load_conf
   HOST="${HOST:-$(hostname -f 2>/dev/null || hostname)}"
   install_packages
+  setup_ntp
   setup_venv
   setup_dirs
   write_env
@@ -628,7 +668,8 @@ cmd_doctor() {
   disk=$(df -Pm "$DIR" 2>/dev/null | awk 'NR==2 {print $4}')
   item "$( ((disk >= 5000)) && echo ok || { ((disk >= 1000)) && echo warn || echo fail; })" "$g" "可用磁碟" "${disk} MB（$DIR）" "系統設定 → 備份還原：減少保留份數或改存 NAS；或擴充磁碟"
   if [[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" == yes ]]; then item ok "$g" "時間同步" "NTP 已同步"
-  else item warn "$g" "時間同步" "NTP 未同步（截圖日期檢查依賴正確的系統時間）" "sudo timedatectl set-ntp true"; fi
+  else item warn "$g" "時間同步" "NTP 未同步（截圖日期檢查依賴正確的系統時間）" \
+    "確認防火牆允許 UDP 123 對外（chronyc sources 查看）；或改用公司時間伺服器：sudo bash $DIR/scripts/dailyreport.sh install --ntp <伺服器>"; fi
 
   g="程式"
   if [[ ! -f "$DIR/wsgi.py" ]]; then item fail "$g" "安裝位置" "$DIR 沒有程式" "curl -fsSL $BOOTSTRAP_URL | sudo bash"; summary_doctor; return 1; fi

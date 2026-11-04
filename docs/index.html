@@ -347,13 +347,13 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
     <div class="two" style="margin-top:18px">
       <div class="card"><b class="zh">腳本自動完成</b><b class="en">The script does</b>
         <ul class="check zh">
-          <li>檢查作業系統、記憶體、磁碟</li><li>安裝 Python、nginx、SQLite、字型與相依套件</li>
+          <li>檢查作業系統、記憶體、磁碟</li><li>安裝 Python、nginx、SQLite、字型與相依套件</li><li>時間同步優先使用 Google 時間伺服器（<code>--ntp</code> 可改）</li>
           <li>建立系統帳號與虛擬環境、下載 OCR 模型</li><li>產生 .env 與隨機 SECRET_KEY</li>
           <li>建立本機緊急帳號，密碼只印一次</li><li>自簽 HTTPS 憑證（可換公司憑證）、HTTP 轉 HTTPS</li>
           <li>網頁、OCR、AI、維護（備份 / 健康檢查）四個服務</li><li>啟動後自動執行健檢</li>
         </ul>
         <ul class="check en">
-          <li>Checks OS, memory and disk</li><li>Installs Python, nginx, SQLite, fonts and dependencies</li>
+          <li>Checks OS, memory and disk</li><li>Installs Python, nginx, SQLite, fonts and dependencies</li><li>Prefers Google time servers for NTP (change with <code>--ntp</code>)</li>
           <li>Creates the service account and venv, downloads OCR models</li><li>Writes .env with a random SECRET_KEY</li>
           <li>Creates the break-glass admin and prints its password once</li><li>Self-signed HTTPS (or your CA certificate), HTTP → HTTPS</li>
           <li>Web, OCR, AI and maintenance (backup / health) services</li><li>Runs the doctor when done</li>

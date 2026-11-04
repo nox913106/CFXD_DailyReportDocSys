@@ -212,7 +212,7 @@ def _system_checks(out):
     rc, ntp = _run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"])
     if rc is not None:
         _item(out, g, "時間同步", "ok" if ntp == "yes" else "warn", "NTP 已同步" if ntp == "yes" else "NTP 未同步（截圖日期檢查依賴正確的系統時間）",
-              "" if ntp == "yes" else "sudo timedatectl set-ntp true")
+              "" if ntp == "yes" else "主機管理員確認防火牆允許 UDP 123 對外連到 time.google.com（安裝與升級會自動設定）")
     ver = backup.version()
     if ver:
         rc, remote = _run(["git", "-c", f"safe.directory={backup.app_dir()}", "-C", backup.app_dir(),

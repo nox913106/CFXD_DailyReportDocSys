@@ -214,7 +214,7 @@ pytest -q
 | 記憶體 | 2 GB（建議另加 swap） | 4 GB |
 | 磁碟 | 3 GB 可用空間 | 20 GB 以上（依截圖量與備份保留份數） |
 | 作業系統 | Ubuntu 24.04 / 26.04、Debian 13（Python 3.12 以上） | Ubuntu 24.04（已實測，其餘未實測） |
-| 網路 | 安裝與更新時能連到 GitHub、PyPI 與 OCR 模型下載站 | 公司有 Proxy 時先設定 `https_proxy`；私有 PyPI 鏡像用 `PIP_INDEX_URL` |
+| 網路 | 安裝與更新時能連到 GitHub、PyPI 與 OCR 模型下載站；平時需要 UDP 123 連到 `time.google.com`（或 `--ntp` 指定的時間伺服器） | 公司有 Proxy 時先設定 `https_proxy`；私有 PyPI 鏡像用 `PIP_INDEX_URL` |
 
 - **記憶體**：截圖 OCR 背景服務（`dailyreport-ocr`）約需 1 GB，是最大宗；網頁、AI、維護服務與 nginx 用量小。
   記憶體少於 4 GB 時網頁最多 2 個 worker；系統狀態頁可用記憶體低於 1 GB 會警告。
@@ -242,6 +242,7 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
 ```
 
 安裝腳本（`scripts/dailyreport.sh install`）會：檢查作業系統、記憶體與磁碟 → 安裝 Python、nginx、SQLite、字型與相依套件 →
+時間同步（優先使用 Google 時間伺服器 `time.google.com`，原本的伺服器保留當備援；`--ntp <伺服器,…>` 改用公司時間伺服器，`--ntp none` 不變更）→
 建立系統帳號 `dailyreport` 與虛擬環境 → 產生 `.env`（隨機 `SECRET_KEY`）→ 建立本機緊急帳號 `sysadmin`（密碼只在結束時印一次，
 也存在 `/etc/dailyreport/.admin-initial-password`，僅 root 可讀）→ 下載 OCR 模型 → 自簽 HTTPS 憑證（`--tls custom --cert … --key …`
 可換公司 CA 憑證，之後也可在系統設定頁上傳）→ nginx（HTTP 轉 HTTPS、安全標頭）→ 網頁、OCR、AI、維護（備份 / 健康檢查）
