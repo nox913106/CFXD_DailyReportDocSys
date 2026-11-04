@@ -145,7 +145,9 @@ setup_venv() {
   step "安裝 Python 套件（第一次約需數分鐘）"
   [[ -x "$VENV/bin/python" ]] || python3 -m venv "$VENV"
   "$VENV/bin/pip" install -q --disable-pip-version-check --upgrade pip
-  "$VENV/bin/pip" install -q --disable-pip-version-check -r "$DIR/requirements.txt"
+  # 只安裝預先編譯好的套件（wheel）：主機不需要編譯器，套件版本不支援這版 Python 時直接說明原因
+  "$VENV/bin/pip" install -q --disable-pip-version-check --only-binary=:all: -r "$DIR/requirements.txt" \
+    || die "Python 套件安裝失敗。若訊息是 \"No matching distribution\"，代表某個套件沒有支援 Python $("$VENV/bin/python" -c 'import sys; print("%d.%d" % sys.version_info[:2])') 的版本，請回報；網路問題請檢查 https_proxy / PIP_INDEX_URL 後重跑。"
   info "$("$VENV/bin/python" --version)，$("$VENV/bin/pip" list 2>/dev/null | wc -l) 個套件"
 }
 
