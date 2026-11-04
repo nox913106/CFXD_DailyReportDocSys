@@ -27,7 +27,8 @@
   <form method="post" action="{{ url_for('settings.ldap') }}" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="form-grid">
-      <label>伺服器網址<input name="ldap_url" value="{{ c.ldap_url }}" placeholder="ldaps://dc01.corp.local:636"></label>
+      <label>伺服器網址（一行一台；第一台連不上時自動換下一台）
+        <textarea name="ldap_url" rows="2" spellcheck="false" placeholder="ldaps://dc01.corp.local:636&#10;ldaps://dc02.corp.local:636">{{ c.ldap_url }}</textarea></label>
       <label>網域<input name="ad_domain" value="{{ c.ad_domain }}" placeholder="corp.local"></label>
       <label class="wide">搜尋起點（Base DN）<input name="ldap_base_dn" value="{{ c.ldap_base_dn }}" placeholder="DC=corp,DC=local"></label>
       <label class="wide">只允許這些群組登入（群組 DN，一行一個，屬於任一群組即可，含巢狀群組；空白 = 所有 AD 帳號）

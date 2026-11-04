@@ -5,7 +5,7 @@ from flask import Blueprint, current_app, flash, redirect, render_template, requ
 from flask_login import login_required, login_user, logout_user
 from ldap3 import ALL, SUBTREE, Connection, Server, Tls
 from werkzeug.security import check_password_hash
-from ldap3.core.exceptions import LDAPException
+from ldap3.core.exceptions import LDAPBindError, LDAPException
 from ldap3.utils.conv import escape_filter_chars
 
 from . import db, sysconf
@@ -23,13 +23,29 @@ def _in_group_filter(username, groups):
     return f"(&(sAMAccountName={escape_filter_chars(username)}){terms if len(groups) == 1 else f'(|{terms})'})"
 
 
-def _server(c):
+def _one_server(c, url):
     tls = None
-    if c["ldap_url"].startswith("ldaps://"):
+    if url.lower().startswith("ldaps://"):
         pem = (c.get("ldap_ca_pem") or "").strip()
         tls = Tls(validate=ssl.CERT_REQUIRED, ca_certs_data=pem or None)
-    return Server(c["ldap_url"], use_ssl=tls is not None, tls=tls, get_info=ALL,
+    return Server(url, use_ssl=tls is not None, tls=tls, get_info=ALL,
                   connect_timeout=int(c.get("ldap_timeout") or 5))
+
+
+def _connect(c, user, password, urls=None):
+    """依序連線網域控制站並 bind：連不上（逾時、拒絕連線、DNS、TLS 憑證）就換下一台。
+    帳號密碼錯誤（LDAPBindError）直接回報，不換台：每一台的答案都一樣，也避免重複嘗試造成帳號鎖定。
+    全部連不上時丟出最後一台的錯誤。"""
+    last = None
+    for url in urls or sysconf.url_list(c["ldap_url"]):
+        try:
+            return Connection(_one_server(c, url), user=user, password=password, auto_bind=True)
+        except LDAPBindError:
+            raise
+        except (LDAPException, ssl.SSLError, OSError) as e:
+            current_app.logger.warning("AD 伺服器 %s 無法使用，改試下一台：%s", url, e)
+            last = e
+    raise last or LDAPException("沒有設定 AD 伺服器")
 
 
 def _lookup(conn, c, username):
@@ -70,7 +86,7 @@ def ad_authenticate(username, password, c=None):
     if not password or not sysconf.ldap_configured(c):  # 空密碼會變成匿名 bind 而「成功」，必須擋掉
         return None
     try:
-        conn = Connection(_server(c), user=f"{username}@{c['ad_domain']}", password=password, auto_bind=True)
+        conn = _connect(c, f"{username}@{c['ad_domain']}", password)
     except (LDAPException, ssl.SSLError, OSError) as e:
         current_app.logger.info("AD 登入失敗 %s: %s", username, e)
         return None
@@ -96,34 +112,45 @@ def ldap_test(c, username="", password=""):
     from urllib.parse import urlparse
 
     steps = []
-    if not c["ldap_url"] or not c["ad_domain"] or not c["ldap_base_dn"]:
+    urls = sysconf.url_list(c["ldap_url"])
+    if not urls or not c["ad_domain"] or not c["ldap_base_dn"]:
         return [(False, "設定", "伺服器網址、網域、搜尋起點（Base DN）都必須填寫")]
-    u = urlparse(c["ldap_url"])
-    if u.scheme not in ("ldap", "ldaps") or not u.hostname:
-        return [(False, "設定", "伺服器網址格式應為 ldaps://主機:636 或 ldap://主機:389")]
-    port = u.port or (636 if u.scheme == "ldaps" else 389)
     timeout = int(c.get("ldap_timeout") or 5)
-    try:
-        socket.create_connection((u.hostname, port), timeout=timeout).close()
-        steps.append((True, "網路連線", f"{u.hostname}:{port} 可連線"))
-    except OSError as e:
-        steps.append((False, "網路連線", f"{u.hostname}:{port} 無法連線（{e}）。確認 DNS、防火牆與網域控制站"))
-        return steps
-    if u.scheme == "ldap":
-        steps.append((None, "加密", "使用 ldap://（未加密），密碼會以明文送到網域控制站，建議改用 ldaps://"))
-    server = _server(c)
-    if not username:
+    ok_urls = []
+    for i, url in enumerate(urls):
+        u = urlparse(url)
+        if u.scheme not in ("ldap", "ldaps") or not u.hostname:
+            return [(False, "設定", f"{url}：格式應為 ldaps://主機:636 或 ldap://主機:389")]
+        port = u.port or (636 if u.scheme == "ldaps" else 389)
+        label = "網路連線" if len(urls) == 1 else f"網路連線（第 {i + 1} 台）"
         try:
-            conn = Connection(server, auto_bind=True)  # 匿名 bind：只驗證連線與 TLS
+            socket.create_connection((u.hostname, port), timeout=timeout).close()
+        except OSError as e:
+            steps.append((False, label, f"{u.hostname}:{port} 無法連線（{e}）。確認 DNS、防火牆與網域控制站"))
+            continue
+        try:
+            conn = Connection(_one_server(c, url), auto_bind=True)  # 匿名 bind：只驗證連線與 TLS
             conn.unbind()
-            steps.append((True, "LDAP 連線", "TLS 憑證驗證通過" if u.scheme == "ldaps" else "LDAP 服務回應正常"))
         except (LDAPException, ssl.SSLError, OSError) as e:
-            steps.append((False, "LDAP 連線", _tls_hint(e)))
+            steps.append((False, label, f"{u.hostname}:{port} 可連線，但 LDAP 失敗：{_tls_hint(e)}"))
+            continue
+        ok_urls.append(url)
+        steps.append((True, label, f"{u.hostname}:{port} 可連線，" + ("TLS 憑證驗證通過" if u.scheme == "ldaps"
+                                                                    else "LDAP 服務回應正常")))
+    if not ok_urls:
+        return steps
+    if len(urls) > 1:
+        first = urlparse(ok_urls[0]).netloc
+        steps.append((True if len(ok_urls) == len(urls) else None, "自動切換",
+                      f"{len(urls)} 台中 {len(ok_urls)} 台可用；登入時依序嘗試，目前會使用 {first}"))
+    if any(urlparse(x).scheme == "ldap" for x in ok_urls):
+        steps.append((None, "加密", "使用 ldap://（未加密），密碼會以明文送到網域控制站，建議改用 ldaps://"))
+    if not username:
         steps.append((None, "帳號驗證", "填入測試帳號與密碼可以進一步確認登入與群組設定"))
         return steps
     username = username.split("\\")[-1].split("@")[0].lower()
     try:
-        conn = Connection(server, user=f"{username}@{c['ad_domain']}", password=password, auto_bind=True)
+        conn = _connect(c, f"{username}@{c['ad_domain']}", password, ok_urls)
         steps.append((True, "帳號驗證", f"{username}@{c['ad_domain']} 登入成功"))
     except (LDAPException, ssl.SSLError, OSError) as e:
         steps.append((False, "帳號驗證", _tls_hint(e)))

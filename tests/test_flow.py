@@ -1046,8 +1046,8 @@ def test_ldap_multiple_groups(app, monkeypatch):
         displayName = mail = None
 
     class FakeConn:
-        def __init__(self, server, user, password, auto_bind):
-            self.user, self.entries = user.split("@")[0], []
+        def __init__(self, server, user=None, password=None, auto_bind=False):
+            self.user, self.entries = (user or "").split("@")[0], []
 
         def search(self, base, flt, scope, attributes=None):
             groups = {g.lower() for g in re.findall(r"1941:=([^)]*)\)", flt)}
@@ -1080,6 +1080,50 @@ def test_ldap_multiple_groups(app, monkeypatch):
         assert any("hsadmin" in d and "檔案管理員" in d for _, s, d in steps if s == "檔案管理員群組"), steps
 
 
+def test_ldap_failover(app, monkeypatch):
+    """多台網域控制站：連不上（含 TLS 錯誤）換下一台；帳號密碼錯誤不換台。"""
+    from ldap3.core.exceptions import LDAPBindError, LDAPSocketOpenError
+
+    from app import auth, sysconf
+
+    assert sysconf.url_list(" ldaps://a:636\r\nldaps://b:636 ; ldaps://A:636,ldap://c") == ["ldaps://a:636", "ldaps://b:636", "ldap://c"]
+    tried = []
+
+    class Entry:
+        displayName = mail = None
+
+    class FakeConn:
+        def __init__(self, server, user=None, password=None, auto_bind=False):
+            tried.append(server.host)
+            if server.host in ("dc01", "dc02"):
+                raise LDAPSocketOpenError("socket ssl wrapping error: certificate verify failed")
+            if password == "wrong":
+                raise LDAPBindError("invalidCredentials 52e")
+            self.entries = []
+
+        def search(self, *a, **k):
+            self.entries = [Entry()]
+
+        def unbind(self):
+            pass
+
+    monkeypatch.setattr(auth, "Connection", FakeConn)
+    with app.app_context():
+        for k, v in {"ldap_url": "ldaps://dc01:636\nldaps://dc02:636\nldaps://dc03:636", "ad_domain": "ad.tw",
+                     "ldap_base_dn": "DC=ad,DC=tw", "ldap_required_group": "", "ldap_approver_group": ""}.items():
+            sysconf.put(k, v)
+        assert auth.ad_authenticate("bob", "pw") == ("bob", None, False)
+        assert tried == ["dc01", "dc02", "dc03"]
+        tried.clear()
+        assert auth.ad_authenticate("bob", "wrong") is None
+        assert tried == ["dc01", "dc02", "dc03"]  # 前兩台連不上才換；第三台回答密碼錯誤就停
+        sysconf.put("ldap_url", "ldaps://dc03:636\nldaps://dc01:636")
+        tried.clear()
+        assert auth.ad_authenticate("bob", "wrong") is None and tried == ["dc03"]  # 密碼錯誤不會再試其他台
+        sysconf.put("ldap_url", "ldaps://dc01:636\nldaps://dc02:636")
+        assert auth.ad_authenticate("bob", "pw") is None  # 全部連不上
+
+
 def test_admin_ldap_and_local_accounts(app):
     """AD 設定在設定頁（.env 只是舊版沿用的預設值）、測試不會儲存；本機緊急帳號在帳號管理頁新增 / 重設 / 停用。"""
     from app import db, sysconf
@@ -1102,6 +1146,7 @@ def test_admin_ldap_and_local_accounts(app):
     with app.app_context():
         assert sysconf.get("ldap_url") == "ldaps://old.example.test:636"  # 測試不儲存
     assert "格式" in b.post("/admin/settings/ldap", {**form, "ldap_url": "http://x"})
+    assert "「http://y」格式" in b.post("/admin/settings/ldap", {**form, "ldap_url": "ldaps://a:636\nhttp://y"})
     assert "CA 憑證不是 PEM" in b.post("/admin/settings/ldap", {**form, "ldap_ca_pem": "garbage"})
     assert "不是群組 DN" in b.post("/admin/settings/ldap", {**form, "ldap_approver_group": "CN=MIS,DC=corp,DC=local\nMIS"})
     groups = "CN=MIS,OU=MIS,DC=corp,DC=local\r\n\r\nCN=ITI,OU=ITI,DC=corp,DC=local\r\nCN=MIS,OU=MIS,DC=corp,DC=local"

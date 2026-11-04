@@ -51,8 +51,8 @@ def run(system=False):
         _item(out, g, "AD 設定", "warn", "尚未設定 AD 伺服器，AD 帳號無法登入（本機緊急帳號仍可登入）",
               "用本機緊急帳號登入 → 系統設定 → AD 驗證")
     elif mode == "ldap":
-        _item(out, g, "AD 設定", "ok", f"{lc['ldap_url']}（網域 {lc['ad_domain']}）")
-        _ldap_reach(out, g, lc["ldap_url"])
+        _item(out, g, "AD 設定", "ok", f"{'、'.join(lc['ldap_urls'])}（網域 {lc['ad_domain']}）")
+        _ldap_reach(out, g, lc["ldap_urls"])
     if cfg.get("SESSION_COOKIE_SECURE"):
         _item(out, g, "Cookie", "ok", "只經 HTTPS 傳送")
     else:
@@ -252,17 +252,27 @@ def _system_checks(out):
               "" if days > 30 else "系統設定 → HTTPS 憑證：上傳新的憑證")
 
 
-def _ldap_reach(out, g, url):
+def _ldap_reach(out, g, urls):
+    """每一台網域控制站都檢查；有一台可用就能登入（自動切換），全部連不上才算失敗。"""
     import socket
     from urllib.parse import urlparse
 
-    u = urlparse(url)
-    port = u.port or (636 if u.scheme == "ldaps" else 389)
-    try:
-        socket.create_connection((u.hostname, port), timeout=3).close()
-        _item(out, g, "AD 連線", "ok", f"{u.hostname}:{port} 可連線")
-    except OSError as e:
-        _item(out, g, "AD 連線", "fail", f"{u.hostname}:{port} 無法連線（{e}）", "確認 DNS、防火牆與網域控制站")
+    ok, bad = [], []
+    for url in urls:
+        u = urlparse(url)
+        port = u.port or (636 if u.scheme == "ldaps" else 389)
+        try:
+            socket.create_connection((u.hostname, port), timeout=3).close()
+            ok.append(f"{u.hostname}:{port}")
+        except OSError as e:
+            bad.append(f"{u.hostname}:{port}（{e}）")
+    if not bad:
+        _item(out, g, "AD 連線", "ok", "、".join(ok) + " 可連線")
+    elif ok:
+        _item(out, g, "AD 連線", "warn", f"{'、'.join(ok)} 可連線；{'、'.join(bad)} 無法連線（登入會自動改用可連線的）",
+              "確認無法連線那台網域控制站的 DNS、防火牆與服務")
+    else:
+        _item(out, g, "AD 連線", "fail", "、".join(bad) + " 無法連線", "確認 DNS、防火牆與網域控制站")
 
 
 def _fonts():

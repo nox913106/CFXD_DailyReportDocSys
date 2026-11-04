@@ -115,9 +115,19 @@ def many(keys):
 def ldap_config():
     c = many(LDAP_KEYS)
     c["approver_users_set"] = {v.strip().lower() for v in (c["approver_users"] or "").split(",") if v.strip()}
+    c["ldap_urls"] = url_list(c["ldap_url"])
     c["required_groups"] = group_list(c["ldap_required_group"])
     c["approver_groups"] = group_list(c["ldap_approver_group"])
     return c
+
+
+def url_list(value):
+    """AD 伺服器清單：一行一台（也接受空白、逗號、; 分隔），依序嘗試；去除重複。"""
+    out = []
+    for u in re.split(r"[\s,;]+", value or ""):
+        if u and u.lower() not in {x.lower() for x in out}:
+            out.append(u)
+    return out
 
 
 def group_list(value):

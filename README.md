@@ -271,7 +271,7 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
 
 | 欄位 | 說明 | 範例 |
 |---|---|---|
-| 伺服器網址 | 網域控制站，建議用 LDAPS | `ldaps://dc01.corp.local:636` |
+| 伺服器網址 | 網域控制站，建議用 LDAPS；可填多台（一行一台），連不上（逾時、拒絕連線、DNS、TLS 憑證錯誤）就自動換下一台，帳號密碼錯誤不換台 | `ldaps://dc01.corp.local:636` |
 | 網域 | 組成 `user@domain` 登入 | `corp.local` |
 | 搜尋起點（Base DN） | 搜尋使用者的根 DN | `DC=corp,DC=local` |
 | 允許登入的群組 | 選填，可填多個（一行一個），屬於任一群組（含巢狀）即可登入 | `CN=DailyReportUsers,OU=Groups,DC=corp,DC=local` |

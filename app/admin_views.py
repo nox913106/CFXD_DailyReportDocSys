@@ -81,6 +81,7 @@ def _ldap_from_form():
     f = request.form
     c = {k: f.get(k, "").strip() for k in LDAP_FORM}
     c["ad_domain"] = c["ad_domain"].lower()
+    c["ldap_url"] = "\n".join(sysconf.url_list(f.get("ldap_url", "")))
     for k in ("ldap_required_group", "ldap_approver_group"):
         c[k] = "\n".join(sysconf.group_list(f.get(k, "")))
     c["approver_users"] = ",".join(sorted({u.strip().lower() for u in c["approver_users"].split(",") if u.strip()}))
@@ -98,8 +99,9 @@ def _ldap_from_form():
 
 
 def _check_ldap(c):
-    if c["ldap_url"] and not re.match(r"^ldaps?://[^/\s]+$", c["ldap_url"]):
-        return "伺服器網址格式應為 ldaps://dc01.corp.local:636（可用空白分隔多台時請只填一台主要的）"
+    for url in sysconf.url_list(c["ldap_url"]):
+        if not re.match(r"^ldaps?://[^/\s]+$", url, re.I):
+            return f"伺服器網址「{url}」格式應為 ldaps://dc01.corp.local:636（多台時一行一台）"
     if c["ldap_ca_pem"]:
         from cryptography import x509
 
