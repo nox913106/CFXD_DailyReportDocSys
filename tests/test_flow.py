@@ -237,6 +237,10 @@ def test_full_flow(app):
     alice.get(f"/reports/{rid}/checklist")
     html = alice.get(f"/reports/{rid}")
     assert f"/reports/{rid}/pdf" in html
+    # 截圖還在辨識：不能送審（審核者要看到辨識結果）
+    html = alice.post(f"/reports/{rid}/submit")
+    assert "正在辨識系統時間" in html and "已送出審核" not in html
+    finish_ocr(app, rid)
     html = alice.post(f"/reports/{rid}/submit")
     assert "已送出審核" in html
     with app.app_context():
@@ -336,6 +340,17 @@ def set_role(app, username, role):
         u.set_role(role)
         db.session.commit()
         return u.id
+
+
+def finish_ocr(app, rid):
+    """測試沒有 OCR 背景服務：把截圖標成已辨識。"""
+    from app import db
+    from app.models import ReportImage
+
+    with app.app_context():
+        for img in ReportImage.query.filter_by(report_id=rid, kind="screenshot"):
+            img.ocr_status, img.ocr_result = "done", '{"status": "no_clock"}'
+        db.session.commit()
 
 
 def submitted_report(app, alice, day):
@@ -1496,3 +1511,239 @@ def test_new_report_copy_option(app):
         rep = db.session.get(Report, r3)
         assert rep.inspection_summary != "Router reboot" and not rep.images
         assert db.session.query(ChecklistResult).filter_by(report_id=r3, result="W").count() == 0
+
+
+class FakeGraph:
+    """本機假的 Microsoft Graph：權杖、網站、文件庫、分段上傳、分享連結、寄信；可指定某個步驟失敗一次。"""
+
+    def __init__(self):
+        import http.server
+        import json
+        import threading
+
+        g = self
+        self.uploads, self.mails, self.links, self.fail = {}, [], [], set()
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _send(self, code, body=None):
+                raw = json.dumps(body).encode() if body is not None else b""
+                self.send_response(code)
+                if body is not None:
+                    self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def _body(self):
+                return self.rfile.read(int(self.headers.get("Content-Length") or 0))
+
+            def do_POST(self):
+                body = self._body()
+                p = self.path
+                if p.endswith("/oauth2/v2.0/token"):
+                    assert b"client_secret=s3cret" in body
+                    return self._send(200, {"access_token": "tok", "expires_in": 3600})
+                assert self.headers["Authorization"] == "Bearer tok"
+                if p.endswith(":/createUploadSession"):
+                    g.last_path = p
+                    return self._send(200, {"uploadUrl": f"http://127.0.0.1:{g.port}/upload/1"})
+                if p.endswith("/createLink"):
+                    if "link" in g.fail:
+                        g.fail.discard("link")
+                        return self._send(403, {"error": {"message": "Sharing is disabled for this site"}})
+                    g.links.append(json.loads(body))
+                    return self._send(200, {"link": {"webUrl": "https://contoso.sharepoint.com/:b:/s/CFXD/share123"}})
+                if p.endswith("/sendMail"):
+                    if "mail" in g.fail:
+                        g.fail.discard("mail")
+                        return self._send(500, {"error": {"message": "mailbox unavailable"}})
+                    g.mails.append((p, json.loads(body)))
+                    return self._send(202)
+                self._send(404, {"error": {"message": "no route " + p}})
+
+            def do_GET(self):
+                p = self.path
+                if p.startswith("/v1.0/sites/contoso.sharepoint.com:/sites/CFXD"):
+                    return self._send(200, {"id": "site1"})
+                if p == "/v1.0/sites/site1/drive":
+                    return self._send(200, {"id": "drive1", "name": "Documents"})
+                self._send(404, {"error": {"message": "no route " + p}})
+
+            def do_PUT(self):
+                assert "Authorization" not in self.headers  # uploadUrl 已含授權
+                data = self._body()
+                start, rest = self.headers["Content-Range"].split(" ")[1].split("-")
+                end, total = rest.split("/")
+                buf = g.uploads.setdefault(g.last_path, bytearray())
+                assert int(start) == len(buf)
+                buf.extend(data)
+                if int(end) + 1 < int(total):
+                    return self._send(202, {"nextExpectedRanges": [f"{int(end) + 1}-"]})
+                self._send(201, {"id": "item1", "size": len(buf), "webUrl": "https://contoso.sharepoint.com/x.pdf"})
+
+        self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.port = self.srv.server_address[1]
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.srv.shutdown()
+
+
+def _approved_report(app, alice, boss, day):
+    rid = submitted_report(app, alice, day)
+    boss.get(f"/reports/{rid}")
+    assert "已核准" in boss.post(f"/reports/{rid}/review", {"action": "approve"})
+    return rid
+
+
+def test_close_and_delivery(app, monkeypatch):
+    """結案 → 鎖檔 1 分鐘 → 正式 PDF（MD5）→ 上傳 SharePoint → 連結 → 寄信；失敗中止、重試從失敗步驟繼續。"""
+    import hashlib
+    from datetime import datetime, timedelta
+
+    from app import db, delivery, graph, maint, sysconf
+    from app.models import Delivery, Report
+
+    fake = FakeGraph()
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+    app.config["GRAPH_BASE"] = f"http://127.0.0.1:{fake.port}/v1.0"
+    app.config["GRAPH_LOGIN_BASE"] = f"http://127.0.0.1:{fake.port}"
+    graph._tokens.clear()
+    pdf_bytes = b"%PDF-1.7 final " + b"x" * (graph.CHUNK + 1234)  # 超過一個分段
+    calls = []
+
+    def fake_render(report, preview=False):
+        calls.append(preview)
+        return pdf_bytes
+
+    monkeypatch.setattr("app.pdf.report_pdf.render_pdf", fake_render)
+
+    alice, boss, carol, vic = Browser(app), Browser(app), Browser(app), Browser(app)
+    alice.login("alice")
+    boss.login("boss")
+    carol.login("carol")
+    vic.login("vic")
+    set_role(app, "boss", "file_manager")
+    set_role(app, "carol", "second_line")
+    set_role(app, "vic", "viewer")
+    rid = _approved_report(app, alice, boss, "2026-11-04")
+
+    # 一線不能結案；二線可以；只能結案一次
+    html = alice.get(f"/reports/{rid}")
+    assert "結案</button>" not in html and "流程" in html and "審核通過" in html
+    assert "只有二線管理員以上可以結案" in alice.post(f"/reports/{rid}/close")
+    html = carol.post(f"/reports/{rid}/close")
+    assert "已結案並鎖檔" in html and "鎖檔中" in html
+    assert "只有已核准的日報可以結案" in boss.post(f"/reports/{rid}/close")
+    # 結案後不能再改、不能作廢 / 刪除；二線不能取消結案，檔案管理員可以（發送開始前）
+    assert "取消結案" not in carol.get(f"/reports/{rid}")
+    assert "已結案的日報不能作廢" in boss.post(f"/reports/{rid}/void", {"reason": "x"})
+    html = boss.post(f"/reports/{rid}/close/cancel", {"reason": "排版要再確認"})
+    assert "已取消結案" in html
+    with app.app_context():
+        assert db.session.get(Report, rid).status == "approved" and not Delivery.query.count()
+    carol.post(f"/reports/{rid}/close")
+
+    with app.app_context():
+        for k, v in {"delivery_enabled": True, "graph_tenant_id": "tenant", "graph_client_id": "client",
+                     "sp_site_url": "https://contoso.sharepoint.com/sites/CFXD", "sp_folder": "Daily/{yyyy}/{mm}",
+                     "mail_sender": "dr@contoso.com", "mail_to": "customer@client.com, pm@client.com",
+                     "mail_cc": "boss@contoso.com"}.items():
+            sysconf.put(k, v)
+        graph.set_secret("s3cret")
+        db.session.commit()
+        fake.fail = {"mail"}
+        # 鎖檔 1 分鐘內不執行
+        assert not delivery.tick(datetime.now() + timedelta(seconds=30))
+        maint.tick(datetime.now() + timedelta(seconds=61))
+        d = Delivery.query.one()
+        st = d.step_map()
+        assert d.state == "error" and [st[k]["status"] for k in ("pdf", "upload", "link", "mail")] == ["done"] * 3 + ["error"]
+        assert "mailbox unavailable" in st["mail"]["message"]
+        assert d.pdf_md5 == hashlib.md5(pdf_bytes).hexdigest() and calls == [False]
+        assert bytes(fake.uploads[fake.last_path]) == pdf_bytes
+        assert "/root:/Daily/2026/11/CFXD-SCA-RLY-DPR-000897_0_IFI_2026-11-04_CFXD_SLA_Daily_Work_Report.pdf:" in fake.last_path
+        assert fake.links == [{"type": "view", "scope": "organization"}]
+
+    # 中止時首頁與日報頁都看得到；一線不能重試，二線可以，從寄信那一步繼續
+    assert "發送中止" in carol.get("/") and "mailbox unavailable" in carol.get(f"/reports/{rid}")
+    assert "只有二線管理員以上可以重試" in alice.post(f"/reports/{rid}/delivery/retry")
+    assert "已排入重試" in carol.post(f"/reports/{rid}/delivery/retry")
+    with app.app_context():
+        maint.tick()
+        d = Delivery.query.one()
+        assert d.state == "done" and calls == [False]  # 正式 PDF 沒有重新產生
+        assert len(fake.uploads) == 1 and len(fake.mails) == 1
+        path, mail = fake.mails[0]
+        msg = mail["message"]
+        assert path.endswith("/users/dr%40contoso.com/sendMail")
+        assert [r["emailAddress"]["address"] for r in msg["toRecipients"]] == ["customer@client.com", "pm@client.com"]
+        assert msg["subject"] == "CFXD-SCA-RLY-DPR-000897 CFXD SLA Daily Work Report 2026-11-04"
+        assert "share123" in msg["body"]["content"] and d.pdf_md5 in msg["body"]["content"]
+
+    html = carol.get(f"/reports/{rid}")
+    assert html.count("☑") == 8 and "尚未上傳截圖" in html and "share123" in html and d.pdf_md5 in html
+    # 正式 PDF 下載與預覽是同一份檔案
+    r = carol.c.get(f"/reports/{rid}/final.pdf?download=1")
+    assert r.data == pdf_bytes and "attachment" in r.headers["Content-Disposition"]
+    assert carol.c.get(f"/reports/{rid}/pdf").data == pdf_bytes
+
+    # 檢視者：只能看正式文件頁、下載已結案 PDF
+    html = vic.get("/")
+    assert "正式文件" in html and d.pdf_md5 in html
+    assert vic.c.get(f"/reports/{rid}/final.pdf").data == pdf_bytes
+    for url in (f"/reports/{rid}", f"/reports/{rid}/pdf", f"/reports/{rid}/basic", "/delegations", "/admin/users"):
+        assert vic.c.get(url).status_code == 403, url
+    vic.post("/reports/new", {"report_date": "2026-11-09"}, status=403)
+    fake.close()
+
+
+def test_preview_watermark_and_reminder(app, monkeypatch):
+    """預覽版每頁有浮水印、正式版沒有；每日提醒在期限前寄給二線人員，一天一次。"""
+    from datetime import datetime
+
+    from app import db, delivery, sysconf
+    from app.models import User
+    from app.pdf import report_pdf
+
+    pages = []
+
+    class Probe(report_pdf._Canvas):
+        def drawCentredString(self, x, y, text, *a, **k):
+            pages.append(text)
+            return super().drawCentredString(x, y, text, *a, **k)
+
+    import io
+
+    for wm in (report_pdf.PREVIEW_MARK, None):
+        pages.clear()
+        cv = Probe(io.BytesIO(), pagesize=report_pdf.PAGE)
+        cv.watermark = wm
+        cv.showPage()
+        cv.showPage()
+        assert pages == ([wm, wm] if wm else [])
+
+    sent = []
+    monkeypatch.setattr("app.graph.send_mail", lambda c, to, subject, html, cc=(): sent.append((to, subject)))
+    carol = Browser(app)
+    carol.login("carol")
+    set_role(app, "carol", "second_line")
+    with app.app_context():
+        User.query.filter_by(username="carol").one().email = "carol@contoso.com"
+        for k, v in {"graph_tenant_id": "t", "graph_client_id": "c", "mail_sender": "dr@contoso.com",
+                     "reminder_extra": "duty@contoso.com"}.items():
+            sysconf.put(k, v)
+        from app import graph
+
+        graph.set_secret("s")
+        db.session.commit()
+        assert not delivery.reminder_due(datetime(2026, 11, 7, 12, 29))
+        assert delivery.reminder_due(datetime(2026, 11, 7, 12, 30))  # 週六也提醒
+        res = delivery.send_reminder(datetime(2026, 11, 7, 12, 30))
+        assert "已提醒 carol@contoso.com, duty@contoso.com（尚未建立）" in res
+        assert sent and "期限 13:00" in sent[0][1]
+        assert not delivery.reminder_due(datetime(2026, 11, 7, 12, 45))  # 一天一次

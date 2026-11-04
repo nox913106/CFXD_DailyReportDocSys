@@ -57,19 +57,41 @@ def _image_path(report, img):
 
 def cache_key(report):
     imgs = ",".join(f"{i.id}:{i.order}:{i.section_id}" for i in report.images)
-    raw = f"{report.id}|{report.updated_at}|{report.status}|{report.approver_name}|{imgs}|v1"
+    raw = f"{report.id}|{report.updated_at}|{report.status}|{report.approver_name}|{imgs}|preview-v2"
     return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
 
+PREVIEW_MARK = "PREVIEW - NOT THE FINAL DOCUMENT"
+
+
+class _Canvas(canvas.Canvas):
+    """預覽版每一頁加上浮水印；正式 PDF（結案後產生）不加。"""
+
+    watermark = None
+
+    def showPage(self):
+        if self.watermark:
+            w, h = self._pagesize
+            self.saveState()
+            self.setFillColorRGB(0.85, 0.1, 0.1)
+            self.setFillAlpha(0.16)
+            self.setFont("Helvetica-Bold", 34)
+            self.translate(w / 2, h / 2)
+            self.rotate(52)
+            self.drawCentredString(0, 0, self.watermark)
+            self.restoreState()
+        super().showPage()
+
+
 def build_pdf(report):
-    """回傳 PDF bytes（有快取）。"""
+    """預覽用 PDF bytes（有快取，每頁有浮水印）。正式 PDF 只在結案後由發送流程產生一次並存檔。"""
     cache_dir = os.path.join(current_app.instance_path, "pdf_cache")
     os.makedirs(cache_dir, exist_ok=True)
     path = os.path.join(cache_dir, f"{report.id}_{cache_key(report)}.pdf")
     if os.path.exists(path):
         with open(path, "rb") as f:
             return f.read()
-    data = render_pdf(report)
+    data = render_pdf(report, preview=True)
     for old in os.listdir(cache_dir):
         if old.startswith(f"{report.id}_"):
             os.remove(os.path.join(cache_dir, old))
@@ -78,10 +100,11 @@ def build_pdf(report):
     return data
 
 
-def render_pdf(report):
+def render_pdf(report, preview=False):
     fonts.configure(current_app.config.get("FONT_DIR"))
     buf = io.BytesIO()
-    cv = canvas.Canvas(buf, pagesize=PAGE)
+    cv = _Canvas(buf, pagesize=PAGE)
+    cv.watermark = PREVIEW_MARK if preview else None
     cv.setTitle(f"{report.doc_no} CFXD SLA Daily Work Report")
     cv.setAuthor(report.author.name if report.author else "")
     logo = os.path.join(ASSETS, "logo_word.png")

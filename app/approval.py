@@ -5,6 +5,10 @@
   檔案管理員 file_manager  指派、審核、退件、作廢、送審、新增、編輯、刪除
   二線管理員 second_line   送審、新增、編輯、刪除；經檔案管理員授權後可「代」審核 / 指派 / 退件 / 作廢
   一線使用者 first_line    送審、新增、編輯、申請作廢
+  檢視者     viewer        只能下載已結案日報的正式 PDF
+
+流程：草稿 → 送審 → 核准（待結案，線上預覽確認排版）→ 結案（鎖檔，1 分鐘後產生正式 PDF、上傳 SharePoint、寄給客戶）。
+二線以上可以結案、在結案前退回修正、在發送失敗時重試；結案後只有檔案管理員能在發送開始前取消結案。
 
 代理（二線代檔案管理員）時，文件上的 Approval / Document Approved 仍顯示檔案管理員本人。
 """
@@ -13,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from . import db
-from .models import ApprovalDelegation, Report, User
+from .models import REVIEWER_ROLES, ApprovalDelegation, Report, User
 
 
 @dataclass
@@ -89,6 +93,8 @@ def can_edit(user, report):
 
 
 def can_delete(user, report):
+    if report.status == "closed":
+        return Decision(False, None, "已結案的日報不能刪除。")
     return Decision(user.role in ("admin", "file_manager", "second_line"))
 
 
@@ -125,15 +131,48 @@ def can_override_doc_no(user, report):
     return Decision(user.role in ("admin", "file_manager", "second_line"), None, "只有二線管理員以上可以變更文件編號。")
 
 
+def can_close(user, report):
+    """結案：核准後、線上確認排版沒有問題，二線以上執行。"""
+    if report.status != "approved":
+        return Decision(False, None, "只有已核准的日報可以結案。")
+    return Decision(user.role in REVIEWER_ROLES, None, "只有二線管理員以上可以結案。")
+
+
+def can_return(user, report):
+    """結案前發現內容或排版有問題：退回給撰寫人修正，修正後重新送審。"""
+    if report.status != "approved":
+        return Decision(False, None, "只有已核准、尚未結案的日報可以退回修正。")
+    return Decision(user.role in REVIEWER_ROLES, None, "只有二線管理員以上可以退回修正。")
+
+
+def can_cancel_close(user, report):
+    """結案後只有檔案管理員能變動，而且只能在發送開始前（鎖檔的 1 分鐘內）取消。"""
+    d = report.delivery
+    if report.status != "closed" or not d:
+        return Decision(False, None, "此日報尚未結案。")
+    if d.state != "scheduled":
+        return Decision(False, None, "發送流程已經開始，不能取消結案。")
+    return Decision(user.role in ("admin", "file_manager"), None, "結案後只有檔案管理員可以取消。")
+
+
+def can_retry_delivery(user, report):
+    d = report.delivery
+    if report.status != "closed" or not d or d.state != "error":
+        return Decision(False, None, "發送流程沒有中止，不需要重試。")
+    return Decision(user.role in REVIEWER_ROLES, None, "只有二線管理員以上可以重試。")
+
+
 def can_void(user, report):
     if report.status == "voided":
         return Decision(False, None, "此日報已作廢。")
+    if report.status == "closed":
+        return Decision(False, None, "已結案的日報不能作廢。")
     return _manager_action(user, report, False, "作廢")
 
 
 def can_request_void(user, report):
-    if report.status == "voided":
-        return Decision(False, None, "此日報已作廢。")
+    if report.status in ("voided", "closed"):
+        return Decision(False, None, "此日報已作廢或已結案。")
     if report.void_requested_at:
         return Decision(False, None, "已有待處理的作廢申請。")
     return Decision(user.role in ("admin", "first_line"), None, "只有一線使用者需要申請作廢。")

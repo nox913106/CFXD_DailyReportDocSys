@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}發送與提醒 - CFXD{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>
+{% include "_admin_nav.html" %}
+
+{% if steps is not none %}
+<section class="card">
+  <h3>測試結果</h3>
+  <table class="list">
+    {% for ok, name, detail in steps %}
+    <tr><td class="nw">{% if ok %}<span class="sev sev-ok">通過</span>{% elif ok is none %}<span class="sev sev-info">提示</span>{% else %}<span class="sev sev-fail">失敗</span>{% endif %}</td>
+      <td class="nw">{{ name }}</td><td>{{ detail }}</td></tr>
+    {% endfor %}
+  </table>
+  <p class="hint">測試用的是下面表單目前的內容，<strong>還沒有儲存</strong>。確認無誤後按「儲存」。</p>
+</section>
+{% endif %}
+
+<form method="post" action="{{ url_for('settings.delivery') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <section class="card">
+    <h3>結案後自動發送</h3>
+    <p class="hint">結案後 1 分鐘：產生正式 PDF → 上傳 SharePoint → 取得檔案連結 → 寄給客戶。任何一步失敗就中止，
+      日報頁最下方的流程會顯示原因，二線以上按「重試」繼續。關閉時結案只產生正式 PDF。</p>
+    <label class="inline"><input type="checkbox" name="delivery_enabled" value="1" {{ 'checked' if c.delivery_enabled }}>
+      啟用自動上傳 SharePoint 與寄信</label>
+    {% if c.delivery_enabled and missing %}<div class="flash error">設定不完整：{{ missing|join('、') }}。結案後的發送會中止。</div>{% endif %}
+
+    <h4>Microsoft 365 應用程式（Entra ID）</h4>
+    <p class="hint">由公司 M365 管理員註冊應用程式並授予「應用程式」權限：SharePoint 用 <code>Sites.Selected</code>（只授權下面的網站），
+      寄信用 <code>Mail.Send</code>（建議以 Application Access Policy 限制只能用寄件信箱）。主機需要能連到
+      <code>login.microsoftonline.com</code> 與 <code>graph.microsoft.com</code>。</p>
+    <div class="form-grid">
+      <label>租用戶 ID（Tenant ID）<input name="graph_tenant_id" value="{{ c.graph_tenant_id }}" placeholder="xxxxxxxx-xxxx-…" spellcheck="false"></label>
+      <label>應用程式 ID（Client ID）<input name="graph_client_id" value="{{ c.graph_client_id }}" spellcheck="false"></label>
+      <label>用戶端密碼（Client Secret）
+        <input type="password" name="graph_client_secret" autocomplete="new-password"
+               placeholder="{{ ('已設定（留空 = 不變更）' if secret_ok else '無法解密，請重新輸入') if has_secret else '尚未設定' }}"></label>
+      {% if has_secret %}<label class="inline"><input type="checkbox" name="clear_secret" value="1"> 清除已儲存的密碼</label>{% endif %}
+    </div>
+
+    <h4>SharePoint 位置</h4>
+    <div class="form-grid">
+      <label class="wide">網站網址<input name="sp_site_url" value="{{ c.sp_site_url }}" placeholder="https://contoso.sharepoint.com/sites/CFXD" spellcheck="false"></label>
+      <label>文件庫（空白 = 網站預設文件庫）<input name="sp_library" value="{{ c.sp_library }}" placeholder="Documents"></label>
+      <label>資料夾（{yyyy} {mm} {dd} 代入日報日期）<input name="sp_folder" value="{{ c.sp_folder }}"></label>
+      <label>分享連結
+        <select name="sp_link_scope">
+          {% for k, label in scopes.items() %}<option value="{{ k }}" {{ 'selected' if c.sp_link_scope == k }}>{{ label }}</option>{% endfor %}
+        </select></label>
+      <label>連結有效天數（只用於「任何有連結的人」；0 = 不限）<input type="number" name="sp_link_expire_days" min="0" max="3650" value="{{ c.sp_link_expire_days }}"></label>
+    </div>
+
+    <h4>寄給客戶</h4>
+    <div class="form-grid">
+      <label>寄件信箱<input name="mail_sender" value="{{ c.mail_sender }}" placeholder="dailyreport@company.com"></label>
+      <label class="wide">收件人（多個用逗號或換行分隔）<textarea name="mail_to" rows="2">{{ c.mail_to }}</textarea></label>
+      <label class="wide">副本<textarea name="mail_cc" rows="2">{{ c.mail_cc }}</textarea></label>
+      <label class="wide">主旨<input name="mail_subject" value="{{ c.mail_subject }}"></label>
+      <label class="wide">內容（HTML）<textarea name="mail_body" rows="6" spellcheck="false">{{ c.mail_body }}</textarea></label>
+    </div>
+    <p class="hint">可代入：{doc_no} {contractor_doc_no} {date} {revision} {filename} {link} {md5} {sha256} {approver}</p>
+  </section>
+
+  <section class="card">
+    <h3>每日提醒</h3>
+    <p class="hint">到了提醒時間，今天的日報還沒完成發送（未建立、待審、待結案或發送中止），就寄信給二線管理員。每天一次，假日也會提醒。</p>
+    <label class="inline"><input type="checkbox" name="reminder_enabled" value="1" {{ 'checked' if c.reminder_enabled }}> 啟用</label>
+    <div class="form-grid">
+      <label>提醒時間<input name="reminder_time" value="{{ c.reminder_time }}" placeholder="12:30"></label>
+      <label>期限（寫在提醒信中）<input name="deadline_time" value="{{ c.deadline_time }}" placeholder="13:00"></label>
+      <label class="wide">其他收件人（選填）<textarea name="reminder_extra" rows="2">{{ c.reminder_extra }}</textarea></label>
+    </div>
+    <p class="hint">目前收件人：{{ recipients|join('、') if recipients else '（沒有：二線管理員帳號沒有 email，AD 帳號登入一次後會帶入）' }}</p>
+    {% if reminder %}<p class="hint">最近一次：{{ reminder }}</p>{% endif %}
+  </section>
+
+  <div class="actions">
+    <button type="submit">儲存</button>
+    <button type="submit" class="secondary" formaction="{{ url_for('settings.delivery_test') }}">測試 SharePoint 連線</button>
+    <input name="test_to" placeholder="測試收件人（空白 = 寄給自己）" style="max-width:260px">
+    <button type="submit" class="secondary" formaction="{{ url_for('settings.delivery_test_mail') }}">寄測試信</button>
+  </div>
+</form>
+{% endblock %}

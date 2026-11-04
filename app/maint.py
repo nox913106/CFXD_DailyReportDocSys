@@ -2,6 +2,7 @@
 
 - 執行系統設定頁排入的備份 / 還原工作
 - 依「系統設定 → 備份還原」的時間自動備份（錯過時間，例如當時關機，啟動後會補做）
+- 結案後的發送流程（正式 PDF → SharePoint → 連結 → 寄信）與每日提醒
 - 依「系統設定 → 健康檢查」的間隔自動檢查，結果顯示在設定頁；有失敗時系統管理員每一頁都會看到提醒
 
 所有設定每一輪重新讀取，不需要重啟。
@@ -153,6 +154,16 @@ def tick(now=None):
     if job:
         _run_job(job)
         did = True
+    from . import delivery
+
+    try:
+        did = delivery.tick(now) or did  # 結案後的正式 PDF、SharePoint、寄信
+        if delivery.reminder_due(now):
+            delivery.send_reminder(now)
+            did = True
+    except Exception:
+        log.exception("發送流程 / 每日提醒錯誤")
+        db.session.rollback()
     if health_due(now):
         try:
             run_health()

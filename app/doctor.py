@@ -105,6 +105,28 @@ def run(system=False):
     else:
         _item(out, g, "字型", "ok", "Carlito / Liberation / DejaVu" + ("，另有 Microsoft 字型" if ms else "（相容字型）"))
 
+    # ---------------------------------------------------------------- 結案與發送
+    g = "結案與發送"
+    from . import graph
+    from .models import Delivery
+
+    if sysconf.get("delivery_enabled"):
+        miss = graph.missing()
+        if miss:
+            _item(out, g, "自動發送設定", "fail", "設定不完整：" + "、".join(miss) + "，結案後的發送會中止",
+                  "系統設定 → 發送與提醒")
+        else:
+            _item(out, g, "自動發送設定", "ok", f"{sysconf.get('sp_site_url')} → {sysconf.get('mail_to')}")
+    else:
+        _item(out, g, "自動發送設定", "warn", "未啟用：結案只產生正式 PDF，不會上傳 SharePoint 與寄給客戶",
+              "系統設定 → 發送與提醒 → 啟用")
+    errs = Delivery.query.filter_by(state="error").count()
+    _item(out, g, "發送流程", "fail" if errs else "ok", f"{errs} 份日報發送中止" if errs else "沒有中止的發送",
+          "開啟日報頁最下方的流程，修正原因後按「重試」" if errs else "")
+    rem = sysconf.get("reminder_result") or ""
+    if sysconf.get("reminder_enabled") and "失敗" in rem:
+        _item(out, g, "每日提醒", "warn", rem, "系統設定 → 發送與提醒：確認寄信設定與二線管理員的 email")
+
     # ---------------------------------------------------------------- 背景工作
     g = "背景工作"
     now = datetime.now()

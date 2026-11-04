@@ -105,6 +105,21 @@ def create_app():
 
     app.register_blueprint(settings_bp)
 
+    @app.before_request
+    def _viewer_only_archive():
+        """檢視者（viewer）只能看正式文件下載頁、下載已結案的正式 PDF，其餘一律禁止。"""
+        from flask import abort, redirect, url_for
+        from flask_login import current_user
+
+        if not getattr(current_user, "is_authenticated", False) or current_user.role != "viewer":
+            return None
+        ep = request.endpoint or ""
+        if ep in ("static", "views.archive", "views.final_pdf") or ep.startswith("auth."):
+            return None
+        if ep == "views.index":
+            return redirect(url_for("views.archive"))
+        abort(403)
+
     @app.after_request
     def _refresh_health(resp):
         """系統管理員在設定頁變更任何設定後，健康檢查結果跟著更新（由維護服務在背景執行）。"""

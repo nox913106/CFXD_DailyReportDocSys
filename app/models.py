@@ -10,8 +10,10 @@ ROLE_LABELS = {
     "file_manager": "檔案管理員",
     "second_line": "二線管理員",
     "first_line": "一線使用者",
+    "viewer": "檢視者（只能下載已結案 PDF）",
 }
-ASSIGNABLE_ROLES = ("file_manager", "second_line", "first_line")  # 本機緊急帳號只能用指令建立
+ASSIGNABLE_ROLES = ("file_manager", "second_line", "first_line", "viewer")  # 本機緊急帳號只能用指令建立
+REVIEWER_ROLES = ("admin", "file_manager", "second_line")  # 二線以上：結案、退回修正、重試發送
 ADMIN_ELIGIBLE_ROLES = ("file_manager", "second_line")  # 可被指派為系統管理員的角色；一線使用者強制排除
 
 
@@ -110,10 +112,12 @@ class ScreenshotSection(db.Model):
 STATUS_LABELS = {
     "draft": "草稿",
     "submitted": "待審核",
-    "approved": "已核准",
+    "approved": "已核准（待結案）",
+    "closed": "已結案",
     "rejected": "退回",
     "voided": "作廢",
 }
+OFFICIAL_STATUSES = ("approved", "closed")  # 正式日報：跨日比對基準、新日報複製來源
 
 RESULT_LABELS = {"N": "Normal", "W": "Warning", "F": "Failed"}
 
@@ -186,6 +190,7 @@ class Report(db.Model):
     results = db.relationship("ChecklistResult", cascade="all, delete-orphan", lazy="dynamic")
     images = db.relationship("ReportImage", cascade="all, delete-orphan", order_by="ReportImage.order")
     review_logs = db.relationship("ReviewLog", cascade="all, delete-orphan", order_by="ReviewLog.id")
+    delivery = db.relationship("Delivery", uselist=False, cascade="all, delete-orphan", back_populates="report")
 
     @property
     def status_label(self):
@@ -330,6 +335,10 @@ REVIEW_ACTION_LABELS = {
     "reject": "退回",
     "assign": "指派",
     "doc_no": "變更文件編號",
+    "close": "結案",
+    "close_cancel": "取消結案",
+    "return": "退回修正",
+    "delivery_retry": "重試發送",
     "void": "作廢",
     "void_request": "申請作廢",
     "void_request_reject": "駁回作廢申請",
@@ -489,3 +498,62 @@ class MaintJob(db.Model):
 MAINT_KIND_LABELS = {"backup": "備份", "restore": "還原"}
 MAINT_STATUS_LABELS = {"pending": "排隊中", "running": "執行中", "done": "完成", "error": "失敗"}
 MAINT_TRIGGER_LABELS = {"manual": "手動", "scheduled": "排程", "pre_restore": "還原前自動"}
+
+
+DELIVERY_STEPS = (("pdf", "產生正式 PDF"), ("upload", "上傳 SharePoint"), ("link", "取得檔案連結"), ("mail", "寄送客戶"))
+DELIVERY_STATE_LABELS = {"scheduled": "鎖檔中（1 分鐘後開始）", "queued": "排隊中", "running": "執行中",
+                         "done": "完成", "error": "已中止（需要處理）"}
+
+
+class Delivery(db.Model):
+    """結案後的正式文件與發送流程：產生正式 PDF → 上傳 SharePoint → 取得連結 → 寄送客戶。
+
+    任一步驟失敗立即中止（state=error），由二線以上手動重試；已完成的步驟不會重做。
+    steps：JSON {step: {"status": pending/running/done/error/skipped, "message", "at", "attempts"}}
+    """
+
+    id = db.Column(db.Integer, primary_key=True)
+    report_id = db.Column(db.Integer, db.ForeignKey("report.id"), unique=True, nullable=False)
+    report = db.relationship("Report", back_populates="delivery")
+    state = db.Column(db.String(12), default="scheduled", nullable=False, index=True)
+    closed_at = db.Column(db.DateTime, default=datetime.now, nullable=False)
+    closed_by_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    closed_by = db.relationship("User", foreign_keys=[closed_by_id])
+    run_after = db.Column(db.DateTime, nullable=False)
+    steps = db.Column(db.Text, default="{}")
+    pdf_path = db.Column(db.String(512))  # instance 底下的相對路徑
+    pdf_name = db.Column(db.String(256))
+    pdf_size = db.Column(db.Integer)
+    pdf_md5 = db.Column(db.String(32))
+    pdf_sha256 = db.Column(db.String(64))
+    sp_item_id = db.Column(db.String(128))
+    sp_web_url = db.Column(db.Text)
+    share_url = db.Column(db.Text)
+    mail_to = db.Column(db.Text)
+    mail_sent_at = db.Column(db.DateTime)
+    finished_at = db.Column(db.DateTime)
+
+    @property
+    def state_label(self):
+        return DELIVERY_STATE_LABELS.get(self.state, self.state)
+
+    def step_map(self):
+        import json
+
+        try:
+            data = json.loads(self.steps or "{}")
+        except ValueError:
+            data = {}
+        return {k: data.get(k, {"status": "pending"}) for k, _ in DELIVERY_STEPS}
+
+    def set_step(self, key, status, message=""):
+        import json
+
+        data = self.step_map()
+        cur = data[key]
+        cur.update(status=status, message=message, at=datetime.now().isoformat(timespec="seconds"))
+        if status == "running":
+            cur["attempts"] = cur.get("attempts", 0) + 1
+        data[key] = cur
+        self.steps = json.dumps(data, ensure_ascii=False)
+

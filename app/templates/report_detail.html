@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ report.doc_no }} - CFXD{% endblock %}
+{% block head %}{% if report.delivery and report.delivery.state in ('scheduled', 'queued', 'running') %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
 
 
 {% block content %}
@@ -17,10 +18,23 @@
       <button type="submit">送出審核</button>
     </form>
     {% endif %}
-    <a class="button secondary" href="{{ url_for('views.pdf', report_id=report.id) }}" target="_blank">開啟 PDF / 列印</a>
-    <a class="button" href="{{ url_for('views.pdf', report_id=report.id, download=1) }}">下載 PDF</a>
+    {% set fin = report.delivery if report.delivery and report.delivery.pdf_md5 else None %}
+    {% if fin %}
+    <a class="button" href="{{ url_for('views.final_pdf', report_id=report.id, download=1) }}">下載正式 PDF</a>
+    {% elif report.status == 'closed' %}
+    <span class="hint">正式 PDF 產生中</span>
+    {% else %}
+    <a class="button secondary" href="{{ url_for('views.pdf', report_id=report.id) }}" target="_blank">開啟預覽</a>
+    {% endif %}
   </div>
 </div>
+{% if fin %}
+<div class="card no-print">正式 PDF：<strong>{{ fin.pdf_name }}</strong>（{{ '%.1f'|format(fin.pdf_size / 1e6) }} MB）
+  <div class="hint">MD5 <code>{{ fin.pdf_md5 }}</code> · SHA-256 <code>{{ fin.pdf_sha256 }}</code></div></div>
+{% endif %}
+{% if ocr_pending and report.status in ('draft', 'rejected', 'submitted') %}
+<div class="flash no-print">還有 {{ ocr_pending }} 張截圖正在辨識系統時間；辨識完成前不能送審或核准。</div>
+{% endif %}
 
 {% if checks %}{% include "_checks.html" %}{% endif %}
 {% if report.status == 'submitted' %}
@@ -28,6 +42,21 @@
   核准人：<strong>{{ report.approver_name or '（未指定）' }}</strong>
   {% if not can_review %}<span class="hint">· 等待核准人{% if report.approver_id %}或其代簽人{% endif %}審核</span>{% endif %}
 </div>
+{% endif %}
+{% if shots %}
+<details class="card no-print" open>
+  <summary><h3 class="inline">截圖（{{ shots|length }} 張，點圖開原尺寸）</h3></summary>
+  <div class="shot-grid">
+    {% for img in shots %}
+    {% set st = ocr_status(img, report.report_date.isoformat()) %}
+    <figure>
+      <a href="{{ url_for('images.show', report_id=report.id, image_id=img.id) }}" target="_blank" rel="noopener">
+        <img src="{{ url_for('images.show', report_id=report.id, image_id=img.id) }}" loading="lazy" alt="{{ img.original_name }}"></a>
+      <figcaption><span class="ocr ocr-{{ st[0] }}">{{ st[1] }}</span> {{ img.original_name }}</figcaption>
+    </figure>
+    {% endfor %}
+  </div>
+</details>
 {% endif %}
 {% if can_review %}
 <form method="post" action="{{ url_for('views.review', report_id=report.id) }}" class="card review no-print">
@@ -42,6 +71,37 @@
     <button type="submit" name="action" value="approve">{{ '代簽核准' if principal else '核准' }}</button>
     <button type="submit" name="action" value="reject" class="danger">退回</button>
   </div>
+</form>
+{% endif %}
+{% if can.close or can.return %}
+<div class="card no-print">
+  <h3>結案</h3>
+  <p>已核准。請在下方預覽確認內容與排版沒有異常，再按「結案」。結案後立即鎖檔，
+    1 分鐘後產生正式 PDF（只產生這一次）、上傳 SharePoint 並寄給客戶；之後只有檔案管理員能在發送開始前取消。</p>
+  <div class="actions">
+    {% if can.close %}
+    <form method="post" action="{{ url_for('views.close', report_id=report.id) }}" class="inline"
+          onsubmit="return confirm('確定結案？結案後鎖檔，1 分鐘後自動產生正式 PDF 並寄給客戶。')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">結案</button>
+    </form>
+    {% endif %}
+    {% if can.return %}
+    <form method="post" action="{{ url_for('views.return_fix', report_id=report.id) }}" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input name="reason" placeholder="退回原因（必填）" required>
+      <button type="submit" class="danger">退回修正</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% if can.cancel_close %}
+<form method="post" action="{{ url_for('views.cancel_close', report_id=report.id) }}" class="card no-print">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <h3>取消結案（檔案管理員，發送開始前）</h3>
+  <label>原因<input name="reason" required></label>
+  <button type="submit" class="danger">取消結案</button>
 </form>
 {% endif %}
 {% if report.status == 'voided' %}
@@ -113,6 +173,34 @@
 </div>
 {% endif %}
 
-<p class="hint no-print">以下為與原始範本（Coverpage + CheckList + Screenshot）相同排版的完整日報 PDF，首次產生約需 20 秒。</p>
-<iframe class="pdf-view" src="{{ url_for('views.pdf', report_id=report.id) }}" title="{{ report.doc_no }} PDF"></iframe>
+{% if fin %}
+<p class="hint no-print">以下為正式 PDF（結案後產生，與上傳 SharePoint、寄給客戶的是同一份檔案）。</p>
+<iframe class="pdf-view" src="{{ url_for('views.final_pdf', report_id=report.id) }}" title="{{ report.doc_no }} PDF"></iframe>
+{% elif report.status != 'closed' %}
+<p class="hint no-print">以下為預覽（每頁有 PREVIEW 浮水印，內容即時產生，首次約需 20 秒）。正式 PDF 只在結案後產生。</p>
+<iframe class="pdf-view" src="{{ url_for('views.pdf', report_id=report.id) }}" title="{{ report.doc_no }} 預覽"></iframe>
+{% endif %}
+
+<section class="card no-print flow" id="flow">
+  <div class="row-between">
+    <h3>流程{% if report.delivery %}<span class="hint">（發送：{{ report.delivery.state_label }}）</span>{% endif %}</h3>
+    {% if can.retry %}
+    <form method="post" action="{{ url_for('views.retry_delivery', report_id=report.id) }}" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">重試</button>
+    </form>
+    {% endif %}
+  </div>
+  <ol class="flow-list">
+    {% for st, label, msg in timeline %}
+    <li class="flow-{{ st }}">
+      <span class="flow-box" aria-label="{{ st }}">{{ {'done': '☑', 'error': '☒', 'skipped': '⊘', 'running': '⧗'}.get(st, '☐') }}</span>
+      <span class="flow-label">{{ label }}</span>
+      <span class="flow-msg">{% if msg.startswith('http') %}<a href="{{ msg }}" target="_blank" rel="noopener">{{ msg }}</a>{% else %}{{ msg }}{% endif %}</span>
+    </li>
+    {% endfor %}
+  </ol>
+  {% if report.delivery and report.delivery.state == 'error' and not can.retry %}
+  <p class="hint">流程已中止，請二線管理員以上處理後按「重試」。</p>{% endif %}
+</section>
 {% endblock %}

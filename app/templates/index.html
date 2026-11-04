@@ -20,6 +20,33 @@
   </table>
 </section>
 {% endif %}
+{% if delivery_errors %}
+<section class="card">
+  <h2 class="fail-text">發送中止，需要處理（{{ delivery_errors|length }}）</h2>
+  <table class="list">
+    <tr><th>日期</th><th>文件編號</th><th>中止的步驟</th><th></th></tr>
+    {% for r in delivery_errors %}
+    {% set st = r.delivery.step_map() %}
+    <tr class="fail"><td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td>
+      <td>{% for k, v in st.items() if v.status == 'error' %}{{ v.message }}{% endfor %}</td>
+      <td><a href="{{ url_for('views.detail', report_id=r.id) }}#flow">處理</a></td></tr>
+    {% endfor %}
+  </table>
+</section>
+{% endif %}
+{% if to_close %}
+<section class="card">
+  <h2>待結案（已核准，確認預覽排版後結案）（{{ to_close|length }}）</h2>
+  <table class="list">
+    <tr><th>日期</th><th>文件編號</th><th>撰寫人</th><th>核准</th><th></th></tr>
+    {% for r in to_close %}
+    <tr><td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td><td>{{ r.author.name }}</td>
+      <td>{{ r.reviewed_by.name if r.reviewed_by }}{{ r.reviewed_at.strftime(' %m-%d %H:%M') if r.reviewed_at }}</td>
+      <td><a href="{{ url_for('views.detail', report_id=r.id) }}">確認並結案</a></td></tr>
+    {% endfor %}
+  </table>
+</section>
+{% endif %}
 {% if void_requests %}
 <section class="card">
   <h2>待核定的作廢申請（{{ void_requests|length }}）</h2>

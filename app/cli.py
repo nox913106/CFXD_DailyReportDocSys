@@ -60,9 +60,9 @@ def register_cli(app):
 
         from . import db
         from .check_report import snapshot
-        from .models import CheckReport, Report
+        from .models import OFFICIAL_STATUSES, CheckReport, Report
 
-        q = Report.query.filter(Report.status == "approved", ~Report.check_reports.any())
+        q = Report.query.filter(Report.status.in_(OFFICIAL_STATUSES), ~Report.check_reports.any())
         if since:
             q = q.filter(Report.report_date >= dt.date.fromisoformat(since))
         n = 0

@@ -167,8 +167,8 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
         <p class="zh">送審、核准、退回時各存一份 Markdown，格式與 DDoc_compare 比對報告相同，可直接作為 RAG 知識庫。</p>
         <p class="en">A Markdown snapshot on submit, approve and reject, in the same layout as DDoc_compare reports, ready for a RAG knowledge base.</p></div>
       <div class="card"><h3><span class="ico">🔐</span><span class="zh">角色、代簽、作廢</span><span class="en">Roles, delegation, voiding</span></h3>
-        <p class="zh">四種角色與職責分離；檔案管理員可授權二線管理員代簽，文件仍顯示核准人；作廢保留流水號。</p>
-        <p class="en">Four roles with separation of duties; file managers can delegate approval while the document still shows the approver; voiding keeps the serial number.</p></div>
+        <p class="zh">角色與職責分離（含只能下載正式 PDF 的檢視者）；檔案管理員可授權二線管理員代簽，文件仍顯示核准人；作廢保留流水號。</p>
+        <p class="en">Roles with separation of duties, including a viewer that can only download final PDFs; file managers can delegate approval while the document still shows the approver; voiding keeps the serial number.</p></div>
       <div class="card"><h3><span class="ico">🛠️</span><span class="zh">一行部署，網頁管理</span><span class="en">One-line install, web admin</span></h3>
         <p class="zh">一行 curl 完成安裝。之後 AD、帳號、備份還原、健康檢查、範本、HTTPS 憑證都在「系統設定」頁完成，不需要登入主機。</p>
         <p class="en">One curl line installs everything. After that, AD, accounts, backup and restore, health checks, templates and HTTPS certificates are all managed on the settings page, no shell needed.</p></div>
@@ -184,8 +184,10 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
       <div class="card"><b class="zh">送審</b><b class="en">Submit</b><p class="zh">內容鎖定，產生檢查結果.md</p><p class="en">Content locks; check results saved</p></div>
       <div class="card"><b class="zh">自動檢查</b><b class="en">Checks</b><p class="zh">與前一份已核准日報比對、截圖 OCR</p><p class="en">Compared with last approved report, OCR</p></div>
       <div class="card"><b class="zh">AI 建議</b><b class="en">AI advice</b><p class="zh">依檢查結果與過去退回紀錄</p><p class="en">From check results and past rejections</p></div>
-      <div class="card"><b class="zh">核准 / 退回</b><b class="en">Approve / reject</b><p class="zh">由核准人或代簽人決定</p><p class="en">By the approver or a delegate</p></div>
-      <div class="card"><b class="zh">PDF</b><b class="en">PDF</b><p class="zh">與原範本相同排版，直接交付</p><p class="en">Template-identical, ready to deliver</p></div>
+      <div class="card"><b class="zh">核准 / 退回</b><b class="en">Approve / reject</b><p class="zh">由核准人或代簽人看截圖後決定，退回修正直到通過</p><p class="en">By the approver or a delegate after viewing the screenshots; rejected reports loop until approved</p></div>
+      <div class="card"><b class="zh">結案</b><b class="en">Close</b><p class="zh">二線以上確認預覽排版後結案，立即鎖檔</p><p class="en">Second line or above checks the preview, then closes and locks it</p></div>
+      <div class="card"><b class="zh">正式 PDF</b><b class="en">Final PDF</b><p class="zh">只產生一次，記錄 MD5，可在「正式文件」頁下載</p><p class="en">Rendered once with an MD5, downloadable from the archive page</p></div>
+      <div class="card"><b class="zh">SharePoint 與寄信</b><b class="en">SharePoint and mail</b><p class="zh">上傳、取得連結、寄給客戶；失敗中止並可重試</p><p class="en">Upload, share link, mail the customer; stops on failure, with retry</p></div>
     </div>
   </div>
 </section>

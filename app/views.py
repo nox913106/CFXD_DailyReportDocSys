@@ -17,6 +17,8 @@ from .checks import run_checks
 from .helpers import get_report
 from .models import (
     ADMIN_ELIGIBLE_ROLES,
+    OFFICIAL_STATUSES,
+    REVIEWER_ROLES,
     ASSIGNABLE_ROLES,
     ROLE_LABELS,
     AlarmSummaryRow,
@@ -63,13 +65,24 @@ def index():
         "index.html", reports=reports, month=month, pending=pending, void_requests=void_requests,
         pending_checks=pending_checks,
         today=date.today().isoformat(), can_create=perm.can_create(current_user),
-        official=last_official(date.today() + timedelta(days=1)),
+        official=last_official(date.today() + timedelta(days=1)), **_desk(),
     )
+
+
+def _desk():
+    """二線以上首頁：待結案（已核准）與發送中止的日報。"""
+    from .models import REVIEWER_ROLES, Delivery
+
+    if current_user.role not in REVIEWER_ROLES:
+        return {"to_close": [], "delivery_errors": []}
+    return {"to_close": Report.query.filter_by(status="approved").order_by(Report.report_date).all(),
+            "delivery_errors": Report.query.join(Delivery).filter(Delivery.state == "error")
+            .order_by(Report.report_date).all()}
 
 
 def last_official(d):
     """d 之前最近一份已核准（正式）的日報。"""
-    return (Report.query.filter(Report.report_date < d, Report.status == "approved")
+    return (Report.query.filter(Report.report_date < d, Report.status.in_(OFFICIAL_STATUSES))
             .order_by(Report.report_date.desc()).first())
 
 
@@ -182,9 +195,14 @@ def detail(report_id):
     u = current_user
     review = perm.can_review(u, report)
     snaps = report.check_reports.order_by(None).order_by(CheckReport.id.desc()).all()
+    from . import delivery
+
     return render_template(
         "report_detail.html", report=report, can_review=review.allowed, principal=review.principal,
-        checks=run_checks(report) if report.status != "voided" else None,
+        checks=run_checks(report) if report.status not in ("voided", "closed") else None,
+        timeline=delivery.timeline(report), ocr_pending=delivery.ocr_pending(report),
+        shots=[i for i in report.images if i.kind == "screenshot"]
+        if review.allowed or (u.role in REVIEWER_ROLES and report.status == "approved") else [],
         snaps=snaps, ai_snap=next((s for s in snaps if s.ai_status), None),
         ai_enabled=ai_enabled(),
         can={
@@ -193,6 +211,8 @@ def detail(report_id):
             "delete": perm.can_delete(u, report), "void": perm.can_void(u, report),
             "request_void": perm.can_request_void(u, report),
             "decide_void": perm.can_decide_void_request(u, report),
+            "close": perm.can_close(u, report), "return": perm.can_return(u, report),
+            "cancel_close": perm.can_cancel_close(u, report), "retry": perm.can_retry_delivery(u, report),
         },
     )
 
@@ -209,6 +229,11 @@ def submit(report_id):
     if missing:
         flash(f"檢查表還有 {missing} 個項目未勾選，請全部勾選後再送審。", "error")
         return redirect(url_for("editors.checklist_overview", report_id=report.id))
+    from .delivery import ocr_pending
+
+    if (n := ocr_pending(report)):
+        flash(f"還有 {n} 張截圖正在辨識系統時間，辨識完成後才能送審（審核者需要看到辨識結果）。", "error")
+        return redirect(url_for("views.detail", report_id=report.id))
 
     report.status = "submitted"
     report.submitted_at = datetime.now()
@@ -240,6 +265,11 @@ def review(report_id):
         flash("退回時請填寫原因。", "error")
         return redirect(url_for("views.detail", report_id=report.id))
 
+    from .delivery import ocr_pending
+
+    if action == "approve" and (n := ocr_pending(report)):
+        flash(f"還有 {n} 張截圖正在辨識，辨識完成、確認截圖內容後才能核准。", "error")
+        return redirect(url_for("views.detail", report_id=report.id))
     signer = principal or current_user  # 文件上的簽核者：代簽時仍是核准人本人
     if report.approver_id is None:
         report.approver_id = signer.id
@@ -513,10 +543,14 @@ def _set_sys_admin():
 
 @bp.route("/reports/<int:report_id>/pdf")
 def pdf(report_id):
-    """與原始範本相同排版的完整日報 PDF。?download=1 會以附件下載。"""
+    """預覽 PDF（每頁浮水印，內容即時產生）。已結案且正式 PDF 已產生時改給正式檔案。?download=1 以附件下載。"""
     from .pdf.report_pdf import TemplateMissing, build_pdf, pdf_filename
 
     report = get_report(report_id)
+    if report.delivery and report.delivery.pdf_md5:
+        return final_pdf(report_id)
+    if report.status == "closed":  # 結案後只提供正式 PDF（產生中）
+        return Response("正式 PDF 產生中，請稍後再試。", status=409, mimetype="text/plain; charset=utf-8")
     try:
         data = build_pdf(report)
     except TemplateMissing as e:
@@ -527,3 +561,112 @@ def pdf(report_id):
         mimetype="application/pdf",
         headers={"Content-Disposition": f'{disposition}; filename="{pdf_filename(report)}"'},
     )
+
+
+# ---------------------------------------------------------------- 結案與發送
+
+
+@bp.route("/reports/<int:report_id>/close", methods=["POST"])
+def close(report_id):
+    from . import delivery
+
+    report = get_report(report_id)
+    d = perm.can_close(current_user, report)
+    if not d:
+        flash(d.reason, "error")
+        return redirect(url_for("views.detail", report_id=report.id))
+    # 一天只有一份正式日報：日期唯一，這裡再用條件更新防止兩個人同時結案
+    n = Report.query.filter_by(id=report.id, status="approved").update({"status": "closing"}, synchronize_session=False)
+    if not n:
+        db.session.rollback()
+        flash("這份日報剛剛已被其他人結案。", "error")
+        return redirect(url_for("views.detail", report_id=report.id))
+    delivery.close(report, current_user)
+    db.session.commit()
+    flash(f"已結案並鎖檔。{delivery.LOCK_SECONDS} 秒後產生正式 PDF、上傳 SharePoint 並寄給客戶；進度顯示在下方流程。",
+          "success")
+    return redirect(url_for("views.detail", report_id=report.id))
+
+
+@bp.route("/reports/<int:report_id>/return", methods=["POST"])
+def return_fix(report_id):
+    """核准後、結案前發現問題：退回給撰寫人修正，修正後重新送審。"""
+    report = get_report(report_id)
+    d = perm.can_return(current_user, report)
+    reason = request.form.get("reason", "").strip()
+    if not d or not reason:
+        flash(d.reason if not d else "請填寫退回原因。", "error")
+        return redirect(url_for("views.detail", report_id=report.id))
+    report.status = "rejected"
+    report.review_comment = reason
+    report.updated_by_id = current_user.id
+    db.session.add(ReviewLog(report_id=report.id, action="return", actor_id=current_user.id, comment=reason))
+    db.session.commit()
+    flash("已退回給撰寫人修正，修正後需要重新送審。", "success")
+    return redirect(url_for("views.detail", report_id=report.id))
+
+
+@bp.route("/reports/<int:report_id>/close/cancel", methods=["POST"])
+def cancel_close(report_id):
+    from . import delivery
+
+    report = get_report(report_id)
+    d = perm.can_cancel_close(current_user, report)
+    reason = request.form.get("reason", "").strip()
+    if not d or not reason:
+        flash(d.reason if not d else "請填寫取消原因。", "error")
+        return redirect(url_for("views.detail", report_id=report.id))
+    delivery.cancel(report, current_user, reason)
+    db.session.commit()
+    flash("已取消結案，日報回到「已核准（待結案）」。", "success")
+    return redirect(url_for("views.detail", report_id=report.id))
+
+
+@bp.route("/reports/<int:report_id>/delivery/retry", methods=["POST"])
+def retry_delivery(report_id):
+    from . import delivery
+
+    report = get_report(report_id)
+    d = perm.can_retry_delivery(current_user, report)
+    if not d:
+        flash(d.reason, "error")
+        return redirect(url_for("views.detail", report_id=report.id))
+    delivery.retry(report, current_user)
+    db.session.commit()
+    flash("已排入重試，維護服務會在幾秒內從失敗的步驟繼續。", "success")
+    return redirect(url_for("views.detail", report_id=report.id))
+
+
+@bp.route("/reports/<int:report_id>/final.pdf")
+def final_pdf(report_id):
+    """結案後產生的正式 PDF（凍結的檔案，與上傳 SharePoint、寄給客戶的是同一份）。"""
+    from flask import send_file
+
+    from .delivery import final_path
+
+    report = get_report(report_id)
+    d = report.delivery
+    path = final_path(d)
+    if report.status != "closed" or not d or not d.pdf_md5 or not path or not os.path.isfile(path):
+        abort(404)
+    return send_file(path, mimetype="application/pdf", as_attachment=bool(request.args.get("download")),
+                     download_name=d.pdf_name, max_age=0, etag=d.pdf_md5)
+
+
+@bp.route("/archive")
+def archive():
+    """正式文件下載：已結案日報的正式 PDF 與 MD5 / SHA-256。檢視者（viewer）只能看到這一頁。"""
+    from .models import Delivery
+
+    month = request.args.get("month") or ""
+    q = (Report.query.join(Delivery).filter(Report.status == "closed", Delivery.pdf_md5.isnot(None))
+         .order_by(Report.report_date.desc()))
+    if month:
+        try:
+            first = datetime.strptime(month, "%Y-%m").date()
+        except ValueError:
+            abort(400)
+        nxt = date(first.year + first.month // 12, first.month % 12 + 1, 1)
+        q = q.filter(Report.report_date >= first, Report.report_date < nxt)
+    return render_template("archive.html", reports=q.limit(400).all(), month=month)
+

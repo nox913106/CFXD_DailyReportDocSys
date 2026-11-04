@@ -38,7 +38,31 @@ DEFAULTS = {
     # 健康檢查
     "health_enabled": True,
     "health_interval_hours": 6,
+    # 結案後自動發送（Microsoft Graph）
+    "delivery_enabled": False,  # 關閉時結案只產生正式 PDF，上傳與寄信標為「未啟用」
+    "graph_tenant_id": "",
+    "graph_client_id": "",
+    "graph_client_secret_enc": "",
+    "sp_site_url": "",  # https://公司.sharepoint.com/sites/網站
+    "sp_library": "",  # 文件庫名稱；空白 = 網站預設文件庫
+    "sp_folder": "CFXD Daily Report/{yyyy}/{mm}",
+    "sp_link_scope": "organization",  # organization / anonymous / none（只給檔案網址）
+    "sp_link_expire_days": 0,
+    "mail_sender": "",
+    "mail_to": "",
+    "mail_cc": "",
+    "mail_subject": "{doc_no} CFXD SLA Daily Work Report {date}",
+    "mail_body": ("Dear all,<br><br>Please find the CFXD SLA Daily Work Report for {date} "
+                  "({doc_no}, Rev. {revision}) at the link below:<br><a href=\"{link}\">{filename}</a><br><br>"
+                  "MD5: {md5}<br><br>This message was sent automatically."),
+    # 每日提醒：期限前還沒完成發送，寄信給二線人員
+    "reminder_enabled": True,
+    "reminder_time": "12:30",
+    "deadline_time": "13:00",
+    "reminder_extra": "",
     # 內部狀態（不在表單上）
+    "reminder_last": "",
+    "reminder_result": "",
     "backup_last_scheduled": "",
     "health_last": None,
     "health_refresh": "",  # 設定變更後要求維護服務盡快重新檢查（時間）

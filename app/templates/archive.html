@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}正式文件 - CFXD{% endblock %}
+{% block content %}
+{% if current_user.role != 'viewer' %}<p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>{% endif %}
+<section class="card">
+  <div class="row-between">
+    <h2>正式文件（已結案日報）</h2>
+    <form method="get" class="inline">
+      <label class="inline">月份 <input type="month" name="month" value="{{ month }}" onchange="this.form.submit()"></label>
+      {% if month %}<a href="{{ url_for('views.archive') }}">全部</a>{% endif %}
+    </form>
+  </div>
+  <p class="hint">每份 PDF 在結案時產生一次後就不再變動，與上傳 SharePoint、寄給客戶的是同一份檔案。
+    下載後可用 MD5 核對檔案是否完整（Windows：<code>certutil -hashfile 檔名.pdf MD5</code>；Linux / macOS：<code>md5sum 檔名.pdf</code>）。</p>
+  <div class="tablewrap">
+  <table class="list">
+    <tr><th>日期</th><th>文件編號</th><th>版次</th><th>檔案</th><th>大小</th><th>MD5</th><th>結案</th></tr>
+    {% for r in reports %}
+    {% set d = r.delivery %}
+    <tr>
+      <td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td><td>{{ r.revision }}</td>
+      <td><a href="{{ url_for('views.final_pdf', report_id=r.id, download=1) }}">{{ d.pdf_name }}</a></td>
+      <td>{{ '%.1f'|format(d.pdf_size / 1e6) }} MB</td>
+      <td><code class="hash" title="SHA-256 {{ d.pdf_sha256 }}">{{ d.pdf_md5 }}</code></td>
+      <td>{{ d.closed_at.strftime('%Y-%m-%d %H:%M') }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="hint">{{ '這個月' if month else '目前' }}沒有已結案的日報。</td></tr>
+    {% endfor %}
+  </table>
+  </div>
+</section>
+{% endblock %}

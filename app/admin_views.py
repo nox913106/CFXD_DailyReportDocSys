@@ -522,3 +522,132 @@ AUDIT_LABELS = {"delete_report": "刪除日報", "set_role": "變更角色", "se
 
 def recent_audit(limit=50):
     return AuditLog.query.order_by(AuditLog.id.desc()).limit(limit).all()
+
+
+# ---------------------------------------------------------------- 發送與提醒（SharePoint、寄信、每日提醒）
+
+DELIVERY_FORM = ("graph_tenant_id", "graph_client_id", "sp_site_url", "sp_library", "sp_folder", "sp_link_scope",
+                 "mail_sender", "mail_to", "mail_cc", "mail_subject", "mail_body", "reminder_time", "deadline_time",
+                 "reminder_extra")
+LINK_SCOPES = {"organization": "公司內部（需登入公司帳號）", "anonymous": "任何有連結的人",
+               "none": "不建立分享連結（沿用文件庫權限，只給檔案網址）"}
+TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+MAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _delivery_from_form():
+    f = request.form
+    c = {k: f.get(k, "").strip() for k in DELIVERY_FORM}
+    c["sp_folder"] = c["sp_folder"].strip("/")
+    c["delivery_enabled"] = f.get("delivery_enabled") == "1"
+    c["reminder_enabled"] = f.get("reminder_enabled") == "1"
+    c["sp_link_expire_days"] = _int("sp_link_expire_days", 0, 3650, 0)
+    return c
+
+
+def _check_delivery(c):
+    from . import graph
+
+    if c["sp_link_scope"] not in LINK_SCOPES:
+        return "分享連結類型不正確"
+    for k, label in (("reminder_time", "提醒時間"), ("deadline_time", "期限")):
+        if not TIME_RE.match(c[k]):
+            return f"{label}格式應為 HH:MM（24 小時制）"
+    if c["reminder_time"] >= c["deadline_time"]:
+        return "提醒時間必須早於期限"
+    for k, label in (("mail_sender", "寄件信箱"), ("mail_to", "客戶收件人"), ("mail_cc", "副本"),
+                     ("reminder_extra", "其他提醒收件人")):
+        bad = [a for a in graph.addresses(c[k]) if not MAIL_RE.match(a)]
+        if bad:
+            return f"{label}：「{bad[0]}」不是 email 地址"
+    if c["sp_site_url"] and not re.match(r"^https://[^/\s]+(/\S*)?$", c["sp_site_url"]):
+        return "SharePoint 網站網址格式應為 https://公司.sharepoint.com/sites/網站名稱"
+    return None
+
+
+def _graph_config(c):
+    """表單的值（還沒儲存）＋密碼：表單有填就用表單的，否則用已儲存的。"""
+    from . import graph
+
+    pw = request.form.get("graph_client_secret", "")
+    return {**c, "client_secret": pw or graph.secret()}
+
+
+def _delivery_page(c=None, steps=None, status=200):
+    from . import delivery, graph
+
+    saved = sysconf.many(DELIVERY_FORM + ("delivery_enabled", "reminder_enabled", "sp_link_expire_days"))
+    return render_template("admin_delivery.html", tab="delivery", c=c or saved, steps=steps, scopes=LINK_SCOPES,
+                           has_secret=bool(sysconf.get("graph_client_secret_enc")), secret_ok=graph.secret() is not None,
+                           recipients=delivery.reminder_recipients(), reminder=sysconf.get("reminder_result"),
+                           missing=graph.missing()), status
+
+
+@bp.route("/delivery", methods=["GET", "POST"])
+def delivery():
+    from . import graph
+
+    if request.method == "GET":
+        return _delivery_page()
+    c = _delivery_from_form()
+    err = _check_delivery(c)
+    if err:
+        flash(err, "error")
+        return _delivery_page(c, status=400)
+    old = sysconf.many(tuple(c))
+    for k, v in c.items():
+        sysconf.put(k, v, current_user)
+    changed = [k for k in c if c[k] != old.get(k)]
+    pw = request.form.get("graph_client_secret", "")
+    if pw or request.form.get("clear_secret") == "1":
+        graph.set_secret(pw if pw else "", current_user)
+        changed.append("用戶端密碼")
+    if changed:
+        _audit("sys_settings", "發送與提醒", "、".join(changed))
+    db.session.commit()
+    flash("已儲存發送與提醒設定。", "success")
+    return redirect(url_for("settings.delivery"))
+
+
+@bp.route("/delivery/test", methods=["POST"])
+def delivery_test():
+    """用表單上的值（不儲存）測試：取得權杖 → 找到網站與文件庫。不會上傳檔案。"""
+    from . import graph
+
+    c = _delivery_from_form()
+    gc = _graph_config(c)
+    steps = []
+    miss = graph.missing(gc, mail=False)
+    if miss:
+        steps.append((False, "設定", "還沒填：" + "、".join(miss)))
+        return _delivery_page(c, steps)
+    try:
+        graph.token(gc)
+        steps.append((True, "取得權杖", f"租用戶 {gc['graph_tenant_id']}，應用程式 {gc['graph_client_id']}"))
+        site_id, _, name = graph.site_and_drive(gc)
+        steps.append((True, "SharePoint 網站與文件庫", f"{gc['sp_site_url']} → 文件庫「{name}」"))
+        folder = graph.folder_for(gc, type("R", (), {"report_date": datetime.now().date()})())
+        steps.append((None, "上傳位置", f"{name}/{folder}/（資料夾不存在時第一次上傳會自動建立）"))
+    except graph.GraphError as e:
+        steps.append((False, "連線", str(e)))
+    return _delivery_page(c, steps)
+
+
+@bp.route("/delivery/test-mail", methods=["POST"])
+def delivery_test_mail():
+    from . import graph
+
+    c = _delivery_from_form()
+    gc = _graph_config(c)
+    to = graph.addresses(request.form.get("test_to", "")) or ([current_user.email] if current_user.email else [])
+    miss = graph.missing(gc, sharepoint=False)
+    if miss or not to:
+        steps = [(False, "設定", "還沒填：" + "、".join(miss) if miss else "請填寫測試收件人")]
+        return _delivery_page(c, steps)
+    try:
+        graph.send_mail(gc, to, "CFXD 日報系統測試信", "這是「系統設定 → 發送與提醒」寄出的測試信。")
+        steps = [(True, "寄測試信", f"已由 {gc['mail_sender']} 寄給 {', '.join(to)}")]
+    except graph.GraphError as e:
+        steps = [(False, "寄測試信", str(e))]
+    return _delivery_page(c, steps)
+

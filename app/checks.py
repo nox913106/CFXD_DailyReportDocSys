@@ -13,7 +13,7 @@ from datetime import date, timedelta
 
 from . import db
 from .helpers import SHEETS
-from .models import AlarmSummaryRow, ChecklistItem, ChecklistResult, Report, ScreenshotSection
+from .models import OFFICIAL_STATUSES, AlarmSummaryRow, ChecklistItem, ChecklistResult, Report, ScreenshotSection
 
 ALARM_CATEGORY = {"vm": "Virtual Machines", "software": "Software", "physical": "Physical Devices", "pi": "PI"}
 SEVERITY_ORDER = {"錯誤": 0, "警告": 1, "提醒": 2}
@@ -97,7 +97,7 @@ def _alarm_key(row):
 def baseline_for(report):
     """比對基準：日期早於本日報、最近一份已核准的日報。"""
     return (
-        Report.query.filter(Report.report_date < report.report_date, Report.status == "approved")
+        Report.query.filter(Report.report_date < report.report_date, Report.status.in_(OFFICIAL_STATUSES))
         .order_by(Report.report_date.desc())
         .first()
     )
@@ -389,7 +389,7 @@ def alarm_history(report, alarms, days=HISTORY_DAYS):
     沒有已核准日報的日子（假日沒寫、還在審核）不會中斷連續天數。
     """
     start = report.report_date - timedelta(days=days)
-    approved = (Report.status == "approved", Report.report_date < report.report_date, Report.report_date >= start)
+    approved = (Report.status.in_(OFFICIAL_STATUSES), Report.report_date < report.report_date, Report.report_date >= start)
     docs = dict(db.session.query(Report.report_date, Report.doc_no).filter(*approved).all())
     dates = sorted(docs, reverse=True)
     seen = defaultdict(set)
@@ -399,7 +399,7 @@ def alarm_history(report, alarms, days=HISTORY_DAYS):
     for d, cat, item, dev, desc in rows:
         seen[(_key(cat), (item or "").strip(), _key(dev), _key(desc))].add(d)
     older = dates and db.session.query(
-        Report.query.filter(Report.status == "approved", Report.report_date < start).exists()).scalar()
+        Report.query.filter(Report.status.in_(OFFICIAL_STATUSES), Report.report_date < start).exists()).scalar()
 
     out = []
     for a in alarms:
