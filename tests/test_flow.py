@@ -287,9 +287,15 @@ def test_full_flow(app):
         assert r2.second_line_support == "Bob"
         assert r2.alarm_known == 5
         assert len(r2.alarm_rows) == 2
-        assert r2.results.filter_by(result=None).count() == 685
+        # 預設複製上一份已核准日報的內容（檢查表勾選、紀錄、照片），截圖除外
+        r1 = db.session.get(Report, rid)
+        assert {(x.item_id, x.result, x.note) for x in r2.results} == {(x.item_id, x.result, x.note) for x in r1.results}
+        assert any(x.result for x in r2.results)
         assert r2.results.filter_by(note="slow").count() == 1
-        assert r2.doc_no == "CFXD-SCA-RLY-DPR-000896"
+        assert [i.kind for i in r1.images if i.kind == "screenshot"] and not [i for i in r2.images if i.kind == "screenshot"]
+        assert len(r2.issues) == len(r1.issues) and r2.inspection_summary == r1.inspection_summary
+        assert (r2.alarm_new, r2.alarm_false) == (0, r1.alarm_false)
+        assert r2.doc_no == "CFXD-SCA-RLY-DPR-000896" and r2.status == "draft" and r2.revision == 0
 
     # 首頁、月份切換、所有頁面都能開
     for url in ["/", "/?month=2026-11", f"/reports/{rid2}", f"/reports/{rid2}/basic", f"/reports/{rid2}/records",
@@ -625,6 +631,14 @@ def test_report_checks(app):
         r1.status = "approved"
         db.session.commit()
         assert run_checks(r1).counts()["錯誤"] == 0
+
+    # 直接複製前一天的已核准日報：計數滾動後與內容一致，不會有錯誤
+    rid_copy = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-02"}))
+    with app.app_context():
+        rc = db.session.get(Report, rid_copy)
+        assert run_checks(rc).counts()["錯誤"] == 0, [(i.severity, i.message) for i in run_checks(rc).issues]
+        db.session.delete(rc)
+        db.session.commit()
 
     # 今日：延續 + 新增一筆 Failed 但沒有寫 Note、沒有列入告警表，New/Known 填錯
     rid2 = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-02"}))
@@ -1422,3 +1436,63 @@ def test_doc_no_override(app):
     with app.app_context():
         r = db.session.get(Report, rid)
         assert (r.doc_no, r.contractor_doc_no) == ("CFXD-SCA-RLY-DPR-000897", "RT230018-CFXD SLA-RP-000797")
+
+
+def test_new_report_copy_option(app):
+    """新增日報：預設複製上一份已核准日報（截圖除外）；可取消；沒有已核准日報時只沿用固定資料。"""
+    import os
+
+    from app import db
+    from app.models import ChecklistResult, Report, ReportImage, ReviewLog
+
+    alice = Browser(app)
+    alice.login("alice")
+    assert 'name="copy_prev" value="1" checked' in alice.get("/")
+    r1 = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-01"}))
+    alice.post(f"/reports/{r1}/basic", {"revision": "2", "issue_purpose": "IFI - Issue for Information", "inspection_time": "09:30 AM",
+                                         "first_line_officer": "Alice", "second_line_support": "Bob"})
+    up = app.config["UPLOAD_DIR"]
+    with app.app_context():
+        rep = db.session.get(Report, r1)
+        rep.inspection_summary = "Router reboot"
+        first = rep.results.first()
+        first.result, first.note = "W", "fan noise"
+        os.makedirs(os.path.join(up, str(r1)), exist_ok=True)
+        for kind, name in (("screenshot", "s.png"), ("onsite", "o.png"), ("alarm", "a.png")):
+            with open(os.path.join(up, str(r1), name), "wb") as fh:
+                fh.write(kind.encode())
+            db.session.add(ReportImage(report_id=r1, kind=kind, filename=name, original_name=name))
+        db.session.commit()
+        item_id = first.item_id
+
+    # 上一份還不是正式（已核准）日報：只沿用固定資料，不複製檢查表與照片
+    r2 = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-02"}))
+    with app.app_context():
+        rep = db.session.get(Report, r2)
+        assert rep.second_line_support == "Bob" and rep.inspection_summary != "Router reboot" and not rep.images
+        assert rep.results.filter_by(item_id=item_id).one().result is None
+        db.session.delete(rep)
+        db.session.get(Report, r1).status = "approved"
+        db.session.commit()
+
+    html = alice.post("/reports/new", {"report_date": "2026-11-02", "copy_shown": "1", "copy_prev": "1"})
+    assert "已複製 2026-11-01 已核准日報的內容（截圖除外）" in html
+    r2 = report_id_from(html)
+    with app.app_context():
+        rep = db.session.get(Report, r2)
+        assert rep.inspection_summary == "Router reboot" and rep.inspection_time == "09:30 AM"
+        assert rep.revision == 0 and rep.status == "draft" and rep.doc_no.endswith("000895")
+        res = rep.results.filter_by(item_id=item_id).one()
+        assert (res.result, res.note) == ("W", "fan noise")
+        kinds = sorted(i.kind for i in rep.images)
+        assert kinds == ["alarm", "onsite"]  # 截圖不複製
+        for i in rep.images:  # 照片檔案是複本：刪除舊日報的檔案不影響新日報
+            assert os.path.isfile(os.path.join(up, str(r2), i.filename))
+        assert not ReviewLog.query.filter_by(report_id=r2).count()
+
+    # 取消勾選：只沿用固定資料
+    r3 = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-03", "copy_shown": "1"}))
+    with app.app_context():
+        rep = db.session.get(Report, r3)
+        assert rep.inspection_summary != "Router reboot" and not rep.images
+        assert db.session.query(ChecklistResult).filter_by(report_id=r3, result="W").count() == 0

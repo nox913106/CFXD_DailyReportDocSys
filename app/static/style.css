@@ -175,3 +175,8 @@ form.stack { display: flex; flex-direction: column; gap: 6px; max-width: 280px; 
 details > summary { cursor: pointer; color: var(--accent-dark); }
 input.confirm-input { width: 150px !important; }
 input.file-input { width: auto; max-width: 100%; }
+
+/* 新增日報：日期、複製選項、按鈕在窄螢幕換行 */
+.new-report { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
+.new-report button { white-space: nowrap; }
+@media (max-width: 640px) { .row-between:has(.new-report) { flex-wrap: wrap; } .new-report { justify-content: flex-start; } }

@@ -37,9 +37,13 @@
   <div class="row-between">
     <h2>日報清單</h2>
     {% if can_create %}
-    <form method="post" action="{{ url_for('views.create') }}" class="inline">
+    <form method="post" action="{{ url_for('views.create') }}" class="inline new-report">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="date" name="report_date" value="{{ today }}" required>
+      <input type="hidden" name="copy_shown" value="1">
+      <label class="inline" title="複製封面、各項紀錄、告警、檢查表勾選與備註、現場 / 告警照片；截圖不複製">
+        <input type="checkbox" name="copy_prev" value="1" checked>
+        複製上一份已核准日報{% if official %}（{{ official.report_date }}）{% endif %}的內容（截圖除外）</label>
       <button type="submit">新增日報</button>
     </form>
     {% endif %}

@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from flask import Blueprint, Response, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
@@ -25,8 +25,13 @@ from .models import (
     CheckReport,
     ChecklistItem,
     ChecklistResult,
+    IssueRecord,
+    OnsiteRecord,
     Report,
+    ReportImage,
     ReviewLog,
+    SystemUpdateRecord,
+    TrueAlarmRecord,
     User,
 )
 
@@ -58,7 +63,53 @@ def index():
         "index.html", reports=reports, month=month, pending=pending, void_requests=void_requests,
         pending_checks=pending_checks,
         today=date.today().isoformat(), can_create=perm.can_create(current_user),
+        official=last_official(date.today() + timedelta(days=1)),
     )
+
+
+def last_official(d):
+    """d 之前最近一份已核准（正式）的日報。"""
+    return (Report.query.filter(Report.report_date < d, Report.status == "approved")
+            .order_by(Report.report_date.desc()).first())
+
+
+def _copy_cols(obj, model, skip=("id", "report_id")):
+    return {c.name: getattr(obj, c.name) for c in model.__table__.columns if c.name not in skip}
+
+
+COPY_REPORT_FIELDS = ("issue_purpose", "inspection_time", "inspection_summary", "second_line_support", "onsite_summary",
+                      "alarm_false")
+
+
+def _copy_official(report, src):
+    """複製正式日報的內容：封面、紀錄、告警、檢查表（另外處理）。不複製：日期、文件編號、版次、撰寫人、
+    值班人員（今天的建立者）、送審 / 核准 / 作廢狀態與截圖。"""
+    for f in COPY_REPORT_FIELDS:
+        setattr(report, f, getattr(src, f))
+    report.alarm_new = 0  # 內容與前一份相同時沒有新增；有新告警再改
+    for rel, model in (("issues", IssueRecord), ("onsite_records", OnsiteRecord),
+                       ("system_updates", SystemUpdateRecord), ("true_alarms", TrueAlarmRecord)):
+        for row in getattr(src, rel):
+            getattr(report, rel).append(model(**_copy_cols(row, model)))
+
+
+def _copy_photos(report, src):
+    """現場照片、告警照片連同檔案一起複製（截圖不複製）。"""
+    import shutil
+    import uuid
+
+    root = current_app.config["UPLOAD_DIR"]
+    os.makedirs(os.path.join(root, str(report.id)), exist_ok=True)
+    for img in src.images:
+        if img.kind == "screenshot":
+            continue
+        path = os.path.join(root, str(src.id), img.filename)
+        if not os.path.isfile(path):
+            continue
+        name = f"{uuid.uuid4().hex}{os.path.splitext(img.filename)[1]}"
+        shutil.copyfile(path, os.path.join(root, str(report.id), name))
+        db.session.add(ReportImage(report_id=report.id, kind=img.kind, filename=name, original_name=img.original_name,
+                                   order=img.order, uploaded_by_id=current_user.id))
 
 
 @bp.route("/reports/new", methods=["POST"])
@@ -76,7 +127,11 @@ def create():
         flash(f"{d} 的日報已經存在。", "error")
         return redirect(url_for("views.detail", report_id=existing.id))
 
-    prev = Report.query.filter(Report.report_date < d).order_by(Report.report_date.desc()).first()
+    # 預設複製上一份已核准（正式）日報的全部內容，截圖除外；取消勾選時只沿用值班、核准人與已知告警
+    shown = request.form.get("copy_shown") == "1"
+    copy = request.form.get("copy_prev") == "1" if shown else True
+    official = last_official(d) if copy else None
+    prev = official or Report.query.filter(Report.report_date < d).order_by(Report.report_date.desc()).first()
     report = Report(
         report_date=d,
         doc_no=docno.doc_no(d),
@@ -90,39 +145,33 @@ def create():
         if len(only) == 1:  # 只有一位核准人時預設指定給他
             report.approver_id, report.approver_name = only[0].id, only[0].name
     if prev:
-        # 沿用前一份日報的固定資料、已知告警清單與檢查表備註；檢查結果每天重新勾選
+        # 固定資料與已知告警清單；告警計數滾動：昨天的新增今天變成已知
         report.second_line_support = prev.second_line_support
         report.approver_id = prev.approver_id
         report.approver_name = prev.approver_name
         report.inspection_time = prev.inspection_time
         report.alarm_known = (prev.alarm_known or 0) + (prev.alarm_new or 0)
         for row in prev.alarm_rows:
-            report.alarm_rows.append(
-                AlarmSummaryRow(
-                    order=row.order,
-                    category=row.category,
-                    item=row.item,
-                    device_name=row.device_name,
-                    description=row.description,
-                    reason=row.reason,
-                    false_alarm=row.false_alarm,
-                    note=row.note,
-                )
-            )
+            report.alarm_rows.append(AlarmSummaryRow(**_copy_cols(row, AlarmSummaryRow)))
+    if official:
+        _copy_official(report, official)
     db.session.add(report)
     db.session.flush()
 
-    prev_notes = {}
+    prev_results = {}
     if prev:
-        prev_notes = dict(
-            db.session.query(ChecklistResult.item_id, ChecklistResult.note)
-            .filter(ChecklistResult.report_id == prev.id, ChecklistResult.note != "")
-            .all()
-        )
+        q = db.session.query(ChecklistResult.item_id, ChecklistResult.result, ChecklistResult.note).filter(
+            ChecklistResult.report_id == prev.id)
+        prev_results = {i: (res if official else None, note or "") for i, res, note in q}
     for (item_id,) in db.session.query(ChecklistItem.id).filter_by(active=True):
-        db.session.add(ChecklistResult(report_id=report.id, item_id=item_id, note=prev_notes.get(item_id, "")))
+        res, note = prev_results.get(item_id, (None, ""))
+        db.session.add(ChecklistResult(report_id=report.id, item_id=item_id, result=res, note=note))
+    if official:
+        _copy_photos(report, official)
     db.session.commit()
-    flash(f"已建立 {d} 日報 {report.doc_no}。", "success")
+    flash(f"已建立 {d} 日報 {report.doc_no}"
+          + (f"，已複製 {official.report_date} 已核准日報的內容（截圖除外），請逐項確認今天的狀況。" if official else "。"),
+          "success")
     return redirect(url_for("editors.basic", report_id=report.id))
 
 
