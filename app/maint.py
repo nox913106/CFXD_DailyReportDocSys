@@ -49,7 +49,14 @@ def next_backup(now=None):
     return at if at > now else at + timedelta(days=1)
 
 
+def request_health():
+    """設定變更後呼叫：維護服務下一輪（約 10 秒內）重新做健康檢查，系統狀態頁就不會顯示變更前的結果。"""
+    sysconf.put("health_refresh", datetime.now().isoformat(timespec="seconds"))
+
+
 def health_due(now=None):
+    if sysconf.get("health_refresh"):
+        return True
     if not sysconf.get("health_enabled"):
         return False
     last = sysconf.get("health_last") or {}
@@ -69,6 +76,7 @@ def run_health(trigger="scheduled"):
                "warn": sum(1 for i in items if i["status"] == "warn"),
                "fail": sum(1 for i in items if i["status"] == "fail"), "items": items}
     sysconf.put("health_last", summary)
+    sysconf.put("health_refresh", "")
     db.session.commit()
     return summary
 

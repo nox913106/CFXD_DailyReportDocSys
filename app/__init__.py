@@ -2,7 +2,7 @@ import os
 import sqlite3
 
 from dotenv import load_dotenv
-from flask import Flask, Request
+from flask import Flask, Request, request
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from flask_login import LoginManager
@@ -104,6 +104,20 @@ def create_app():
     from .settings_views import bp as settings_bp
 
     app.register_blueprint(settings_bp)
+
+    @app.after_request
+    def _refresh_health(resp):
+        """系統管理員在設定頁變更任何設定後，健康檢查結果跟著更新（由維護服務在背景執行）。"""
+        if (request.method == "POST" and request.path.startswith("/admin/") and resp.status_code < 400
+                and request.endpoint != "settings.health_run"):
+            from . import maint
+
+            try:
+                maint.request_health()
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+        return resp
 
     from . import ai, ocr
 

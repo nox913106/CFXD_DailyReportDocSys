@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_status.html" import row, job_rows %}
 {% block title %}系統狀態 - CFXD{% endblock %}
+{% block head %}{% if refreshing and worker_alive %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
 {% block content %}
 <p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>
 {% include "_admin_nav.html" %}
@@ -26,6 +27,9 @@
       </form>
     </div>
   </div>
+  {% if refreshing and worker_alive %}
+  <div class="flash">設定已變更，背景正在重新檢查（約 10～30 秒，頁面會自動更新）。下面是變更前的結果。</div>
+  {% endif %}
   {% if last %}
   <table class="list health">
     {% for g, items in groups.items() %}

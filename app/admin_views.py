@@ -47,6 +47,7 @@ def index():
              "反向代理": "是" if os.environ.get("BEHIND_PROXY") == "1" else "否",
              "Cookie 只經 HTTPS": "是" if current_app.config["SESSION_COOKIE_SECURE"] else "否"}
     return render_template("admin_status.html", tab="status", last=last, groups=groups, infra=infra,
+                           refreshing=bool(sysconf.get("health_refresh")),
                            health=sysconf.many(("health_enabled", "health_interval_hours")),
                            jobs=_jobs(5), **_job_ctx())
 

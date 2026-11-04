@@ -41,6 +41,7 @@ DEFAULTS = {
     # 內部狀態（不在表單上）
     "backup_last_scheduled": "",
     "health_last": None,
+    "health_refresh": "",  # 設定變更後要求維護服務盡快重新檢查（時間）
 }
 
 # 資料庫沒有值時沿用 .env（舊版安裝）

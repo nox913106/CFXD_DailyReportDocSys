@@ -1280,6 +1280,15 @@ def test_admin_pdf_upload_and_tls(app, tmp_path):
     html = b.post("/admin/settings/pdf/template", {"template": (xlsx(["Alarm Summary", "Summary", "Virtual Machines", "Software", "Physical devices", "PI"]), "CheckList.xlsx")},
                   content_type="multipart/form-data")
     assert "已更新 CheckList 範本" in html and "下載目前的範本" in html
+    # 上傳後系統狀態頁不再顯示變更前的檢查結果：維護服務下一輪重新檢查
+    from app import maint, sysconf
+
+    with app.app_context():
+        assert sysconf.get("health_refresh") and maint.health_due()
+        maint.tick()
+        last = sysconf.get("health_last")
+        assert not sysconf.get("health_refresh")
+        assert any(i["name"] == "CheckList 範本" and i["status"] == "ok" for i in last["items"])
     assert b.c.get("/admin/settings/pdf/template").status_code == 200
 
     html = b.post("/admin/settings/pdf/font", {"fonts": [(io.BytesIO(b"\x00\x01\x00\x00abc"), "calibri.ttf"),
