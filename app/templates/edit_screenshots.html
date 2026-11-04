@@ -1,8 +1,14 @@
 {% extends "report_base.html" %}
-{% import "macros.html" as m %}
+{% import "macros.html" as m with context %}
 {% block tab %}
 <section class="card">
-  <h3>CFXD SLA Daily Report_Screenshot</h3>
+  <div class="row-between">
+    <h3>CFXD SLA Daily Report_Screenshot</h3>
+    {% if report.editable %}<a class="button" href="{{ url_for('editors.shot_batch', report_id=report.id) }}">批次上傳（依檔名自動對應章節）</a>{% endif %}
+  </div>
+  {% set nstaged = report.images|selectattr('kind', 'equalto', 'staged')|list|length %}
+  {% if nstaged %}<div class="flash">批次上傳的暫存區還有 {{ nstaged }} 張還沒放入報告。
+    <a href="{{ url_for('editors.shot_batch', report_id=report.id) }}">前往確認</a></div>{% endif %}
   <p class="hint">圖片上傳後立即儲存，不需要按儲存。可用 ◀ ▶ 調整同一章節內的順序。
     上傳後系統會在背景辨識截圖右下角 / 右上角的系統時間（每張約 1–2 秒），確認是 {{ report.report_date }} 當天的畫面。</p>
   {% set shots = report.images|selectattr('kind', 'equalto', 'screenshot')|list %}

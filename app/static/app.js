@@ -177,4 +177,87 @@
     });
     drop.addEventListener("drop", function (e) { upload(zone, e.dataTransfer.files); });
   });
+
+  // ---------- 截圖批次上傳：一次上傳一個檔案（不受單次上傳上限影響），保留資料夾路徑 ----------
+
+  function walkEntry(entry, prefix, out) {
+    return new Promise(function (resolve) {
+      if (entry.isFile) {
+        entry.file(function (f) { out.push({ file: f, path: prefix + f.name }); resolve(); }, function () { resolve(); });
+      } else if (entry.isDirectory) {
+        var reader = entry.createReader(), all = [];
+        (function read() {
+          reader.readEntries(function (ents) {
+            if (!ents.length) {
+              Promise.all(all.map(function (e) { return walkEntry(e, prefix + entry.name + "/", out); })).then(resolve);
+            } else { all = all.concat(Array.prototype.slice.call(ents)); read(); }
+          }, function () { resolve(); });
+        })();
+      } else { resolve(); }
+    });
+  }
+
+  function batchUpload(zone, items) {
+    if (!items.length) return;
+    var bar = zone.querySelector("progress"), log = zone.querySelector(".batch-log");
+    var ok = 0, skipped = [];
+    bar.hidden = false; bar.max = items.length; bar.value = 0;
+    zone.classList.add("busy");
+    var chain = Promise.resolve();
+    items.forEach(function (it) {
+      chain = chain.then(function () {
+        var fd = new FormData();
+        fd.append("files", it.file, it.path);
+        return api(zone.dataset.batchUpload, { method: "POST", body: fd }).then(function (data) {
+          (data.results || []).forEach(function (r) {
+            if (r.status === "staged") ok++; else skipped.push(r.path + "：" + r.note);
+          });
+        }).catch(function (err) { skipped.push(it.path + "：" + err.message); })
+          .then(function () { bar.value += 1; log.textContent = "已上傳 " + bar.value + " / " + items.length; });
+      });
+    });
+    chain.then(function () {
+      zone.classList.remove("busy");
+      if (skipped.length) alert("放入暫存區 " + ok + " 張，略過 " + skipped.length + " 個：\n" + skipped.slice(0, 30).join("\n"));
+      location.reload();
+    });
+  }
+
+  document.querySelectorAll("[data-batch-upload]").forEach(function (zone) {
+    zone.querySelectorAll("[data-batch-files]").forEach(function (input) {
+      input.addEventListener("change", function () {
+        var items = Array.prototype.map.call(input.files, function (f) {
+          return { file: f, path: f.webkitRelativePath || f.name };
+        });
+        input.value = "";
+        batchUpload(zone, items);
+      });
+    });
+    ["dragenter", "dragover"].forEach(function (ev) {
+      zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.add("over"); });
+    });
+    ["dragleave", "drop"].forEach(function (ev) {
+      zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.remove("over"); });
+    });
+    zone.addEventListener("drop", function (e) {
+      var out = [], entries = Array.prototype.map.call(e.dataTransfer.items || [], function (i) {
+        return i.webkitGetAsEntry ? i.webkitGetAsEntry() : null;
+      }).filter(Boolean);
+      if (!entries.length) {
+        batchUpload(zone, Array.prototype.map.call(e.dataTransfer.files, function (f) { return { file: f, path: f.name }; }));
+        return;
+      }
+      Promise.all(entries.map(function (en) { return walkEntry(en, "", out); })).then(function () {
+        out.sort(function (a, b) { return a.path < b.path ? -1 : 1; });
+        batchUpload(zone, out);
+      });
+    });
+  });
+
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-use-suggest]");
+    if (!b) return;
+    var sel = document.querySelector('select[name="' + b.dataset.useSuggest + '"]');
+    if (sel) { sel.value = b.dataset.value; markDirty(sel); }
+  });
 })();

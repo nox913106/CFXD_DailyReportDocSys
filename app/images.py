@@ -153,6 +153,32 @@ def move(report_id, image_id):
     return jsonify(ok=True)
 
 
+@bp.route("/<int:image_id>/section", methods=["POST"])
+def change_section(report_id, image_id):
+    """把截圖移到其他章節（審核者標記放錯章節時用）；清除標記並記錄。"""
+    from flask import flash, redirect
+
+    from .models import ReviewLog
+
+    _editable_report(report_id)
+    img = ReportImage.query.filter_by(id=image_id, report_id=report_id, kind="screenshot").first_or_404()
+    sec = db.session.get(ScreenshotSection, request.form.get("section_id", type=int) or 0)
+    if not sec:
+        abort(400)
+    old = db.session.get(ScreenshotSection, img.section_id)
+    if sec.id != img.section_id:
+        top = (db.session.query(db.func.max(ReportImage.order)).filter_by(report_id=report_id, kind="screenshot",
+                                                                         section_id=sec.id).scalar() or 0)
+        img.section_id, img.order = sec.id, top + 1
+        img.place_source, img.placed_by_id = "manual", current_user.id
+        db.session.add(ReviewLog(report_id=report_id, action="move_image", actor_id=current_user.id,
+                                 comment=f"{img.original_name}：{old.code if old else '?'} → {sec.code} {sec.title}"))
+    img.misplaced = None
+    db.session.commit()
+    flash(f"已把 {img.original_name} 移到 {sec.code} {sec.title}。", "success")
+    return redirect(url_for("editors.screenshots", report_id=report_id) + f"#sec-{sec.id}")
+
+
 @bp.route("/ocr", methods=["POST"])
 def requeue_ocr(report_id):
     """重新辨識這份日報的所有截圖。"""

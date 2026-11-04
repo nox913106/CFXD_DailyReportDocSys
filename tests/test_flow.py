@@ -349,7 +349,7 @@ def finish_ocr(app, rid):
 
     with app.app_context():
         for img in ReportImage.query.filter_by(report_id=rid, kind="screenshot"):
-            img.ocr_status, img.ocr_result = "done", '{"status": "no_clock"}'
+            img.ocr_status, img.ocr_result = "done", '{"status": "no_clock", "text": "", "ocr": {}}'
         db.session.commit()
 
 
@@ -1747,3 +1747,170 @@ def test_preview_watermark_and_reminder(app, monkeypatch):
         assert "已提醒 carol@contoso.com, duty@contoso.com（尚未建立）" in res
         assert sent and "期限 13:00" in sent[0][1]
         assert not delivery.reminder_due(datetime(2026, 11, 7, 12, 45))  # 一天一次
+
+
+def _png(seed, size=(320, 200), tweak=0):
+    """測試用截圖：不同 seed 的畫面差很多；tweak 只改一小塊（同一個系統畫面，不同天）。"""
+    import io
+    import random
+
+    from PIL import Image, ImageDraw
+
+    rnd = random.Random(seed)
+    im = Image.new("RGB", size, "white")
+    d = ImageDraw.Draw(im)
+    for _ in range(12):
+        x, y = rnd.randrange(size[0]), rnd.randrange(size[1])
+        d.rectangle([x, y, x + rnd.randrange(30, 140), y + rnd.randrange(20, 90)], fill=tuple(rnd.randrange(256) for _ in range(3)))
+    if tweak:
+        d.text((5, size[1] - 12), f"2026/11/0{tweak} 10:0{tweak}", fill="black")
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_screenshot_filename_rules():
+    from app.shot_batch import code_of, parse_path
+
+    codes = {"1", "4", "4.1", "4.3", "14.1", "5"}
+    assert [code_of(n) for n in ("4.3_DI.png", "4.3-2.png", "04.03 DI.png", "4.3.png", "14.1(2).jpg", "DI.png", "43_x.png")] == \
+        ["4.3", "4.3", "4.3", "4.3", "14.1", None, "43"]
+    assert parse_path("4.3_DI.png", codes) == ("4.3", "filename", "")
+    assert parse_path("today/4.3 DI/IMG_001.png", codes) == ("4.3", "folder", "")
+    assert parse_path("4.3 DI/4.3_2.png", codes) == ("4.3", "filename", "")
+    assert parse_path("5 Veeam/4.3_x.png", codes)[0] is None  # 檔名與資料夾不一致：待分類
+    assert parse_path("4.9_x.png", codes) == (None, None, "章節編號 4.9 不存在")
+    assert parse_path("Screenshot 2026-11-04 100512.png", codes)[0] is None
+    assert parse_path("4.10_x.png", codes)[0] is None  # 4.10 ≠ 4.1
+
+
+def test_screenshot_batch_upload(app):
+    import io
+    import json
+    import zipfile
+
+    from app import db
+    from app.models import Report, ReportImage, ReviewLog, ScreenshotSection
+
+    alice, boss = Browser(app), Browser(app)
+    alice.login("alice")
+    boss.login("boss")
+    set_role(app, "boss", "file_manager")
+    with app.app_context():
+        sec = {s.code: s.id for s in ScreenshotSection.query.all()}
+
+    # 前一份正式日報：4.1、4.3 各一張
+    prev = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-03"}))
+    hdr = {"X-CSRFToken": alice.tok}
+    for code, seed in (("4.1", 41), ("4.3", 43)):
+        r = alice.c.post(f"/reports/{prev}/images", headers=hdr, content_type="multipart/form-data",
+                         data={"kind": "screenshot", "section_id": str(sec[code]), "files": (io.BytesIO(_png(seed, tweak=3)), "x.png")})
+        assert r.status_code == 200
+    with app.app_context():
+        db.session.get(Report, prev).status = "approved"
+        db.session.commit()
+
+    rid = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-04"}))
+    html = alice.get(f"/reports/{rid}/screenshots/batch")
+    assert "4.3_DI.png" in html and "19.5_System Log.png" in html and "17.1_HA Status-Syslog.png" in html
+    csv = alice.c.get(f"/reports/{rid}/screenshots/batch/names.csv").get_data(as_text=True)
+    assert csv.count("\r\n") == 47 and "4.3,\"DI\",4.3_DI.png,4.3_DI_2.png" in csv
+
+    def up(path, data):
+        r = alice.c.post(f"/reports/{rid}/screenshots/batch/upload", headers=hdr, content_type="multipart/form-data",
+                         data={"files": (io.BytesIO(data), path)})
+        assert r.status_code == 200
+        return r.get_json()["results"]
+
+    assert up("4.1_ACC.png", _png(41, tweak=4))[0]["section"] == "4.1"  # 檔名
+    assert up("tdy/4.3 DI/IMG_1.png", _png(43, tweak=4))[0]["section"] == "4.3"  # 資料夾
+    assert up("dup/4.1_again.png", _png(41, tweak=4))[0]["status"] == "skipped"  # 同一張傳兩次
+    old = up("4.3_old.png", _png(43, tweak=3))  # 昨天那一張原封不動
+    assert old[0]["status"] == "staged"
+    z = io.BytesIO()
+    with zipfile.ZipFile(z, "w") as zf:
+        zf.writestr("day/5 Veeam/4.3_wrong.png", _png(5))  # 檔名與資料夾不一致
+        zf.writestr("day/4.9_nope.png", _png(49))  # 章節不存在
+        zf.writestr("day/Screenshot 1.png", _png(41, tweak=5))  # 沒有編號，但畫面像 4.1
+        zf.writestr("day/readme.txt", b"hello")
+    res = {r["path"]: r for r in up("batch.zip", z.getvalue())}
+    assert res["batch.zip/day/readme.txt"]["status"] == "skipped"
+    assert "不一致" in res["batch.zip/day/5 Veeam/4.3_wrong.png"]["note"]
+    with app.app_context():
+        assert db.session.get(Report, rid).images and not [i for i in db.session.get(Report, rid).images if i.kind == "screenshot"]
+
+    html = alice.get(f"/reports/{rid}/screenshots/batch")
+    assert "待分類（3）" in html and "與 2026-11-03 日報" in html and "截圖時間辨識中" in html
+    assert "建議：4.1 ACC" in html and 'disabled' in html.split("放入報告（")[0][-200:]
+    # 不能送審：暫存區還有截圖
+    fill_checklist(alice, rid)
+    assert "暫存區還有" in alice.post(f"/reports/{rid}/submit")
+
+    with app.app_context():
+        imgs = {i.source_path: i for i in ReportImage.query.filter_by(report_id=rid, kind="staged")}
+        for i in imgs.values():  # 模擬 OCR 完成：日期正確，只有 IMG_1 是別天
+            dates = ["2026-11-02"] if i.source_path.endswith("IMG_1.png") else ["2026-11-04"]
+            i.ocr_status, i.ocr_result = "done", json.dumps({"status": "ok", "dates": dates, "time": "10:00", "text": "", "ocr": {}})
+        db.session.commit()
+        ids = {p.split("/")[-1]: i.id for p, i in imgs.items()}
+
+    html = alice.get(f"/reports/{rid}/screenshots/batch")
+    assert "截圖日期是 2026-11-02，不是 2026-11-04" in html
+    # 移除舊圖與日期錯的；採用建議；把其餘待分類指定章節；全部放入前不能有問題
+    alice.post(f"/reports/{rid}/screenshots/batch/assign", {"remove": str(ids["4.3_old.png"])})
+    alice.post(f"/reports/{rid}/screenshots/batch/assign", {"remove": str(ids["IMG_1.png"])})
+    html = alice.post(f"/reports/{rid}/screenshots/batch/commit", {
+        f"sec_{ids['Screenshot 1.png']}": str(sec["4.1"]), f"sug_{ids['Screenshot 1.png']}": str(sec["4.1"]),
+        f"sec_{ids['4.3_wrong.png']}": str(sec["4.3"])})
+    assert "待處理" in html or "還有 1 個問題" in html  # 4.9_nope 還沒指定
+    html = alice.post(f"/reports/{rid}/screenshots/batch/commit", {f"sec_{ids['4.9_nope.png']}": str(sec["5"])})
+    assert "張數與前一份正式日報不同" in html  # 4.1 變 2 張、4.3 變 1 張（同）、5 新增
+    html = alice.post(f"/reports/{rid}/screenshots/batch/commit", {"confirm_counts": "1"})
+    assert "已放入 4 張截圖" in html
+    with app.app_context():
+        shots = ReportImage.query.filter_by(report_id=rid, kind="screenshot").order_by(ReportImage.section_id, ReportImage.order).all()
+        got = sorted((db.session.get(ScreenshotSection, i.section_id).code, i.place_source) for i in shots)
+        assert got == [("4.1", "filename"), ("4.1", "suggest"), ("4.3", "manual"), ("5", "manual")]
+        assert all(i.placed_by_id and i.placed_at for i in shots)
+        assert not ReportImage.query.filter_by(report_id=rid, kind="staged").count()
+        log = ReviewLog.query.filter_by(report_id=rid, action="screenshots").one()
+        assert "放入 4 張" in log.comment and "已確認張數差異" in log.comment
+
+
+def test_review_marks_misplaced_screenshot(app):
+    """審核者在截圖旁勾選「放錯章節」退回；撰寫人看到標記，移到正確章節後標記清除並留紀錄。"""
+    import io
+
+    from app import db
+    from app.models import Report, ReportImage, ReviewLog, ScreenshotSection
+
+    alice, boss = Browser(app), Browser(app)
+    alice.login("alice")
+    boss.login("boss")
+    set_role(app, "boss", "file_manager")
+    with app.app_context():
+        sec = {s.code: s.id for s in ScreenshotSection.query.all()}
+    rid = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-04"}))
+    fill_checklist(alice, rid)
+    r = alice.c.post(f"/reports/{rid}/images", headers={"X-CSRFToken": alice.tok}, content_type="multipart/form-data",
+                     data={"kind": "screenshot", "section_id": str(sec["4.1"]), "files": (io.BytesIO(_png(7)), "veeam.png")})
+    img_id = r.get_json()["images"][0]["id"]
+    finish_ocr(app, rid)
+    alice.get(f"/reports/{rid}")
+    assert "已送出審核" in alice.post(f"/reports/{rid}/submit")
+
+    html = boss.get(f"/reports/{rid}")
+    assert 'name="misplaced"' in html and 'form="review-form"' in html and "4.1 ACC" in html
+    boss.post(f"/reports/{rid}/review", {"action": "reject", "comment": "截圖位置錯", "misplaced": str(img_id)})
+    with app.app_context():
+        assert db.session.get(ReportImage, img_id).misplaced
+        assert "標記放錯章節：4.1 veeam.png" in db.session.get(Report, rid).review_comment
+
+    html = alice.get(f"/reports/{rid}/screenshots")
+    assert "審核者標記：放錯章節" in html and "移到這個章節" in html
+    html = alice.post(f"/reports/{rid}/images/{img_id}/section", {"section_id": str(sec["5.1"])})
+    assert "已把 veeam.png 移到 5.1 Veeam Backup" in html and "審核者標記：放錯章節" not in html
+    with app.app_context():
+        img = db.session.get(ReportImage, img_id)
+        assert img.section_id == sec["5.1"] and not img.misplaced and img.place_source == "manual"
+        assert "4.1 → 5.1" in ReviewLog.query.filter_by(report_id=rid, action="move_image").one().comment

@@ -1,0 +1,120 @@
+{% extends "report_base.html" %}
+{% block head %}{% if r.waiting %}<meta http-equiv="refresh" content="8">{% endif %}{% endblock %}
+{% block tab %}
+<section class="card">
+  <div class="row-between">
+    <h3>截圖批次上傳</h3>
+    <a href="{{ url_for('editors.screenshots', report_id=report.id) }}">← 回到逐章節上傳</a>
+  </div>
+  <ol class="steps">
+    <li><b>上傳到暫存區</b>：選檔案、整個資料夾或 zip。報告內容不會變動。</li>
+    <li><b>確認</b>：檔名或資料夾開頭是章節編號的自動對應；其他的進「待分類」由你指定。下方每個章節並排「前一份正式日報」與「今天」。</li>
+    <li><b>放入報告</b>：沒有待分類、辨識完成、日期正確、不是舊圖，才能一次全部放入。</li>
+  </ol>
+  <p class="hint">檔名規則：<code>章節編號_任意文字.png</code>，例如 <code>4.3_DI.png</code>、<code>14.1_HA Status_2.png</code>；
+    或把截圖放在 <code>4.3 DI</code> 這種以章節編號開頭的資料夾。
+    <a href="{{ url_for('editors.shot_batch_names', report_id=report.id) }}">下載 46 個章節的建議檔名清單（CSV）</a>
+    · <a href="#names">在下方查看</a></p>
+  {% if can_edit %}
+  <div class="batch-drop" data-batch-upload="{{ url_for('editors.shot_batch_upload', report_id=report.id) }}" tabindex="0">
+    <p>拖曳截圖、資料夾或 zip 到這裡，或
+      <label class="link">選擇檔案<input type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp,.zip" hidden data-batch-files></label>
+      · <label class="link">選擇資料夾<input type="file" webkitdirectory multiple hidden data-batch-files></label></p>
+    <progress value="0" max="1" hidden></progress>
+    <div class="batch-log hint"></div>
+  </div>
+  {% else %}<p class="flash">{{ can_edit.reason }}</p>{% endif %}
+</section>
+
+{% if r.entries %}
+<form method="post" action="{{ url_for('editors.shot_batch_assign', report_id=report.id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <section class="card">
+    <div class="row-between">
+      <h3>暫存區（{{ r.entries|length }} 張）</h3>
+      <div class="actions">
+        {% if r.blocking %}<span class="sev sev-fail">待處理 {{ r.blocking }}</span>{% else %}<span class="sev sev-ok">全部通過</span>{% endif %}
+        <span class="hint">比對基準：{{ r.prev.report_date ~ ' ' ~ r.prev.doc_no if r.prev else '沒有前一份正式日報' }}</span>
+      </div>
+    </div>
+
+    {% set unassigned = r.entries|selectattr('img.section_id', 'none')|list %}
+    {% macro staged(it) %}
+      {% set img = it.img %}
+      {% set src = url_for('images.show', report_id=report.id, image_id=img.id) %}
+      {% set st = ocr_status(img, report.report_date.isoformat()) %}
+      <figure class="staged {{ 'has-block' if it.problems|selectattr(0, 'equalto', 'block')|list }}">
+        <a href="{{ src }}" target="_blank" rel="noopener"><img src="{{ src }}" loading="lazy" alt=""></a>
+        <figcaption>
+          <div class="path" title="{{ img.source_path }}">{{ img.source_path }}</div>
+          <span class="ocr ocr-{{ st[0] }}">{{ st[1] }}</span>
+          {% if img.place_source %}<span class="badge src">{{ {'filename': '檔名', 'folder': '資料夾', 'manual': '人工指定', 'suggest': '採用建議'}[img.place_source] }}</span>{% endif %}
+          {% for kind, msg in it.problems %}<div class="problem {{ kind }}">{{ msg }}</div>{% endfor %}
+          <select name="sec_{{ img.id }}" {{ 'disabled' if not can_edit }}>
+            <option value="">（待分類）</option>
+            {% for s in r.sections %}<option value="{{ s.id }}" {{ 'selected' if s.id == img.section_id }}>{{ s.code }} {{ s.title }}</option>{% endfor %}
+          </select>
+          {% if it.suggest %}
+          <input type="hidden" name="sug_{{ img.id }}" value="{{ it.suggest.section.id }}">
+          <button type="button" class="link" data-use-suggest="sec_{{ img.id }}" data-value="{{ it.suggest.section.id }}">
+            建議：{{ it.suggest.section.code }} {{ it.suggest.section.title }}（與前一份畫面相似）</button>
+          {% endif %}
+          {% if can_edit %}<button type="submit" name="remove" value="{{ img.id }}" class="link danger">移除</button>{% endif %}
+        </figcaption>
+      </figure>
+    {% endmacro %}
+
+    {% if unassigned %}
+    <h4 class="fail-text">待分類（{{ unassigned|length }}）</h4>
+    <div class="staged-grid">{% for it in unassigned %}{{ staged(it) }}{% endfor %}</div>
+    {% endif %}
+
+    {% for s in r.sections %}
+    {% set mine = r.entries|selectattr('img.section_id', 'equalto', s.id)|list %}
+    {% if mine %}
+    {% set c = r.counts|selectattr('section.id', 'equalto', s.id)|first %}
+    <div class="compare" id="cmp-{{ s.id }}">
+      <h4>{{ s.code }} {{ s.title }}
+        <span class="hint">前一份 {{ c.prev }} 張 · 報告中已有 {{ c.placed }} 張 · 這次 {{ c.staged }} 張</span>
+        {% if c.diff %}<span class="sev sev-warn">張數不同</span>{% endif %}</h4>
+      <div class="compare-row">
+        <div class="compare-prev">
+          <div class="hint">前一份正式日報</div>
+          {% for p in r.by_prev.get(s.id, []) %}
+          <a href="{{ url_for('images.show', report_id=p.report_id, image_id=p.id) }}" target="_blank" rel="noopener">
+            <img src="{{ url_for('images.show', report_id=p.report_id, image_id=p.id) }}" loading="lazy" alt=""></a>
+          {% else %}<p class="hint">（沒有）</p>{% endfor %}
+        </div>
+        <div class="staged-grid">{% for it in mine %}{{ staged(it) }}{% endfor %}</div>
+      </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+
+    {% if can_edit %}
+    <div class="actions sticky-actions">
+      <button type="submit" class="secondary">儲存章節選擇</button>
+      {% if r.count_diff %}
+      <label class="inline"><input type="checkbox" name="confirm_counts" value="1">
+        已確認張數差異（{{ r.count_diff|map(attribute='section.code')|join('、') }}）</label>
+      {% endif %}
+      <button type="submit" formaction="{{ url_for('editors.shot_batch_commit', report_id=report.id) }}" {{ 'disabled' if not r.can_commit }}
+              title="{{ '' if r.can_commit else '還有待處理的問題' }}">放入報告（{{ r.entries|length }} 張）</button>
+      <button type="submit" name="discard" value="1" class="danger" onclick="return confirm('清空暫存區？已上傳的 {{ r.entries|length }} 張都會移除。')">清空暫存區</button>
+    </div>
+    {% endif %}
+  </section>
+</form>
+{% endif %}
+
+<section class="card" id="names">
+  <h3>建議檔名（{{ names|length }} 個章節）</h3>
+  <p class="hint">同一章節有多張時在後面加 <code>_2</code>、<code>_3</code>。章節編號後面的文字可以自由寫，系統只看開頭的編號（<code>04.03</code> 等同 <code>4.3</code>）。</p>
+  <div class="tablewrap">
+  <table class="list names">
+    <tr><th>章節</th><th>名稱</th><th>建議檔名</th></tr>
+    {% for s, n in names %}<tr class="level{{ s.level }}"><td>{{ s.code }}</td><td>{{ s.title }}</td><td><code>{{ n }}</code></td></tr>{% endfor %}
+  </table>
+  </div>
+</section>
+{% endblock %}

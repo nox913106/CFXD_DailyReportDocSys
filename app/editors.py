@@ -19,6 +19,7 @@ from .models import (
     ScreenshotSection,
     SystemUpdateRecord,
     Report,
+    ReportImage,
     ReviewLog,
     TrueAlarmRecord,
     User,
@@ -337,5 +338,100 @@ def screenshots(report_id):
         if img.kind == "screenshot":
             by_section.setdefault(img.section_id, []).append(img)
     return render_template(
-        "edit_screenshots.html", report=report, tab="screenshots", sections=sections, by_section=by_section
+        "edit_screenshots.html", report=report, tab="screenshots", sections=sections, by_section=by_section,
+        all_sections=sections,
     )
+
+
+# ---------------------------------------------------------------- 截圖批次上傳（暫存區 → 確認 → 一次放入）
+
+
+def _batch_report(report_id):
+    report = get_report(report_id)
+    d = perm.can_edit(current_user, report)
+    if not d:
+        abort(403 if report.editable else 409, d.reason)
+    return report
+
+
+@bp.route("/screenshots/batch")
+def shot_batch(report_id):
+    from . import shot_batch as sb
+
+    report = get_report(report_id)
+    return render_template("edit_batch.html", report=report, tab="screenshots", r=sb.review(report),
+                           names=sb.suggested_names(), can_edit=perm.can_edit(current_user, report))
+
+
+@bp.route("/screenshots/batch/upload", methods=["POST"])
+def shot_batch_upload(report_id):
+    from flask import jsonify
+
+    from . import shot_batch as sb
+
+    report = _batch_report(report_id)
+    files = [(f.filename or "", f.read()) for f in request.files.getlist("files")]
+    return jsonify(results=sb.stage(report, files, current_user))
+
+
+def _apply_assignments(report, form):
+    """表單上每張暫存截圖的章節選擇；選了建議的章節記為「採用建議」。回傳變更張數。"""
+    from . import shot_batch as sb
+
+    n = 0
+    for k, v in form.items():
+        if not (k.startswith("sec_") and k[4:].isdigit()):
+            continue
+        cur = ReportImage.query.filter_by(id=int(k[4:]), report_id=report.id, kind="staged").first()
+        if cur and str(cur.section_id or "") != v:
+            src = "suggest" if v and form.get(f"sug_{k[4:]}") == v else "manual"
+            n += sb.assign(report, cur.id, int(v) if v.isdigit() else None, src)
+    return n
+
+
+@bp.route("/screenshots/batch/assign", methods=["POST"])
+def shot_batch_assign(report_id):
+    from . import shot_batch as sb
+
+    report = _batch_report(report_id)
+    f = request.form
+    n = _apply_assignments(report, f)
+    if f.get("remove"):
+        sb.remove(report, int(f["remove"]))
+        msg = "已從暫存區移除 1 張。"
+    elif f.get("discard") == "1":
+        for img in ReportImage.query.filter_by(report_id=report.id, kind="staged").all():
+            sb.remove(report, img.id)
+        msg = "已清空暫存區。"
+    else:
+        msg = f"已更新 {n} 張的章節。" if n else "沒有變更。"
+    db.session.commit()
+    flash(msg, "success")
+    return redirect(url_for("editors.shot_batch", report_id=report.id))
+
+
+@bp.route("/screenshots/batch/commit", methods=["POST"])
+def shot_batch_commit(report_id):
+    from . import shot_batch as sb
+
+    report = _batch_report(report_id)
+    _apply_assignments(report, request.form)
+    db.session.commit()
+    ok, msg = sb.commit(report, current_user, confirm_counts=request.form.get("confirm_counts") == "1")
+    flash(msg, "success" if ok else "error")
+    return redirect(url_for("editors.screenshots" if ok else "editors.shot_batch", report_id=report.id))
+
+
+@bp.route("/screenshots/batch/names.csv")
+def shot_batch_names(report_id):
+    """建議檔名清單（Excel 可直接開啟）。"""
+    from flask import Response
+
+    from . import shot_batch as sb
+
+    get_report(report_id)
+    rows = ["章節,名稱,建議檔名,同章節第 2 張"] + [
+        f'{s.code},"{s.title}",{n},{n[:-4]}_2.png' for s, n in sb.suggested_names()]
+    return Response("\ufeff" + "\r\n".join(rows) + "\r\n", mimetype="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="screenshot_filenames.csv"'})
+

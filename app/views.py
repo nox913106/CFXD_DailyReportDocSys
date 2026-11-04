@@ -114,7 +114,7 @@ def _copy_photos(report, src):
     root = current_app.config["UPLOAD_DIR"]
     os.makedirs(os.path.join(root, str(report.id)), exist_ok=True)
     for img in src.images:
-        if img.kind == "screenshot":
+        if img.kind not in ("onsite", "alarm"):  # 截圖（含暫存區）不複製
             continue
         path = os.path.join(root, str(src.id), img.filename)
         if not os.path.isfile(path):
@@ -201,7 +201,7 @@ def detail(report_id):
         "report_detail.html", report=report, can_review=review.allowed, principal=review.principal,
         checks=run_checks(report) if report.status not in ("voided", "closed") else None,
         timeline=delivery.timeline(report), ocr_pending=delivery.ocr_pending(report),
-        shots=[i for i in report.images if i.kind == "screenshot"]
+        shot_groups=_shot_groups(report)
         if review.allowed or (u.role in REVIEWER_ROLES and report.status == "approved") else [],
         snaps=snaps, ai_snap=next((s for s in snaps if s.ai_status), None),
         ai_enabled=ai_enabled(),
@@ -230,7 +230,11 @@ def submit(report_id):
         flash(f"檢查表還有 {missing} 個項目未勾選，請全部勾選後再送審。", "error")
         return redirect(url_for("editors.checklist_overview", report_id=report.id))
     from .delivery import ocr_pending
+    from .shot_batch import staged_count
 
+    if (n := staged_count(report)):
+        flash(f"截圖批次上傳的暫存區還有 {n} 張沒有放入報告，請放入或移除後再送審。", "error")
+        return redirect(url_for("editors.shot_batch", report_id=report.id))
     if (n := ocr_pending(report)):
         flash(f"還有 {n} 張截圖正在辨識系統時間，辨識完成後才能送審（審核者需要看到辨識結果）。", "error")
         return redirect(url_for("views.detail", report_id=report.id))
@@ -280,6 +284,18 @@ def review(report_id):
     else:
         report.status = "rejected"
         msg = "已退回給撰寫人" + (f"（代 {signer.name}）。" if principal else "。")
+    if action == "reject":
+        from .models import ReportImage, ScreenshotSection
+
+        marked = []
+        for raw in request.form.getlist("misplaced"):
+            img = ReportImage.query.filter_by(id=int(raw), report_id=report.id, kind="screenshot").first() if raw.isdigit() else None
+            if img:
+                img.misplaced = True
+                sec = db.session.get(ScreenshotSection, img.section_id)
+                marked.append(f"{sec.code if sec else '?'} {img.original_name}")
+        if marked:
+            comment += "\n標記放錯章節：" + "、".join(marked)
     report.reviewed_by_id = current_user.id
     report.reviewed_on_behalf_of_id = principal.id if principal else None
     report.reviewed_at = datetime.now()
@@ -291,6 +307,21 @@ def review(report_id):
     db.session.commit()
     flash(msg, "success")
     return redirect(url_for("views.detail", report_id=report.id))
+
+
+def _shot_groups(report):
+    """審核用：每個章節今天的截圖與前一份正式日報同章節的截圖並排。"""
+    from .models import ScreenshotSection
+    from .shot_batch import previous_official
+
+    prev = previous_official(report)
+    today, before = {}, {}
+    for i in sorted((i for i in report.images if i.kind == "screenshot"), key=lambda i: (i.order, i.id)):
+        today.setdefault(i.section_id, []).append(i)
+    for i in sorted((i for i in (prev.images if prev else []) if i.kind == "screenshot"), key=lambda i: (i.order, i.id)):
+        before.setdefault(i.section_id, []).append(i)
+    return [(s, today.get(s.id, []), before.get(s.id, []), prev)
+            for s in ScreenshotSection.query.order_by(ScreenshotSection.order) if s.id in today or s.id in before]
 
 
 def _can_request_ai(u, report):

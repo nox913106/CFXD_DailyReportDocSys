@@ -59,6 +59,14 @@
   <div class="ocr ocr-{{ st[0] }}" title="{{ (rec.text or (rec.ocr.values()|join(' / '))) if rec else '' }}">
     {{ st[1] }}{% if rec and (rec.dates or rec.time) %}：{{ rec.dates|join(', ') }} {{ rec.time }}{% endif %}</div>
   {% endif %}
+  {% if img.misplaced %}<div class="problem block">審核者標記：放錯章節</div>{% endif %}
+  {% if editable and img.misplaced and all_sections %}
+  <form method="post" action="{{ url_for('images.change_section', report_id=report.id, image_id=img.id) }}" class="move-section">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <select name="section_id">{% for s in all_sections %}<option value="{{ s.id }}" {{ 'selected' if s.id == img.section_id }}>{{ s.code }} {{ s.title }}</option>{% endfor %}</select>
+    <button type="submit" class="secondary">移到這個章節</button>
+  </form>
+  {% endif %}
   {% if editable %}
   <figcaption>
     <button type="button" class="link" data-move="up" title="往前">◀</button>

@@ -278,7 +278,8 @@ class ChecklistResult(db.Model):
 
 
 class ReportImage(db.Model):
-    """截圖與照片。kind: screenshot（section_id 指向截圖章節）/ onsite / alarm。"""
+    """截圖與照片。kind: screenshot（section_id 指向截圖章節）/ onsite / alarm /
+    staged（批次上傳的暫存區：還沒放進報告，section_id 是預定章節，空白 = 待分類）。"""
 
     id = db.Column(db.Integer, primary_key=True)
     report_id = db.Column(db.Integer, db.ForeignKey("report.id"), nullable=False, index=True)
@@ -295,6 +296,15 @@ class ReportImage(db.Model):
     ocr_error = db.Column(db.Text)
     ocr_started_at = db.Column(db.DateTime)
     ocr_at = db.Column(db.DateTime)
+    # 批次上傳：檔案指紋（找重複與沿用舊圖）、來源路徑、章節怎麼決定的、誰放進報告
+    sha256 = db.Column(db.String(64), index=True)
+    dhash = db.Column(db.String(16))
+    source_path = db.Column(db.String(512))
+    place_source = db.Column(db.String(12))  # filename / folder / manual / suggest / single（單章節上傳）
+    stage_note = db.Column(db.String(256))
+    placed_by_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    placed_at = db.Column(db.DateTime)
+    misplaced = db.Column(db.Boolean)  # 審核者標記「放錯章節」，移到正確章節後清除
 
 
 class ApprovalDelegation(db.Model):
@@ -339,6 +349,8 @@ REVIEW_ACTION_LABELS = {
     "close_cancel": "取消結案",
     "return": "退回修正",
     "delivery_retry": "重試發送",
+    "screenshots": "批次放入截圖",
+    "move_image": "截圖換章節",
     "void": "作廢",
     "void_request": "申請作廢",
     "void_request_reject": "駁回作廢申請",

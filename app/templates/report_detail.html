@@ -43,23 +43,41 @@
   {% if not can_review %}<span class="hint">· 等待核准人{% if report.approver_id %}或其代簽人{% endif %}審核</span>{% endif %}
 </div>
 {% endif %}
-{% if shots %}
+{% if shot_groups %}
 <details class="card no-print" open>
-  <summary><h3 class="inline">截圖（{{ shots|length }} 張，點圖開原尺寸）</h3></summary>
-  <div class="shot-grid">
-    {% for img in shots %}
-    {% set st = ocr_status(img, report.report_date.isoformat()) %}
-    <figure>
-      <a href="{{ url_for('images.show', report_id=report.id, image_id=img.id) }}" target="_blank" rel="noopener">
-        <img src="{{ url_for('images.show', report_id=report.id, image_id=img.id) }}" loading="lazy" alt="{{ img.original_name }}"></a>
-      <figcaption><span class="ocr ocr-{{ st[0] }}">{{ st[1] }}</span> {{ img.original_name }}</figcaption>
-    </figure>
-    {% endfor %}
+  <summary><h3 class="inline">截圖（依章節，左邊是前一份正式日報{% if shot_groups[0][3] %} {{ shot_groups[0][3].report_date }}{% endif %}，點圖開原尺寸）</h3></summary>
+  {% if can_review %}<p class="hint">截圖放錯章節：勾選「放錯章節」後按「退回」，撰寫人會在截圖頁看到標記並移到正確章節。</p>{% endif %}
+  {% for s, today, before, prev in shot_groups %}
+  <div class="compare">
+    <h4>{{ s.code }} {{ s.title }} <span class="hint">今天 {{ today|length }} 張 · 前一份 {{ before|length }} 張</span>
+      {% if prev and today|length != before|length %}<span class="sev sev-warn">張數不同</span>{% endif %}
+      {% if not today %}<span class="sev sev-fail">今天沒有截圖</span>{% endif %}</h4>
+    <div class="compare-row">
+      <div class="compare-prev">
+        <div class="hint">前一份</div>
+        {% for p in before %}<a href="{{ url_for('images.show', report_id=p.report_id, image_id=p.id) }}" target="_blank" rel="noopener">
+          <img src="{{ url_for('images.show', report_id=p.report_id, image_id=p.id) }}" loading="lazy" alt=""></a>
+        {% else %}<p class="hint">（沒有）</p>{% endfor %}
+      </div>
+      <div class="shot-grid">
+        {% for img in today %}
+        {% set st = ocr_status(img, report.report_date.isoformat()) %}
+        <figure class="{{ 'has-block' if img.misplaced }}">
+          <a href="{{ url_for('images.show', report_id=report.id, image_id=img.id) }}" target="_blank" rel="noopener">
+            <img src="{{ url_for('images.show', report_id=report.id, image_id=img.id) }}" loading="lazy" alt="{{ img.original_name }}"></a>
+          <figcaption><span class="ocr ocr-{{ st[0] }}">{{ st[1] }}</span> {{ img.original_name }}
+            {% if can_review %}<label class="inline misplace"><input type="checkbox" name="misplaced" value="{{ img.id }}" form="review-form"> 放錯章節</label>{% endif %}
+          </figcaption>
+        </figure>
+        {% endfor %}
+      </div>
+    </div>
   </div>
+  {% endfor %}
 </details>
 {% endif %}
 {% if can_review %}
-<form method="post" action="{{ url_for('views.review', report_id=report.id) }}" class="card review no-print">
+<form method="post" action="{{ url_for('views.review', report_id=report.id) }}" class="card review no-print" id="review-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <h3>審核{% if principal %}（代 {{ principal.name }} 簽核）{% endif %}</h3>
   {% if principal %}

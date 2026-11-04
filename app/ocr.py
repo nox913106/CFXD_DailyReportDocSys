@@ -135,7 +135,7 @@ def status_for(img, doc_date_iso):
 
 
 def queue_image(img):
-    if img.kind == "screenshot":
+    if img.kind in ("screenshot", "staged"):
         img.ocr_status = "pending"
         img.ocr_result = None
         img.ocr_error = None
