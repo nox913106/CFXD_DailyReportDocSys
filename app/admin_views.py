@@ -365,9 +365,10 @@ def pdf():
 
 
 def required_sheets():
-    from .helpers import SHEETS
+    # PDF 實際讀取的工作表名稱（不是網頁上的分頁標題）
+    from .pdf.report_pdf import SHEETS
 
-    return ["Alarm Summary", *SHEETS.values()]
+    return list(SHEETS)
 
 
 @bp.route("/pdf/template", methods=["GET", "POST"])

@@ -1173,8 +1173,6 @@ def test_admin_pdf_upload_and_tls(app, tmp_path):
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.x509.oid import NameOID
 
-    from app.helpers import SHEETS
-
     app.instance_path = str(tmp_path / "instance")
     app.config["PDF_TEMPLATE_XLSX"] = str(tmp_path / "instance" / "templates" / "checklist.xlsx")
     app.config["FONT_DIR"] = str(tmp_path / "instance" / "fonts")
@@ -1195,7 +1193,7 @@ def test_admin_pdf_upload_and_tls(app, tmp_path):
     assert "缺少工作表" in html
     html = b.post("/admin/settings/pdf/template", {"template": (io.BytesIO(b"nope"), "x.xlsx")}, content_type="multipart/form-data")
     assert "無法讀取" in html
-    html = b.post("/admin/settings/pdf/template", {"template": (xlsx(["Alarm Summary", *SHEETS.values()]), "CheckList.xlsx")},
+    html = b.post("/admin/settings/pdf/template", {"template": (xlsx(["Alarm Summary", "Summary", "Virtual Machines", "Software", "Physical devices", "PI"]), "CheckList.xlsx")},
                   content_type="multipart/form-data")
     assert "已更新 CheckList 範本" in html and "下載目前的範本" in html
     assert b.c.get("/admin/settings/pdf/template").status_code == 200
