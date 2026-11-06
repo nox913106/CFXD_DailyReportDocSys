@@ -16,10 +16,6 @@ login_manager.login_view = "auth.login"
 login_manager.login_message = "請先登入。"
 
 
-def _split_list(value):
-    return {v.strip().lower() for v in (value or "").split(",") if v.strip()}
-
-
 @event.listens_for(Engine, "connect")
 def _sqlite_pragmas(dbapi_conn, _record):
     # WAL：網頁讀取（檢查、告警歷程）不會被 OCR 背景服務的寫入擋住；busy_timeout：同時寫入時等待而不是直接失敗
@@ -57,9 +53,7 @@ def create_app():
         AD_DOMAIN=os.environ.get("AD_DOMAIN", ""),
         LDAP_BASE_DN=os.environ.get("LDAP_BASE_DN", ""),
         LDAP_REQUIRED_GROUP=os.environ.get("LDAP_REQUIRED_GROUP", ""),
-        LDAP_APPROVER_GROUP=os.environ.get("LDAP_APPROVER_GROUP", ""),
         LDAP_CA_CERT=os.environ.get("LDAP_CA_CERT", ""),
-        APPROVER_USERS=_split_list(os.environ.get("APPROVER_USERS")),
         UPLOAD_DIR=os.environ.get("UPLOAD_DIR", os.path.join(app.instance_path, "uploads")),
         MAX_CONTENT_LENGTH=int(os.environ.get("MAX_UPLOAD_MB", "20")) * 1024 * 1024,
         PDF_TEMPLATE_XLSX=os.environ.get("PDF_TEMPLATE_XLSX")

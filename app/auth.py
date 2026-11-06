@@ -49,22 +49,14 @@ def _connect(c, user, password, urls=None):
 
 
 def _lookup(conn, c, username):
-    """回傳 (entry, is_approver)；不在允許群組內或找不到時 entry 為 None。"""
+    """回傳 entry；不在允許群組內或找不到時為 None。"""
     groups = c.get("required_groups") or sysconf.group_list(c["ldap_required_group"])
     if groups:
         search_filter = _in_group_filter(username, groups)
     else:
         search_filter = f"(sAMAccountName={escape_filter_chars(username)})"
     conn.search(c["ldap_base_dn"], search_filter, SUBTREE, attributes=["displayName", "mail"])
-    if not conn.entries:
-        return None, False
-    entry = conn.entries[0]
-    is_approver = False
-    approver_groups = c.get("approver_groups") or sysconf.group_list(c["ldap_approver_group"])
-    if approver_groups:
-        conn.search(c["ldap_base_dn"], _in_group_filter(username, approver_groups), SUBTREE)
-        is_approver = bool(conn.entries)
-    return entry, is_approver
+    return conn.entries[0] if conn.entries else None
 
 
 def _member_of(conn, c, username, groups):
@@ -78,7 +70,7 @@ def _member_of(conn, c, username, groups):
 
 
 def ad_authenticate(username, password, c=None):
-    """以使用者自己的帳密 bind AD；成功回傳 (display_name, email, is_approver)，失敗回傳 None。
+    """以使用者自己的帳密 bind AD；成功回傳 (display_name, email)，失敗回傳 None。
 
     設定來自「系統設定 → AD 驗證」（資料庫），每次登入重新讀取，不需要重啟。
     """
@@ -92,13 +84,13 @@ def ad_authenticate(username, password, c=None):
         return None
 
     try:
-        entry, is_approver = _lookup(conn, c, username)
+        entry = _lookup(conn, c, username)
         if entry is None:
             current_app.logger.info("AD 帳號 %s 不在允許群組內或找不到", username)
             return None
         display_name = str(entry.displayName) if entry.displayName else username
         email = str(entry.mail) if entry.mail else None
-        return display_name, email, is_approver
+        return display_name, email
     except LDAPException as e:
         current_app.logger.warning("AD 查詢失敗 %s: %s", username, e)
         return None
@@ -157,7 +149,7 @@ def ldap_test(c, username="", password=""):
         return steps
     try:
         try:
-            entry, is_approver = _lookup(conn, c, username)
+            entry = _lookup(conn, c, username)
         except LDAPException as e:
             steps.append((False, "搜尋帳號", f"{e}（確認搜尋起點 Base DN 與群組 DN）"))
             return steps
@@ -170,11 +162,6 @@ def ldap_test(c, username="", password=""):
         hit = _member_of(conn, c, username, req) if len(req) > 1 else req
         steps.append((True, "搜尋帳號", f"{name}" + (f"（{entry.mail}）" if entry.mail else "")
                       + (f"，是允許登入群組的成員（{_short(hit)}）" if req else "")))
-        appr = sysconf.group_list(c["ldap_approver_group"])
-        if appr:
-            hit = _member_of(conn, c, username, appr) if is_approver else []
-            steps.append((True, "檔案管理員群組", f"是 {_short(hit)} 的成員（首次登入會設為檔案管理員）" if is_approver
-                          else f"不是 {len(appr)} 個群組中任何一個的成員"))
     finally:
         conn.unbind()
     return steps
@@ -223,21 +210,18 @@ def login():
             return render_template("login.html")
 
         if current_app.config["AUTH_MODE"] == "dev":
-            result = (username, None, False) if username else None
+            result = (username, None) if username else None
         else:
             result = ad_authenticate(username, password)
 
         if result:
-            display_name, email, in_approver_group = result
+            display_name, email = result
             user = User.query.filter_by(username=username).first()
             if not user:
-                # 首次登入：AD 帳號一律為訪客（只能看歡迎頁，等系統管理員開通）；
-                # 「系統設定 → AD 驗證」明確指定的帳號 / 群組預設為檔案管理員。開發模式沿用一線使用者。
-                # 之後角色一律由系統管理員在「帳號管理」設定，登入時不再變更。
+                # 首次登入：AD 帳號一律為訪客（只能看歡迎頁，等系統管理員在「帳號管理」設定角色）。
+                # 開發模式沿用一線使用者。之後角色一律由系統管理員設定，登入時不再變更。
                 user = User(username=username)
-                bootstrap = in_approver_group or username in sysconf.ldap_config()["approver_users_set"]
-                dev = current_app.config["AUTH_MODE"] == "dev"
-                user.set_role("file_manager" if bootstrap else ("first_line" if dev else "guest"))
+                user.set_role("first_line" if current_app.config["AUTH_MODE"] == "dev" else "guest")
                 db.session.add(user)
             user.display_name = display_name
             user.email = email

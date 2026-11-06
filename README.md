@@ -107,7 +107,7 @@ CheckList 的圓餅圖數值由範本公式（COUNTIFS、Qty / SUM）依日報�
 - 檢視者只能看「正式文件」頁、下載已結案日報的正式 PDF，其餘頁面與動作一律禁止。
 - 訪客只能看歡迎頁，其餘一律禁止。
 
-- AD 帳號首次登入一律為**訪客**：只能看到歡迎頁（請聯絡系統管理員開通，頁面列出系統管理員與 email），所有內容與操作都禁止；系統管理員首頁會提示有訪客等待開通。「系統設定 → AD 驗證」明確指定的帳號或群組成員首次登入時預設為檔案管理員。
+- AD 帳號首次登入一律為**訪客**：只能看到歡迎頁（請聯絡系統管理員開通，頁面列出系統管理員與 email），所有內容與操作都禁止；系統管理員首頁會提示有訪客等待開通。
   之後角色一律由系統管理員在「系統設定 → 帳號管理」調整，登入時不會再變更。
 - 核准人：每份日報在「基本資料」指定一位檔案管理員為核准人（新日報沿用前一份；只有一位檔案管理員時自動指定）。
   只有該核准人或其授權的二線管理員能核准 / 退件；未指定時任何檔案管理員都可以審核。
@@ -200,7 +200,7 @@ sudo -u dailyreport /opt/dailyreport/.venv/bin/flask --app wsgi create-admin --u
 | 分頁 | 內容 |
 |---|---|
 | 系統狀態 | 健康檢查（設定、資料庫、PDF、背景工作、備份、服務、版本、HTTPS 憑證，每一項附修正方式）；「立即檢查」或每 N 小時自動檢查，有失敗時系統管理員每一頁上方都會看到提醒；最近的維護工作；安裝時決定的項目（唯讀） |
-| AD 驗證 | 網域控制站、網域、Base DN、允許登入的群組、首次登入設為檔案管理員的群組 / 帳號、LDAPS 的公司 CA 憑證（上傳或貼上）。「測試」用表單上的值（不儲存）逐步檢查網路、TLS、帳號登入與群組 |
+| AD 驗證 | 網域控制站、網域、Base DN、允許登入的群組、LDAPS 的公司 CA 憑證（上傳或貼上）。「測試」用表單上的值（不儲存）逐步檢查網路、TLS、帳號登入與群組 |
 | 帳號管理 | AD 帳號的角色與系統管理員指派；本機緊急帳號新增 / 變更密碼 / 重設 / 停用；權限說明；稽核紀錄 |
 | 代理權限 | 授權二線管理員代理檔案管理員（期間、備註），撤銷；系統管理員可替任何檔案管理員設定，檔案管理員也可在右上角「代理設定」自行授權。授權與撤銷寫入稽核紀錄 |
 | 備份還原 | 每日自動備份時間、保留份數、備份位置（可設 NAS）、是否含 `.env`；立即備份；備份清單（下載資料庫或檔案、刪除）；還原（輸入日期確認，還原前自動備份，不需停服務） |
@@ -247,7 +247,7 @@ ChatGPT Plus、Claude Pro 這類個人訂閱不提供 API，不能接入。
 python -m venv .venv
 .venv/Scripts/activate        # Linux: source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env          # 開發時可設 AUTH_MODE=dev、APPROVER_USERS=alan 免連 AD
+cp .env.example .env          # 開發時可設 AUTH_MODE=dev 免連 AD（任何帳號直接登入，角色在帳號管理設定）
 FLASK_DEBUG=1 flask --app wsgi run
 ```
 
@@ -337,7 +337,6 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
 | 網域 | 組成 `user@domain` 登入 | `corp.local` |
 | 搜尋起點（Base DN） | 搜尋使用者的根 DN | `DC=corp,DC=local` |
 | 允許登入的群組 | 選填，可填多個（一行一個），屬於任一群組（含巢狀）即可登入 | `CN=DailyReportUsers,OU=Groups,DC=corp,DC=local` |
-| 檔案管理員群組 | 選填，可填多個（一行一個），任一群組成員首次登入時設為檔案管理員 | `CN=MIS,OU=MIS,DC=corp,DC=local` |
 | LDAPS 憑證 | 選填，網域控制站憑證由公司內部 CA 簽發時，上傳或貼上該 CA 憑證（PEM） | |
 
 使用者可輸入 `帳號`、`DOMAIN\帳號` 或 `帳號@domain` 登入。

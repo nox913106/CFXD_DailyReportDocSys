@@ -17,9 +17,8 @@
 #   --hostname <名稱>        網址主機名稱（預設本機 FQDN）
 #   --tls self-signed|custom|none   預設 self-signed（自動產生自簽憑證）；custom 需搭配 --cert / --key
 #   --cert <檔案> --key <檔案>
-#   --ldap-url <ldaps://…> --ad-domain <網域> --base-dn <DN> --required-group <DN> --approver-group <DN>
+#   --ldap-url <ldaps://…> --ad-domain <網域> --base-dn <DN> --required-group <DN>
 #                            （--ldap-url 與群組都可重複指定多次，或用 ; 分隔；多台網域控制站依序嘗試）
-#   --approver-users <帳號,帳號>
 #   --template <CheckList.xlsx>
 #   --workers <數量>         gunicorn worker 數（預設依 CPU 與記憶體自動決定）
 #   --admin-user <帳號>      本機緊急帳號名稱（預設 sysadmin）
@@ -232,7 +231,7 @@ EOF
 apply_options() {  # install 帶入的 AD 選項寫進資料庫（與系統設定頁同一份設定）
   local pair key var n=0
   for pair in ldap_url=OPT_LDAP_URL ad_domain=OPT_AD_DOMAIN ldap_base_dn=OPT_BASE_DN \
-              ldap_required_group=OPT_REQUIRED_GROUP ldap_approver_group=OPT_APPROVER_GROUP approver_users=OPT_APPROVER_USERS; do
+              ldap_required_group=OPT_REQUIRED_GROUP; do
     key="${pair%%=*}" var="${pair#*=}"
     [[ -n "${!var:-}" ]] || continue
     flask_app config-set "$key" "${!var}" >/dev/null
@@ -462,15 +461,15 @@ cmd_install() {
       --ad-domain) OPT_AD_DOMAIN="$2"; shift 2 ;;
       --base-dn) OPT_BASE_DN="$2"; shift 2 ;;
       --required-group) OPT_REQUIRED_GROUP="${OPT_REQUIRED_GROUP:+$OPT_REQUIRED_GROUP;}$2"; shift 2 ;;
-      --approver-group) OPT_APPROVER_GROUP="${OPT_APPROVER_GROUP:+$OPT_APPROVER_GROUP;}$2"; shift 2 ;;
-      --approver-users) OPT_APPROVER_USERS="$2"; shift 2 ;;
+      --approver-group|--approver-users)  # 已移除：首次登入一律為訪客，角色在帳號管理設定
+        warn "$1 已不再使用（AD 首次登入一律為訪客，請在網頁「系統設定 → 帳號管理」設定角色），略過"; shift 2 ;;
       --template) OPT_TEMPLATE="$2"; shift 2 ;;
       --workers) WORKERS="$2"; shift 2 ;;
       --admin-user) ADMIN_USER="$2"; shift 2 ;;
       --skip-ocr-model) OPT_SKIP_OCR=1; shift ;;
       --ntp) NTP="$2"; shift 2 ;;
       --no-prompt) OPT_NO_PROMPT=1; shift ;;
-      -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
+      -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
       *) die "不認得的選項 $1（--help 查看說明）" ;;
     esac
   done

@@ -23,8 +23,6 @@ DEFAULTS = {
     "ad_domain": "",
     "ldap_base_dn": "",
     "ldap_required_group": "",  # 群組 DN，可多個（一行一個；.env / 指令可用 ; 分隔）
-    "ldap_approver_group": "",
-    "approver_users": "",  # 首次登入就設為檔案管理員的帳號（逗號分隔）
     "ldap_ca_pem": "",  # LDAPS 驗證用的公司 CA 憑證（PEM）；空白 = 系統預設 CA
     "ldap_timeout": 5,
     # 上傳
@@ -74,12 +72,9 @@ ENV_FALLBACK = {
     "ad_domain": "AD_DOMAIN",
     "ldap_base_dn": "LDAP_BASE_DN",
     "ldap_required_group": "LDAP_REQUIRED_GROUP",
-    "ldap_approver_group": "LDAP_APPROVER_GROUP",
-    "approver_users": "APPROVER_USERS",
 }
 
-LDAP_KEYS = ("ldap_url", "ad_domain", "ldap_base_dn", "ldap_required_group", "ldap_approver_group",
-             "approver_users", "ldap_ca_pem", "ldap_timeout")
+LDAP_KEYS = ("ldap_url", "ad_domain", "ldap_base_dn", "ldap_required_group", "ldap_ca_pem", "ldap_timeout")
 
 
 def _row(key):
@@ -138,10 +133,8 @@ def many(keys):
 
 def ldap_config():
     c = many(LDAP_KEYS)
-    c["approver_users_set"] = {v.strip().lower() for v in (c["approver_users"] or "").split(",") if v.strip()}
     c["ldap_urls"] = url_list(c["ldap_url"])
     c["required_groups"] = group_list(c["ldap_required_group"])
-    c["approver_groups"] = group_list(c["ldap_approver_group"])
     return c
 
 

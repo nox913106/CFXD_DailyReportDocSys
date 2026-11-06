@@ -22,7 +22,6 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setenv("CHECK_MD_DIR", str(tmp_path / "check_reports"))
     monkeypatch.setenv("DR_BACKUP_DIR", str(tmp_path / "backups"))
-    monkeypatch.setenv("APPROVER_USERS", "boss,boss2")
     from app import create_app
 
     app = create_app()
@@ -259,6 +258,7 @@ def test_full_flow(app):
     # 審核者退回（需理由）
     boss = Browser(app)
     html = boss.login("boss")
+    set_role(app, "boss", "file_manager")
     assert "待審核" in html
     boss.get(f"/reports/{rid}")
     html = boss.post(f"/reports/{rid}/review", {"action": "reject", "comment": ""})
@@ -313,6 +313,7 @@ def test_full_flow(app):
 def test_self_review_blocked(app):
     boss = Browser(app)
     boss.login("boss")
+    set_role(app, "boss", "file_manager")
     rid = report_id_from(boss.post("/reports/new", {"report_date": "2026-11-01"}))  # 檔案管理員建立，撰寫人是自己
     alice = Browser(app)
     alice.login("alice")
@@ -781,6 +782,7 @@ def test_check_report_and_ai(app, tmp_path):
 
     boss, alice = Browser(app), Browser(app)
     boss.login("boss")
+    set_role(app, "boss", "file_manager")
     alice.login("alice")
 
     # 未啟用 AI：區塊保留、顯示說明；送審仍會產生檢查結果.md，但不排 AI
@@ -1104,17 +1106,16 @@ def test_ldap_multiple_groups(app, monkeypatch):
     monkeypatch.setattr(socket, "create_connection", lambda *a, **k: FakeSock())
     with app.app_context():
         for k, v in {"ldap_url": "ldaps://dc.ad.tw:636", "ad_domain": "ad.tw", "ldap_base_dn": "DC=ad,DC=tw",
-                     "ldap_required_group": "", "ldap_approver_group": "CN=MIS,DC=ad,DC=tw\nCN=hsadmin,DC=ad,DC=tw\nCN=ITI,DC=ad,DC=tw"}.items():
+                     "ldap_required_group": ""}.items():
             sysconf.put(k, v)
-        assert auth.ad_authenticate("bob", "pw")[2] is True  # 第三個群組
-        assert auth.ad_authenticate("carl", "pw")[2] is True  # 第二個群組
-        assert auth.ad_authenticate("dave", "pw")[2] is False
+        assert auth.ad_authenticate("dave", "pw") == ("dave", None)  # 沒有限制群組：都可以登入
         sysconf.put("ldap_required_group", "CN=ITI,DC=ad,DC=tw\nCN=hsadmin,DC=ad,DC=tw")
         assert auth.ad_authenticate("bob", "pw") and auth.ad_authenticate("carl", "pw")
         assert auth.ad_authenticate("dave", "pw") is None  # 兩個允許群組都不屬於
         c = {**sysconf.ldap_config()}
         steps = auth.ldap_test(c, "carl", "pw")
-        assert any("hsadmin" in d and "檔案管理員" in d for _, s, d in steps if s == "檔案管理員群組"), steps
+        assert any("hsadmin" in d for _, s, d in steps if s == "搜尋帳號"), steps
+        assert not any("檔案管理員" in s for _, s, d in steps)
 
 
 def test_ldap_failover(app, monkeypatch):
@@ -1147,9 +1148,9 @@ def test_ldap_failover(app, monkeypatch):
     monkeypatch.setattr(auth, "Connection", FakeConn)
     with app.app_context():
         for k, v in {"ldap_url": "ldaps://dc01:636\nldaps://dc02:636\nldaps://dc03:636", "ad_domain": "ad.tw",
-                     "ldap_base_dn": "DC=ad,DC=tw", "ldap_required_group": "", "ldap_approver_group": ""}.items():
+                     "ldap_base_dn": "DC=ad,DC=tw", "ldap_required_group": ""}.items():
             sysconf.put(k, v)
-        assert auth.ad_authenticate("bob", "pw") == ("bob", None, False)
+        assert auth.ad_authenticate("bob", "pw") == ("bob", None)
         assert tried == ["dc01", "dc02", "dc03"]
         tried.clear()
         assert auth.ad_authenticate("bob", "wrong") is None
@@ -1176,7 +1177,7 @@ def test_admin_ldap_and_local_accounts(app):
     assert "沿用安裝設定檔" in b.get("/admin/settings/ldap")
 
     form = {"ldap_url": "ldaps://127.0.0.1:1", "ad_domain": "Corp.Local", "ldap_base_dn": "DC=corp,DC=local",
-            "ldap_required_group": "", "ldap_approver_group": "", "approver_users": "Boss, alice",
+            "ldap_required_group": "",
             "ldap_timeout": "2", "ldap_ca_pem": ""}
     html = b.post("/admin/settings/ldap/test", form)
     assert "無法連線" in html and "還沒有儲存" in html
@@ -1185,17 +1186,18 @@ def test_admin_ldap_and_local_accounts(app):
     assert "格式" in b.post("/admin/settings/ldap", {**form, "ldap_url": "http://x"})
     assert "「http://y」格式" in b.post("/admin/settings/ldap", {**form, "ldap_url": "ldaps://a:636\nhttp://y"})
     assert "CA 憑證不是 PEM" in b.post("/admin/settings/ldap", {**form, "ldap_ca_pem": "garbage"})
-    assert "不是群組 DN" in b.post("/admin/settings/ldap", {**form, "ldap_approver_group": "CN=MIS,DC=corp,DC=local\nMIS"})
+    assert "不是群組 DN" in b.post("/admin/settings/ldap", {**form, "ldap_required_group": "CN=MIS,DC=corp,DC=local\nMIS"})
+    assert "首次登入設為檔案管理員" not in b.get("/admin/settings/ldap")
     groups = "CN=MIS,OU=MIS,DC=corp,DC=local\r\n\r\nCN=ITI,OU=ITI,DC=corp,DC=local\r\nCN=MIS,OU=MIS,DC=corp,DC=local"
-    assert "已儲存 AD 設定" in b.post("/admin/settings/ldap", {**form, "ldap_approver_group": groups})
+    assert "已儲存 AD 設定" in b.post("/admin/settings/ldap", {**form, "ldap_required_group": groups})
     with app.app_context():
-        assert sysconf.ldap_config()["approver_groups"] == ["CN=MIS,OU=MIS,DC=corp,DC=local", "CN=ITI,OU=ITI,DC=corp,DC=local"]
+        assert sysconf.ldap_config()["required_groups"] == ["CN=MIS,OU=MIS,DC=corp,DC=local", "CN=ITI,OU=ITI,DC=corp,DC=local"]
     assert "CN=ITI,OU=ITI,DC=corp,DC=local</textarea>" in b.get("/admin/settings/ldap")
     assert "已儲存 AD 設定" in b.post("/admin/settings/ldap", form)
     with app.app_context():
         c = sysconf.ldap_config()
         assert c["ldap_url"] == "ldaps://127.0.0.1:1" and c["ad_domain"] == "corp.local"
-        assert c["approver_users_set"] == {"alice", "boss"} and sysconf.source("ldap_url") == "db"
+        assert sysconf.source("ldap_url") == "db" and "approver_users" not in c
         with app.test_request_context():
             assert ad_authenticate("alice", "") is None and ad_authenticate("alice", "x") is None  # 連不上 -> 失敗，不例外
 
@@ -2027,7 +2029,7 @@ def test_ad_first_login_is_guest(app, monkeypatch):
     from app.models import User
 
     app.config["AUTH_MODE"] = "ldap"
-    monkeypatch.setattr(auth, "ad_authenticate", lambda u, p, c=None: (u.title(), f"{u}@corp.local", False))
+    monkeypatch.setattr(auth, "ad_authenticate", lambda u, p, c=None: (u.title(), f"{u}@corp.local"))
     # 系統管理員（被指派的檔案管理員，有 email）
     adm = Browser(app)
     adm.get("/login")
