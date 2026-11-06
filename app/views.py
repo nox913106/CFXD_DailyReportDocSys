@@ -73,7 +73,7 @@ def _desk():
     """二線以上首頁：待結案（已核准）與發送中止的日報。"""
     from .models import REVIEWER_ROLES, Delivery
 
-    if current_user.role not in REVIEWER_ROLES:
+    if not (current_user.is_admin or current_user.role in REVIEWER_ROLES):
         return {"to_close": [], "delivery_errors": []}
     return {"to_close": Report.query.filter_by(status="approved").order_by(Report.report_date).all(),
             "delivery_errors": Report.query.join(Delivery).filter(Delivery.state == "error")
@@ -202,7 +202,7 @@ def detail(report_id):
         checks=run_checks(report) if report.status not in ("voided", "closed") else None,
         timeline=delivery.timeline(report), ocr_pending=delivery.ocr_pending(report),
         shot_groups=_shot_groups(report)
-        if review.allowed or (u.role in REVIEWER_ROLES and report.status == "approved") else [],
+        if review.allowed or ((u.is_admin or u.role in REVIEWER_ROLES) and report.status == "approved") else [],
         snaps=snaps, ai_snap=next((s for s in snaps if s.ai_status), None),
         ai_enabled=ai_enabled(),
         can={
@@ -548,17 +548,18 @@ def users():
     all_users = User.query.order_by(User.role, User.display_name, User.username).all()
     return render_template("users.html", tab="users", users=all_users, roles=ASSIGNABLE_ROLES, role_labels=ROLE_LABELS,
                            logs=adm.recent_audit(), audit_labels=adm.AUDIT_LABELS, admin_roles=ADMIN_ELIGIBLE_ROLES,
-                           local_accounts=adm.local_accounts(), min_pw=adm.MIN_PASSWORD)
+                           local_accounts=adm.local_accounts(), min_pw=adm.MIN_PASSWORD,
+                           matrix=perm.PERMISSION_MATRIX, matrix_roles=perm.MATRIX_ROLES, matrix_notes=perm.MATRIX_NOTES)
 
 
 def _set_sys_admin():
-    """指派 / 移除系統管理員。只能指派二線管理員；不能移除自己的權限（避免把自己鎖在外面）。"""
+    """指派 / 移除系統管理員。一線使用者強制排除；不能移除自己的權限（避免把自己鎖在外面）。"""
     user = db.session.get(User, request.form.get("user_id", type=int) or 0) or abort(404)
     on = request.form.get("sys_admin") == "1"
     if user.is_local_admin:
         abort(400)
     if on and user.role not in ADMIN_ELIGIBLE_ROLES:
-        flash("只有二線管理員可以被指派為系統管理員（檔案管理員與一線使用者不行）。", "error")
+        flash("一線使用者不能成為系統管理員，請先改為檔案管理員或二線管理員。", "error")
         return redirect(url_for("views.users"))
     if not on and user.id == current_user.id:
         flash("不能移除自己的系統管理員權限，請由其他系統管理員操作。", "error")

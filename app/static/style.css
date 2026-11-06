@@ -231,3 +231,10 @@ table.names tr.level2 td:first-child { padding-left: 22px; }
 .move-section { display: flex; gap: 4px; flex-wrap: wrap; margin: 4px 0; }
 .move-section select { max-width: 160px; font-size: 12px; }
 button[disabled], .button[disabled] { opacity: .45; cursor: not-allowed; }
+
+/* 帳號管理：權限表 */
+.perm-matrix td.center, .perm-matrix th.center { text-align: center; width: 96px; white-space: nowrap; }
+.perm-matrix .mark-y { color: #1a7f37; font-weight: 700; font-size: 16px; }
+.perm-matrix .mark-n { color: #cf222e; font-size: 16px; }
+.perm-matrix .mark-d { color: #9a6700; font-size: 16px; }
+.perm-matrix tr.group td { background: #f6f8fa; font-weight: 700; }

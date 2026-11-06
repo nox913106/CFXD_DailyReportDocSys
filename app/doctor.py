@@ -82,7 +82,7 @@ def run(system=False):
             assigned = len(admins) - len(local)
             _item(out, g, "系統管理員", "ok" if assigned else "warn",
                   f"本機緊急帳號 {len(local)} 個、指派 {assigned} 個",
-                  "" if assigned else "AD 帳號登入一次後，在「系統設定 → 帳號管理」指派二線管理員為系統管理員")
+                  "" if assigned else "AD 帳號登入一次後，在「系統設定 → 帳號管理」指派檔案管理員或二線管理員為系統管理員")
     except Exception as e:  # 資料庫打不開時其他檢查也沒有意義
         _item(out, g, "連線", "fail", str(e)[:200], f"檢查 {DIR}/.env 的 DATABASE_URL 與檔案權限")
         return out

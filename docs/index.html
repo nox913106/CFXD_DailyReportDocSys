@@ -261,7 +261,7 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
     <div class="tablewrap">
     <table class="t zh">
       <tr><th>角色</th><th>可以做的事</th></tr>
-      <tr><td>系統管理員</td><td>所有動作、帳號管理、系統設定。由二線管理員兼任（AD 帳號可）；檔案管理員與一線使用者不能擔任</td></tr>
+      <tr><td>系統管理員</td><td>擁有所有權限（不受職責分離限制）；只有系統管理員能調整角色與系統設定。由檔案管理員或二線管理員兼任（AD 帳號可），一線使用者與檢視者不能擔任</td></tr>
       <tr><td>本機緊急帳號</td><td>系統管理員權限、不經 AD；AD 無法驗證時使用</td></tr>
       <tr><td>檔案管理員</td><td>指派、審核、退件、作廢、新增、編輯、刪除；授權二線管理員代理</td></tr>
       <tr><td>二線管理員</td><td>新增、編輯、刪除、送審；經授權可代審核、代指派、代退件、代作廢</td></tr>
@@ -276,7 +276,7 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
       <tr><td>First-line user</td><td>Create, edit, submit, request voiding</td></tr>
     </table>
     </div>
-    <p class="note zh">職責分離：撰寫人與送審人都不能核准自己的日報。指派、代簽、作廢、刪除、設定變更全部寫入稽核紀錄。</p>
+    <p class="note zh">職責分離：撰寫人與送審人都不能核准自己的日報（系統管理員擁有所有權限，不受此限）。指派、代簽、作廢、刪除、設定變更全部寫入稽核紀錄。</p>
     <p class="note en">Separation of duties: neither the author nor the submitter can approve their own report. Assignments, delegations, voids, deletions and settings changes are all audited.</p>
   </div>
 </section>
@@ -377,7 +377,7 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
   <span class="ok">✔</span> 完整性           ok（/opt/dailyreport/instance/dailyreport.db，0.3 MB）
   <span class="ok">✔</span> WAL 模式         wal
   <span class="wa">!</span> 系統管理員       本機緊急帳號 1 個、指派 0 個
-      <span class="dim">→ AD 帳號登入一次後，在「系統設定 → 帳號管理」指派二線管理員為系統管理員</span>
+      <span class="dim">→ AD 帳號登入一次後，在「系統設定 → 帳號管理」指派檔案管理員或二線管理員為系統管理員</span>
 服務
   <span class="ok">✔</span> dailyreport      執行中
   <span class="fa">✘</span> dailyreport-ocr  inactive

@@ -974,7 +974,7 @@ def test_settings_page_and_admin_assignment(app):
 
     # 一線使用者不能被指派
     html = root.post("/admin/users", {"user_id": str(bid), "sys_admin": "1"})
-    assert "只有二線管理員可以被指派為系統管理員" in html
+    assert "一線使用者不能成為系統管理員" in html
     with app.app_context():
         assert not db.session.get(User, bid).is_admin
         u = db.session.get(User, bid)
@@ -990,29 +990,9 @@ def test_settings_page_and_admin_assignment(app):
     html = bob.get("/admin/settings/ai")
     assert "系統設定" in html and "AI 服務" in html and "系統管理員" in bob.get("/")
 
-    # 檔案管理員不能被指派為系統管理員，也進不了系統設定（即使舊版留下旗標）
+    # 指派的系統管理員可以再指派別人、不能移除自己；改成一線使用者時自動移除
     root.post("/admin/users", {"user_id": str(cid), "role": "file_manager"})
     bob.get("/admin/users")
-    assert "只有二線管理員可以被指派為系統管理員" in bob.post("/admin/users", {"user_id": str(cid), "sys_admin": "1"})
-    with app.app_context():
-        c = db.session.get(User, cid)
-        assert not c.sys_admin
-        c.sys_admin = True  # 舊版指派殘留
-        db.session.commit()
-        assert not db.session.get(User, cid).is_admin
-    carl.get("/admin/settings/", status=403)
-    carl.get("/admin/users", status=403)
-    assert "系統設定" not in carl.get("/")
-    with app.app_context():  # 升級時移除舊版指派並留下稽核紀錄
-        from app import _migrate_roles
-
-        _migrate_roles()
-        assert not db.session.get(User, cid).sys_admin
-        assert AuditLog.query.filter_by(action="set_admin", target="carl").filter(
-            AuditLog.detail.contains("檔案管理員與一線使用者不能擔任")).count() == 1
-
-    # 指派的系統管理員可以再指派別人、不能移除自己；改成一線使用者時自動移除
-    root.post("/admin/users", {"user_id": str(cid), "role": "second_line"})
     bob.post("/admin/users", {"user_id": str(cid), "sys_admin": "1"})
     assert "不能移除自己" in bob.post("/admin/users", {"user_id": str(bid), "sys_admin": "0"})
     assert "不能把自己改成一線使用者" in bob.post("/admin/users", {"user_id": str(bid), "role": "first_line"})
@@ -1021,10 +1001,8 @@ def test_settings_page_and_admin_assignment(app):
         assert not db.session.get(User, cid).is_admin and not db.session.get(User, cid).sys_admin
         assert AuditLog.query.filter_by(action="set_admin").count() >= 3
 
-    # 指令指派（初次設定）：一線使用者、檔案管理員都不行
+    # 指令指派（初次設定）
     assert runner.invoke(args=["grant-admin", "--username", "carl"]).exit_code != 0  # 一線使用者
-    root.post("/admin/users", {"user_id": str(cid), "role": "file_manager"})
-    assert runner.invoke(args=["grant-admin", "--username", "carl"]).exit_code != 0  # 檔案管理員
 
     # 新增服務：從範本帶入、金鑰加密、畫面不顯示金鑰
     bob.get("/admin/settings/providers/new?preset=anthropic")
@@ -1936,3 +1914,89 @@ def test_review_marks_misplaced_screenshot(app):
         img = db.session.get(ReportImage, img_id)
         assert img.section_id == sec["5.1"] and not img.misplaced and img.place_source == "manual"
         assert "4.1 → 5.1" in ReviewLog.query.filter_by(report_id=rid, action="move_image").one().comment
+
+
+def test_permission_matrix_matches_code(app):
+    """帳號管理頁的權限表逐格與實際的權限判斷一致（系統管理員：本機帳號與被指派的檔案管理員都檢查）。"""
+    from datetime import date, datetime, timedelta
+
+    from app import approval as perm
+    from app import db
+    from app.models import ApprovalDelegation, Delivery, Report, User
+
+    with app.app_context():
+        def mk(name, role, sys_admin=False):
+            u = User(username=name, display_name=name)
+            u.set_role(role)
+            u.sys_admin = sys_admin
+            db.session.add(u)
+            return u
+
+        other = mk("writer", "first_line")
+        fm = mk("fmx", "file_manager")
+        users = {"sysadmin": [mk("root", "admin"), mk("fmadmin", "file_manager", True)],
+                 "file_manager": [mk("fm", "file_manager")], "second_line": [mk("sl", "second_line")],
+                 "first_line": [mk("fl", "first_line")], "viewer": [mk("vw", "viewer")]}
+        db.session.flush()
+
+        def rep(status, author=None, delivery_state=None, day=[0]):
+            day[0] += 1
+            r = Report(report_date=date(2030, 1, 1) + timedelta(days=day[0]), doc_no=f"D{day[0]}", contractor_doc_no=f"C{day[0]}",
+                       author_id=(author or other).id, status=status, submitted_by_id=(author or other).id)
+            db.session.add(r)
+            db.session.flush()
+            if delivery_state:
+                db.session.add(Delivery(report_id=r.id, state=delivery_state, run_after=datetime.now()))
+                db.session.flush()
+            return r
+
+        draft, submitted, approved = rep("draft"), rep("submitted"), rep("approved")
+        locked, failed = rep("closed", delivery_state="scheduled"), rep("closed", delivery_state="error")
+
+        def check(label, u):
+            own = rep("submitted", author=u) if label == "審核自己撰寫或送審的日報" else None
+            return {
+                "新增、編輯（草稿 / 退回）、送審": lambda: bool(perm.can_create(u) and perm.can_edit(u, draft) and perm.can_submit(u, draft)),
+                "截圖上傳（含批次上傳）": lambda: bool(perm.can_edit(u, draft)),
+                "線上預覽 PDF": lambda: u.role != "viewer",
+                "指派撰寫人、核准人": lambda: bool(perm.can_assign(u, draft)),
+                "覆寫文件編號": lambda: bool(perm.can_override_doc_no(u, draft)),
+                "審核：核准 / 退回": lambda: bool(perm.can_review(u, submitted)),
+                "審核自己撰寫或送審的日報": lambda: bool(perm.can_review(u, own)),
+                "結案、結案前退回修正": lambda: bool(perm.can_close(u, approved) and perm.can_return(u, approved)),
+                "取消結案（發送開始前）": lambda: bool(perm.can_cancel_close(u, locked)),
+                "發送中止時重試": lambda: bool(perm.can_retry_delivery(u, failed)),
+                "作廢（含核定作廢申請）": lambda: bool(perm.can_void(u, draft)),
+                "申請作廢": lambda: bool(perm.can_request_void(u, draft)),
+                "刪除日報（未結案）": lambda: bool(perm.can_delete(u, draft)),
+                "授權二線管理員代理": lambda: bool(perm.can_manage_delegations(u)),
+                "下載已結案的正式 PDF": lambda: True,
+                "調整角色、指派系統管理員": lambda: perm.can_manage_users(u),
+                "本機緊急帳號（新增、改密碼、停用）": lambda: perm.can_manage_users(u),
+                "系統設定（AD、備份還原、健康檢查、PDF 範本、HTTPS、發送與提醒、AI）": lambda: perm.can_manage_settings(u),
+                "稽核紀錄": lambda: perm.can_manage_users(u),
+            }[label]()
+
+        cols = [k for k, _ in perm.MATRIX_ROLES]
+        for _, rows in perm.PERMISSION_MATRIX:
+            for label, marks in rows:
+                for col, mark in zip(cols, marks):
+                    for u in users[col]:
+                        got = check(label, u)
+                        assert got == (mark == "y"), (label, col, u.username, got)
+                        if mark == "d":  # 經授權代理時可以
+                            dl = ApprovalDelegation(principal_id=fm.id, delegate_id=u.id, start_date=date.today())
+                            db.session.add(dl)
+                            db.session.flush()
+                            assert check(label, u), (label, col, "with delegation")
+                            db.session.delete(dl)
+                            db.session.flush()
+        db.session.rollback()
+
+    root = Browser(app)
+    runner = app.test_cli_runner()
+    runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "a-very-long-pass"])
+    root.get("/login")
+    root.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
+    html = root.get("/admin/users")
+    assert "perm-matrix" in html and html.count("✔") > 20 and "✔*" in html and "不受職責分離限制" in html

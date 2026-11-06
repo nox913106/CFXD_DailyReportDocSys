@@ -82,8 +82,13 @@ def _manager_action(user, report, assigned_only, what):
 # ---------------------------------------------------------------- 各動作
 
 
+def _reviewer(user):
+    """二線以上（二線、檔案管理員）或系統管理員。"""
+    return user.is_admin or user.role in REVIEWER_ROLES
+
+
 def can_create(user):
-    return Decision(user.role in ("admin", "file_manager", "second_line", "first_line"))
+    return Decision(user.is_admin or user.role in ("admin", "file_manager", "second_line", "first_line"))
 
 
 def can_edit(user, report):
@@ -95,24 +100,24 @@ def can_edit(user, report):
 def can_delete(user, report):
     if report.status == "closed":
         return Decision(False, None, "已結案的日報不能刪除。")
-    return Decision(user.role in ("admin", "file_manager", "second_line"))
+    return Decision(_reviewer(user))
 
 
 def can_submit(user, report):
     if not report.editable:
         return Decision(False, None, "此日報目前不能送審。")
     # 送審不涉及核准權限，所有可編輯日報的角色都可以送審；送審者不能核准自己送審的日報（見 can_review）
-    return Decision(user.role in ("admin", "file_manager", "second_line", "first_line"))
+    return Decision(user.is_admin or user.role in ("admin", "file_manager", "second_line", "first_line"))
 
 
 def can_review(user, report):
     """核准 / 退件。"""
     if report.status != "submitted":
         return Decision(False, None, "此日報不是待審核狀態。")
-    # 職責分離適用於所有實際使用的帳號（含被指派的系統管理員）；只有平時不用的本機緊急帳號例外
-    if report.author_id == user.id and user.role != "admin":
+    # 職責分離：撰寫人、送審人不能審核自己的日報；系統管理員擁有所有權限，不受此限制
+    if report.author_id == user.id and not user.is_admin:
         return Decision(False, None, "不能審核自己撰寫的日報。")
-    if report.submitted_by_id == user.id and user.role != "admin":
+    if report.submitted_by_id == user.id and not user.is_admin:
         return Decision(False, None, "不能審核自己送審的日報。")
     return _manager_action(user, report, True, "核准")
 
@@ -128,21 +133,21 @@ def can_override_doc_no(user, report):
     """Document No. / Contractor Doc No. 覆寫：二線管理員以上（二線、檔案管理員、本機系統管理員），草稿或退回時。"""
     if not report.editable:
         return Decision(False, None, "只能在草稿或退回狀態變更文件編號。")
-    return Decision(user.role in ("admin", "file_manager", "second_line"), None, "只有二線管理員以上可以變更文件編號。")
+    return Decision(_reviewer(user), None, "只有二線管理員以上可以變更文件編號。")
 
 
 def can_close(user, report):
     """結案：核准後、線上確認排版沒有問題，二線以上執行。"""
     if report.status != "approved":
         return Decision(False, None, "只有已核准的日報可以結案。")
-    return Decision(user.role in REVIEWER_ROLES, None, "只有二線管理員以上可以結案。")
+    return Decision(_reviewer(user), None, "只有二線管理員以上可以結案。")
 
 
 def can_return(user, report):
     """結案前發現內容或排版有問題：退回給撰寫人修正，修正後重新送審。"""
     if report.status != "approved":
         return Decision(False, None, "只有已核准、尚未結案的日報可以退回修正。")
-    return Decision(user.role in REVIEWER_ROLES, None, "只有二線管理員以上可以退回修正。")
+    return Decision(_reviewer(user), None, "只有二線管理員以上可以退回修正。")
 
 
 def can_cancel_close(user, report):
@@ -152,14 +157,14 @@ def can_cancel_close(user, report):
         return Decision(False, None, "此日報尚未結案。")
     if d.state != "scheduled":
         return Decision(False, None, "發送流程已經開始，不能取消結案。")
-    return Decision(user.role in ("admin", "file_manager"), None, "結案後只有檔案管理員可以取消。")
+    return Decision(user.is_admin or user.role in ("admin", "file_manager"), None, "結案後只有檔案管理員可以取消。")
 
 
 def can_retry_delivery(user, report):
     d = report.delivery
     if report.status != "closed" or not d or d.state != "error":
         return Decision(False, None, "發送流程沒有中止，不需要重試。")
-    return Decision(user.role in REVIEWER_ROLES, None, "只有二線管理員以上可以重試。")
+    return Decision(_reviewer(user), None, "只有二線管理員以上可以重試。")
 
 
 def can_void(user, report):
@@ -175,7 +180,7 @@ def can_request_void(user, report):
         return Decision(False, None, "此日報已作廢或已結案。")
     if report.void_requested_at:
         return Decision(False, None, "已有待處理的作廢申請。")
-    return Decision(user.role in ("admin", "first_line"), None, "只有一線使用者需要申請作廢。")
+    return Decision(user.is_admin or user.role in ("admin", "first_line"), None, "只有一線使用者需要申請作廢。")
 
 
 def can_decide_void_request(user, report):
@@ -189,10 +194,12 @@ def can_manage_delegations(user):
 
 
 def can_manage_users(user):
+    """調整角色、指派系統管理員、本機帳號：只有系統管理員。"""
     return user.is_admin
 
 
 def can_manage_settings(user):
+    """後端系統設定：只有系統管理員。"""
     return user.is_admin
 
 
@@ -201,7 +208,7 @@ def can_manage_settings(user):
 
 def pending_for(user):
     """待 user 處理：可審核的日報與可核定的作廢申請。"""
-    if user.role not in ("admin", "file_manager", "second_line"):
+    if not _reviewer(user):
         return [], []
     reviews = [r for r in Report.query.filter_by(status="submitted").order_by(Report.report_date)
                if can_review(user, r)]
@@ -214,3 +221,42 @@ def review_role(user, report):
     """相容舊介面：(可否審核, 代簽的核准人, 原因)。"""
     d = can_review(user, report)
     return d.allowed, d.principal, d.reason
+
+
+# ---------------------------------------------------------------- 權限表（帳號管理頁顯示；tests 逐項比對實際判斷）
+
+MATRIX_ROLES = (("sysadmin", "系統管理員"), ("file_manager", "檔案管理員"), ("second_line", "二線管理員"),
+                ("first_line", "一線使用者"), ("viewer", "檢視者"))
+# y = 可以（✔）；n = 不可以（✘）；d = 經檔案管理員授權代理時可以（✔*）
+PERMISSION_MATRIX = (
+    ("日報", (
+        ("新增、編輯（草稿 / 退回）、送審", "yyyyn"),
+        ("截圖上傳（含批次上傳）", "yyyyn"),
+        ("線上預覽 PDF", "yyyyn"),
+        ("指派撰寫人、核准人", "yydnn"),
+        ("覆寫文件編號", "yyynn"),
+        ("審核：核准 / 退回", "yydnn"),
+        ("審核自己撰寫或送審的日報", "ynnnn"),
+        ("結案、結案前退回修正", "yyynn"),
+        ("取消結案（發送開始前）", "yynnn"),
+        ("發送中止時重試", "yyynn"),
+        ("作廢（含核定作廢申請）", "yydnn"),
+        ("申請作廢", "ynnyn"),
+        ("刪除日報（未結案）", "yyynn"),
+        ("授權二線管理員代理", "yynnn"),
+        ("下載已結案的正式 PDF", "yyyyy"),
+    )),
+    ("系統", (
+        ("調整角色、指派系統管理員", "ynnnn"),
+        ("本機緊急帳號（新增、改密碼、停用）", "ynnnn"),
+        ("系統設定（AD、備份還原、健康檢查、PDF 範本、HTTPS、發送與提醒、AI）", "ynnnn"),
+        ("稽核紀錄", "ynnnn"),
+    )),
+)
+MATRIX_NOTES = (
+    "系統管理員：本機緊急帳號，或在「帳號管理」被指派的檔案管理員 / 二線管理員。擁有所有權限，不受職責分離限制。",
+    "✔* = 經檔案管理員授權代理時可以（右上角「代理設定」），文件上仍顯示核准人本人。",
+    "檔案管理員、二線管理員不能審核自己撰寫或送審的日報（職責分離）。",
+    "只有系統管理員能調整角色與後端系統設定。已結案的日報任何人都不能修改、作廢或刪除。",
+)
+

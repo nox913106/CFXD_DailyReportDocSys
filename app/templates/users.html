@@ -88,15 +88,19 @@
 
 <section class="card">
   <h3>權限說明</h3>
-  <table class="list">
-    <tr><th>角色</th><th>可執行的動作</th></tr>
-    <tr><td>系統管理員</td><td>所有動作，另可管理「系統設定」（AD 驗證、帳號、備份還原、健康檢查、PDF 範本、HTTPS 憑證、AI 服務）。由二線管理員兼任（AD 帳號可），在下方指派；檔案管理員與一線使用者不能擔任，檔案管理員只負責日報，不能調整系統設定。
-      仍受職責分離限制：不能審核自己撰寫或送審的日報</td></tr>
-    <tr><td>本機緊急帳號</td><td>系統管理員權限的本機帳號，不經 AD；AD 無法驗證時使用，平時不使用</td></tr>
-    <tr><td>檔案管理員</td><td>指派（撰寫人、核准人）、審核、退件、作廢、送審、新增、編輯、刪除；授權二線管理員代理</td></tr>
-    <tr><td>二線管理員</td><td>送審、新增、編輯、刪除；經檔案管理員授權後可代審核、代指派、代退件、代作廢</td></tr>
-    <tr><td>一線使用者</td><td>送審、新增、編輯、申請作廢</td></tr>
+  <div class="tablewrap">
+  <table class="list perm-matrix">
+    <tr><th>動作</th>{% for key, label in matrix_roles %}<th class="center">{{ label }}</th>{% endfor %}</tr>
+    {% for group, rows in matrix %}
+    <tr class="group"><td colspan="{{ matrix_roles|length + 1 }}">{{ group }}</td></tr>
+    {% for label, marks in rows %}
+    <tr><td>{{ label }}</td>
+      {% for m in marks %}<td class="center mark-{{ m }}" title="{{ {'y': '可以', 'n': '不可以', 'd': '經授權代理時可以'}[m] }}">{{ {'y': '✔', 'n': '✘', 'd': '✔*'}[m] }}</td>{% endfor %}</tr>
+    {% endfor %}
+    {% endfor %}
   </table>
+  </div>
+  <ul class="hint">{% for n in matrix_notes %}<li>{{ n }}</li>{% endfor %}</ul>
 </section>
 
 <section class="card">

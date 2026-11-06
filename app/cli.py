@@ -159,9 +159,9 @@ def register_cli(app):
         click.echo(json.dumps(run(), ensure_ascii=False))
 
     @app.cli.command("grant-admin")
-    @click.option("--username", required=True, help="要指派為系統管理員的帳號（只能是二線管理員）")
+    @click.option("--username", required=True, help="要指派為系統管理員的帳號（檔案管理員或二線管理員）")
     def grant_admin(username):
-        """指派系統管理員（初次設定用；平常請在「帳號管理」頁操作）。只能指派二線管理員。"""
+        """指派系統管理員（初次設定用；平常請在「帳號管理」頁操作）。一線使用者不能指派。"""
         from . import db
         from .models import ADMIN_ELIGIBLE_ROLES, AuditLog, User
 
@@ -169,7 +169,7 @@ def register_cli(app):
         if user is None:
             raise click.ClickException("找不到這個帳號（AD 帳號要先登入一次）。")
         if user.role not in ADMIN_ELIGIBLE_ROLES:
-            raise click.ClickException("只有二線管理員可以被指派為系統管理員（檔案管理員與一線使用者不行）。")
+            raise click.ClickException("一線使用者不能成為系統管理員，請先改為檔案管理員或二線管理員。")
         user.sys_admin = True
         db.session.add(AuditLog(action="set_admin", target=user.username, detail="指派為系統管理員（指令）"))
         db.session.commit()
