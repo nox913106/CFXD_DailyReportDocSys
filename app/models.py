@@ -14,14 +14,14 @@ ROLE_LABELS = {
 }
 ASSIGNABLE_ROLES = ("file_manager", "second_line", "first_line", "viewer")  # 本機緊急帳號只能用指令建立
 REVIEWER_ROLES = ("admin", "file_manager", "second_line")  # 二線以上：結案、退回修正、重試發送
-ADMIN_ELIGIBLE_ROLES = ("file_manager", "second_line")  # 可被指派為系統管理員的角色；一線使用者強制排除
+ADMIN_ELIGIBLE_ROLES = ("second_line",)  # 可被指派為系統管理員的角色：只有二線；檔案管理員與一線使用者強制排除
 
 
 class User(UserMixin, db.Model):
     """AD 帳號首次登入時建立（預設一線使用者），角色由系統管理員在「帳號管理」調整。
 
     系統管理員有兩種：
-    - 指派：檔案管理員或二線管理員被勾選 sys_admin（一線使用者強制排除）。AD 帳號也可以。
+    - 指派：二線管理員被勾選 sys_admin（檔案管理員與一線使用者強制排除：檔案管理員負責日報，不管系統設定）。
     - 本機緊急帳號（role=admin）：密碼雜湊存在 password_hash，不經 AD，AD 無法驗證時仍可登入。
     """
 
@@ -32,7 +32,7 @@ class User(UserMixin, db.Model):
     is_approver = db.Column(db.Boolean, default=False, nullable=False)  # 舊欄位，與 role 同步
     role = db.Column(db.String(16), default="first_line")
     password_hash = db.Column(db.String(256))  # 僅本機帳號（系統管理員緊急帳號）
-    sys_admin = db.Column(db.Boolean, default=False)  # 指派的系統管理員權限（只對檔案 / 二線管理員有效）
+    sys_admin = db.Column(db.Boolean, default=False)  # 指派的系統管理員權限（只對二線管理員有效）
     created_at = db.Column(db.DateTime, default=datetime.now)
     last_login = db.Column(db.DateTime)
 
@@ -56,7 +56,7 @@ class User(UserMixin, db.Model):
 
     @property
     def is_admin(self):
-        """系統管理員：本機緊急帳號，或被指派的檔案 / 二線管理員（一線使用者即使旗標殘留也無效）。"""
+        """系統管理員：本機緊急帳號，或被指派的二線管理員（其他角色即使旗標殘留也無效）。"""
         return self.role == "admin" or bool(self.sys_admin and self.role in ADMIN_ELIGIBLE_ROLES)
 
     @property

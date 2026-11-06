@@ -508,7 +508,7 @@ cmd_install() {
   echo "  下一步（都在網頁「系統設定」完成，不需要再登入主機）："
   [[ -n "$(flask_app config-get ldap_url 2>/dev/null | tail -n1)" ]] || echo "   - AD 驗證：填入網域控制站，按「測試」確認後儲存"
   [[ -f "$INSTANCE/templates/checklist.xlsx" ]] || echo "   - PDF 與上傳：上傳 CheckList 範本"
-  echo "   - 帳號管理：AD 帳號登入一次後，把檔案管理員指派為系統管理員；可另外新增本機緊急帳號"
+  echo "   - 帳號管理：AD 帳號登入一次後，把二線管理員指派為系統管理員（檔案管理員不能擔任）；可另外新增本機緊急帳號"
   echo "   - 備份還原：確認備份時間與位置（建議設到 NAS）"
   [[ "$TLS" == self-signed ]] && echo "   - HTTPS 憑證：上傳公司 CA 簽發的憑證，瀏覽器就不會再警告"
   echo "   - AI 建議：設定 AI 服務（可不設定）"

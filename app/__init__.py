@@ -205,5 +205,13 @@ def _migrate_roles():
     for u in User.query.filter((User.role.is_(None)) | (User.role == "")):
         u.set_role("file_manager" if u.is_approver else "first_line")
         changed = True
+    # 檔案管理員不再能兼任系統管理員：舊版指派的權限移除並留下稽核紀錄
+    from .models import ADMIN_ELIGIBLE_ROLES, AuditLog
+
+    for u in User.query.filter(User.sys_admin.is_(True), ~User.role.in_(ADMIN_ELIGIBLE_ROLES)):
+        u.sys_admin = False
+        db.session.add(AuditLog(action="set_admin", target=u.username,
+                                detail="移除系統管理員（檔案管理員與一線使用者不能擔任系統管理員）"))
+        changed = True
     if changed:
         db.session.commit()

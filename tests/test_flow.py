@@ -974,7 +974,7 @@ def test_settings_page_and_admin_assignment(app):
 
     # 一線使用者不能被指派
     html = root.post("/admin/users", {"user_id": str(bid), "sys_admin": "1"})
-    assert "一線使用者不能成為系統管理員" in html
+    assert "只有二線管理員可以被指派為系統管理員" in html
     with app.app_context():
         assert not db.session.get(User, bid).is_admin
         u = db.session.get(User, bid)
@@ -990,9 +990,29 @@ def test_settings_page_and_admin_assignment(app):
     html = bob.get("/admin/settings/ai")
     assert "系統設定" in html and "AI 服務" in html and "系統管理員" in bob.get("/")
 
-    # 指派的系統管理員可以再指派別人、不能移除自己；改成一線使用者時自動移除
+    # 檔案管理員不能被指派為系統管理員，也進不了系統設定（即使舊版留下旗標）
     root.post("/admin/users", {"user_id": str(cid), "role": "file_manager"})
     bob.get("/admin/users")
+    assert "只有二線管理員可以被指派為系統管理員" in bob.post("/admin/users", {"user_id": str(cid), "sys_admin": "1"})
+    with app.app_context():
+        c = db.session.get(User, cid)
+        assert not c.sys_admin
+        c.sys_admin = True  # 舊版指派殘留
+        db.session.commit()
+        assert not db.session.get(User, cid).is_admin
+    carl.get("/admin/settings/", status=403)
+    carl.get("/admin/users", status=403)
+    assert "系統設定" not in carl.get("/")
+    with app.app_context():  # 升級時移除舊版指派並留下稽核紀錄
+        from app import _migrate_roles
+
+        _migrate_roles()
+        assert not db.session.get(User, cid).sys_admin
+        assert AuditLog.query.filter_by(action="set_admin", target="carl").filter(
+            AuditLog.detail.contains("檔案管理員與一線使用者不能擔任")).count() == 1
+
+    # 指派的系統管理員可以再指派別人、不能移除自己；改成一線使用者時自動移除
+    root.post("/admin/users", {"user_id": str(cid), "role": "second_line"})
     bob.post("/admin/users", {"user_id": str(cid), "sys_admin": "1"})
     assert "不能移除自己" in bob.post("/admin/users", {"user_id": str(bid), "sys_admin": "0"})
     assert "不能把自己改成一線使用者" in bob.post("/admin/users", {"user_id": str(bid), "role": "first_line"})
@@ -1001,8 +1021,10 @@ def test_settings_page_and_admin_assignment(app):
         assert not db.session.get(User, cid).is_admin and not db.session.get(User, cid).sys_admin
         assert AuditLog.query.filter_by(action="set_admin").count() >= 3
 
-    # 指令指派（初次設定）
+    # 指令指派（初次設定）：一線使用者、檔案管理員都不行
     assert runner.invoke(args=["grant-admin", "--username", "carl"]).exit_code != 0  # 一線使用者
+    root.post("/admin/users", {"user_id": str(cid), "role": "file_manager"})
+    assert runner.invoke(args=["grant-admin", "--username", "carl"]).exit_code != 0  # 檔案管理員
 
     # 新增服務：從範本帶入、金鑰加密、畫面不顯示金鑰
     bob.get("/admin/settings/providers/new?preset=anthropic")

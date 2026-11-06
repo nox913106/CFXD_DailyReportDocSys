@@ -552,13 +552,13 @@ def users():
 
 
 def _set_sys_admin():
-    """指派 / 移除系統管理員。一線使用者強制排除；不能移除自己的權限（避免把自己鎖在外面）。"""
+    """指派 / 移除系統管理員。只能指派二線管理員；不能移除自己的權限（避免把自己鎖在外面）。"""
     user = db.session.get(User, request.form.get("user_id", type=int) or 0) or abort(404)
     on = request.form.get("sys_admin") == "1"
     if user.is_local_admin:
         abort(400)
     if on and user.role not in ADMIN_ELIGIBLE_ROLES:
-        flash("一線使用者不能成為系統管理員，請先改為檔案管理員或二線管理員。", "error")
+        flash("只有二線管理員可以被指派為系統管理員（檔案管理員與一線使用者不行）。", "error")
         return redirect(url_for("views.users"))
     if not on and user.id == current_user.id:
         flash("不能移除自己的系統管理員權限，請由其他系統管理員操作。", "error")
