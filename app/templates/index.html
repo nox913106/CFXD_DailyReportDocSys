@@ -47,18 +47,7 @@
   </table>
 </section>
 {% endif %}
-{% if void_requests %}
-<section class="card">
-  <h2>待核定的作廢申請（{{ void_requests|length }}）</h2>
-  <table class="list">
-    <tr><th>日期</th><th>文件編號</th><th>申請人</th><th>原因</th><th></th></tr>
-    {% for r in void_requests %}
-    <tr><td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td><td>{{ r.void_requested_by.name }}</td>
-      <td>{{ r.void_request_reason }}</td><td><a href="{{ url_for('views.detail', report_id=r.id) }}">處理</a></td></tr>
-    {% endfor %}
-  </table>
-</section>
-{% endif %}
+
 
 <section class="card">
   <div class="row-between">
@@ -83,7 +72,7 @@
     {% for r in reports %}
     <tr>
       <td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td><td>{{ r.author.name }}</td>
-      <td><span class="badge {{ r.status }}">{{ r.status_label }}</span>{% if r.void_requested_at and r.status != 'voided' %} <span class="badge rejected">申請作廢</span>{% endif %}</td>
+      <td><span class="badge {{ r.status }}">{{ r.status_label }}</span></td>
       <td>{{ r.updated_at.strftime('%m-%d %H:%M') if r.updated_at }}{% if r.updated_by %} {{ r.updated_by.name }}{% endif %}</td>
       <td>
         {% if r.editable %}<a href="{{ url_for('editors.basic', report_id=r.id) }}">編輯</a> · {% endif %}

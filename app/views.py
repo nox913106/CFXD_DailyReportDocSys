@@ -59,10 +59,10 @@ def index():
         .order_by(Report.report_date.desc())
         .all()
     )
-    pending, void_requests = pending_for(current_user)
+    pending = pending_for(current_user)
     pending_checks = {r.id: run_checks(r, history=False).counts() for r in pending}
     return render_template(
-        "index.html", reports=reports, month=month, pending=pending, void_requests=void_requests,
+        "index.html", reports=reports, month=month, pending=pending,
         pending_checks=pending_checks,
         today=date.today().isoformat(), can_create=perm.can_create(current_user),
         official=last_official(date.today() + timedelta(days=1)), **_desk(),
@@ -208,9 +208,7 @@ def detail(report_id):
         can={
             "ai": _can_request_ai(u, report),
             "edit": perm.can_edit(u, report), "submit": perm.can_submit(u, report),
-            "delete": perm.can_delete(u, report), "void": perm.can_void(u, report),
-            "request_void": perm.can_request_void(u, report),
-            "decide_void": perm.can_decide_void_request(u, report),
+            "delete": perm.can_delete(u, report),
             "close": perm.can_close(u, report), "return": perm.can_return(u, report),
             "cancel_close": perm.can_cancel_close(u, report), "retry": perm.can_retry_delivery(u, report),
         },
@@ -413,7 +411,7 @@ def revoke_delegation(delegation_id):
     return redirect(url_for("views.delegations"))
 
 
-# ---------------------------------------------------------------- 作廢 / 刪除
+# ---------------------------------------------------------------- 刪除
 
 
 def _log(report, action, principal=None, comment=""):
@@ -421,78 +419,16 @@ def _log(report, action, principal=None, comment=""):
                              on_behalf_of_id=principal.id if principal else None, comment=comment))
 
 
-@bp.route("/reports/<int:report_id>/void", methods=["POST"])
-def void(report_id):
-    """作廢：保留日期與文件編號，內容唯讀。"""
-    report = get_report(report_id)
-    d = perm.can_void(current_user, report)
-    if not d:
-        abort(403) if current_user.role == "first_line" else flash(d.reason, "error")
-        return redirect(url_for("views.detail", report_id=report.id))
-    reason = request.form.get("reason", "").strip() or (report.void_request_reason or "")
-    if not reason:
-        flash("作廢時請填寫原因。", "error")
-        return redirect(url_for("views.detail", report_id=report.id))
-    _void(report, reason, d.principal)
-    db.session.commit()
-    flash(f"已作廢 {report.doc_no}，文件編號保留不再使用。", "success")
-    return redirect(url_for("views.detail", report_id=report.id))
-
-
-def _void(report, reason, principal):
-    report.status = "voided"
-    report.void_reason = reason
-    report.voided_at = datetime.now()
-    report.voided_by_id = current_user.id
-    report.updated_by_id = current_user.id
-    _log(report, "void", principal, reason)
-
-
-@bp.route("/reports/<int:report_id>/void-request", methods=["POST"])
-def request_void(report_id):
-    report = get_report(report_id)
-    d = perm.can_request_void(current_user, report)
-    if not d:
-        flash(d.reason, "error")
-        return redirect(url_for("views.detail", report_id=report.id))
-    reason = request.form.get("reason", "").strip()
-    if not reason:
-        flash("申請作廢請填寫原因。", "error")
-        return redirect(url_for("views.detail", report_id=report.id))
-    report.void_request_reason = reason
-    report.void_requested_at = datetime.now()
-    report.void_requested_by_id = current_user.id
-    _log(report, "void_request", None, reason)
-    db.session.commit()
-    flash("已送出作廢申請，待檔案管理員核定。", "success")
-    return redirect(url_for("views.detail", report_id=report.id))
-
-
-@bp.route("/reports/<int:report_id>/void-request/decide", methods=["POST"])
-def decide_void(report_id):
-    report = get_report(report_id)
-    d = perm.can_decide_void_request(current_user, report)
-    if not d:
-        abort(403) if current_user.role == "first_line" else flash(d.reason, "error")
-        return redirect(url_for("views.detail", report_id=report.id))
-    comment = request.form.get("comment", "").strip()
-    if request.form.get("action") == "approve":
-        _void(report, report.void_request_reason + (f"（{comment}）" if comment else ""), d.principal)
-        flash(f"已核定作廢 {report.doc_no}。", "success")
-    else:
-        _log(report, "void_request_reject", d.principal, comment)
-        flash("已駁回作廢申請。", "success")
-    report.void_requested_at = None
-    db.session.commit()
-    return redirect(url_for("views.detail", report_id=report.id))
-
-
 @bp.route("/reports/<int:report_id>/delete", methods=["POST"])
 def delete(report_id):
-    """刪除日報（含截圖檔）。刪除後該日期可重新建立；要保留編號請改用作廢。"""
+    """刪除日報（含截圖檔）。刪除後文件編號釋放：同一天可重新建立，編號也可以再用在其他日報。"""
     report = get_report(report_id)
-    if not perm.can_delete(current_user, report):
-        abort(403)
+    d = perm.can_delete(current_user, report)
+    if not d:
+        if report.status == "closed" or current_user.role in ("first_line", "viewer"):
+            abort(403)
+        flash(d.reason, "error")
+        return redirect(url_for("views.detail", report_id=report.id))
     if request.form.get("confirm_doc_no", "").strip() != report.doc_no:
         flash("請輸入完整文件編號以確認刪除。", "error")
         return redirect(url_for("views.detail", report_id=report.id))
@@ -507,7 +443,7 @@ def delete(report_id):
         import shutil
 
         shutil.rmtree(folder, ignore_errors=True)
-    flash(f"已刪除 {report.doc_no}。", "success")
+    flash(f"已刪除 {report.report_date} 的日報，文件編號 {report.doc_no} 已釋放，可以再使用。", "success")
     return redirect(url_for("views.index"))
 
 

@@ -445,7 +445,7 @@ def test_role_permissions(app):
 
         alice_id = User.query.filter_by(username="alice").one().id
 
-    # 一線：可新增 / 編輯 / 送審，不能指派、作廢、刪除、管理帳號或代理
+    # 一線：可新增 / 編輯 / 送審，不能指派、刪除、管理帳號或代理
     rid = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-10"}))
     alice.get(f"/reports/{rid}/basic")
     alice.post(f"/reports/{rid}/basic", {"author_id": str(dave_id), "approver_id": "", "revision": "0"})
@@ -453,7 +453,7 @@ def test_role_permissions(app):
         r = db.session.get(Report, rid)
         assert r.author_id == alice_id and r.approver_id == boss_id  # 指派被忽略
     alice.get(f"/reports/{rid}")
-    alice.post(f"/reports/{rid}/void", {"reason": "x"}, status=403)
+    assert "刪除日報" not in alice.get(f"/reports/{rid}")
     alice.post(f"/reports/{rid}/delete", {"confirm_doc_no": "x"}, status=403)
     alice.get("/admin/users", status=403)
     alice.get("/delegations", status=403)
@@ -473,41 +473,47 @@ def test_role_permissions(app):
         assert r.author_id == dave_id
         assert any(log.action == "assign" for log in r.review_logs)
 
-    # 一線申請作廢 -> 檔案管理員駁回 -> 再申請 -> 核定作廢；作廢後唯讀、編號保留
-    alice.get(f"/reports/{rid}")
-    assert "已送出作廢申請" in alice.post(f"/reports/{rid}/void-request", {"reason": "日期建錯"})
-    assert "已有待處理" in alice.post(f"/reports/{rid}/void-request", {"reason": "again"})
-    assert "待核定的作廢申請" in boss.get("/")
-    boss.get(f"/reports/{rid}")
-    assert "已駁回作廢申請" in boss.post(f"/reports/{rid}/void-request/decide", {"action": "reject"})
-    alice.get(f"/reports/{rid}")
-    alice.post(f"/reports/{rid}/void-request", {"reason": "日期建錯"})
-    boss.get(f"/reports/{rid}")
-    html = boss.post(f"/reports/{rid}/void-request/decide", {"action": "approve"})
-    assert "已核定作廢" in html and "保留" in html
-    with app.app_context():
-        r = db.session.get(Report, rid)
-        assert r.status == "voided" and r.void_reason.startswith("日期建錯")
-    assert "不能修改" in alice.post(f"/reports/{rid}/basic", {"revision": "3"})
-    assert "已經存在" in alice.post("/reports/new", {"report_date": "2026-11-10"})  # 日期 / 流水號仍被保留
+    # 作廢功能已取消
+    for url in (f"/reports/{rid}/void", f"/reports/{rid}/void-request", f"/reports/{rid}/void-request/decide"):
+        assert boss.c.post(url, data={"csrf_token": boss.tok, "reason": "x"}).status_code == 404
+    assert "作廢" not in boss.get(f"/reports/{rid}").split("處理紀錄")[0]
 
-    # 刪除：需輸入文件編號；刪除後日期可重新建立，稽核紀錄保留
+    # 刪除：需輸入文件編號；刪除後文件編號釋放（同一天重新建立得到同一個編號，也可覆寫給別份），稽核紀錄保留
     rid2 = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-11"}))
-    sl.get(f"/reports/{rid2}")
+    # 二線刪除：需經檔案管理員授權代理
+    html = sl.get(f"/reports/{rid2}")
+    assert "刪除日報" not in html
+    assert "需要檔案管理員授權代理" in sl.post(f"/reports/{rid2}/delete", {"confirm_doc_no": "x"})
+    with app.app_context():
+        from datetime import date
+
+        from app.models import ApprovalDelegation
+
+        db.session.add(ApprovalDelegation(principal_id=boss_id, delegate_id=dave_id, start_date=date.today()))
+        db.session.commit()
+    assert "刪除日報" in sl.get(f"/reports/{rid2}")
     assert "請輸入完整文件編號" in sl.post(f"/reports/{rid2}/delete", {"confirm_doc_no": "wrong"})
     with app.app_context():
         doc = db.session.get(Report, rid2).doc_no
-    assert "已刪除" in sl.post(f"/reports/{rid2}/delete", {"confirm_doc_no": doc})
+    assert f"文件編號 {doc} 已釋放" in sl.post(f"/reports/{rid2}/delete", {"confirm_doc_no": doc})
     with app.app_context():
         from app.models import AuditLog
 
         assert db.session.get(Report, rid2) is None
         assert AuditLog.query.filter_by(action="delete_report", target=doc).one()
+    sl.get(f"/reports/{rid}/basic")
+    base = {"revision": "0", "issue_purpose": "IFI - Issue for Information", "inspection_time": "10:00 AM",
+            "first_line_officer": "Alice", "second_line_support": ""}
+    assert "已儲存" in sl.post(f"/reports/{rid}/basic", {**base, "doc_no": doc, "contractor_doc_no": ""})  # 釋放的編號可再用
+    sl.post(f"/reports/{rid}/basic", {**base, "doc_no": "", "contractor_doc_no": ""})
+    rid3 = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-11"}))
+    with app.app_context():
+        assert db.session.get(Report, rid3).doc_no == doc
 
 
 def test_local_admin(app):
     from app import db
-    from app.models import User
+    from app.models import Report, User
 
     runner = app.test_cli_runner()
     res = runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "short"])
@@ -535,10 +541,12 @@ def test_local_admin(app):
         assert db.session.get(User, eid).role == "file_manager"
     assert "變更角色" in b.get("/admin/users")
 
-    # 系統管理員可直接作廢任何日報
+    # 系統管理員可刪除任何未結案的日報
     rid = report_id_from(other.post("/reports/new", {"report_date": "2026-11-12"}))
     b.get(f"/reports/{rid}")
-    assert "已作廢" in b.post(f"/reports/{rid}/void", {"reason": "測試"})
+    with app.app_context():
+        doc = db.session.get(Report, rid).doc_no
+    assert "已釋放" in b.post(f"/reports/{rid}/delete", {"confirm_doc_no": doc})
 
 
 def test_create_admin_rename_from(app):
@@ -1639,9 +1647,9 @@ def test_close_and_delivery(app, monkeypatch):
     html = carol.post(f"/reports/{rid}/close")
     assert "已結案並鎖檔" in html and "鎖檔中" in html
     assert "只有已核准的日報可以結案" in boss.post(f"/reports/{rid}/close")
-    # 結案後不能再改、不能作廢 / 刪除；二線不能取消結案，檔案管理員可以（發送開始前）
+    # 結案後不能再改、不能刪除；二線不能取消結案，檔案管理員可以（發送開始前）
     assert "取消結案" not in carol.get(f"/reports/{rid}")
-    assert "已結案的日報不能作廢" in boss.post(f"/reports/{rid}/void", {"reason": "x"})
+    assert boss.c.post(f"/reports/{rid}/delete", data={"csrf_token": boss.tok, "confirm_doc_no": "x"}).status_code == 403
     html = boss.post(f"/reports/{rid}/close/cancel", {"reason": "排版要再確認"})
     assert "已取消結案" in html
     with app.app_context():
@@ -1966,9 +1974,7 @@ def test_permission_matrix_matches_code(app):
                 "結案、結案前退回修正": lambda: bool(perm.can_close(u, approved) and perm.can_return(u, approved)),
                 "取消結案（發送開始前）": lambda: bool(perm.can_cancel_close(u, locked)),
                 "發送中止時重試": lambda: bool(perm.can_retry_delivery(u, failed)),
-                "作廢（含核定作廢申請）": lambda: bool(perm.can_void(u, draft)),
-                "申請作廢": lambda: bool(perm.can_request_void(u, draft)),
-                "刪除日報（未結案）": lambda: bool(perm.can_delete(u, draft)),
+                "刪除日報（未結案；刪除後文件編號可再使用）": lambda: bool(perm.can_delete(u, draft) and not perm.can_delete(u, locked)),
                 "授權二線管理員代理": lambda: bool(perm.can_manage_delegations(u)),
                 "下載已結案的正式 PDF": lambda: True,
                 "調整角色、指派系統管理員": lambda: perm.can_manage_users(u),

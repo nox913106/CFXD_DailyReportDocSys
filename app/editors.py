@@ -145,7 +145,7 @@ def _doc_numbers(report):
             return f"{label} 最多 64 個字元，不能有特殊控制字元。"
         dup = Report.query.filter(Report.id != report.id, db.func.lower(getattr(Report, field)) == v.lower()).first()
         if dup:
-            return f"{label} {v} 已用在 {dup.report_date} 的日報（作廢的日報編號也保留不再使用）。"
+            return f"{label} {v} 已用在 {dup.report_date} 的日報；要使用這個編號，請先刪除那份日報。"
         new[field] = v
     changes = [f"{label} {getattr(report, f)} → {new[f]}" for f, label, _ in DOC_FIELDS if new[f] != getattr(report, f)]
     if changes:
