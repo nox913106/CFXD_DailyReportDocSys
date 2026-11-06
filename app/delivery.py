@@ -129,9 +129,10 @@ def _notify(d, event, **extra):
     from . import teams
 
     r = d.report
+    mail_to, mail_cc = teams.split_recipients(d.mail_to)
     try:
         teams.notify(event, {"date": r.report_date.isoformat(), "doc_no": r.doc_no, "filename": d.pdf_name or "",
-                             "md5": d.pdf_md5 or "", "share_link": d.share_url or "", "mail_to": d.mail_to or "",
+                             "md5": d.pdf_md5 or "", "share_link": d.share_url or "", "mail_to": mail_to, "mail_cc": mail_cc,
                              "closed_by": d.closed_by.name if d.closed_by else "", **extra}, report=r)
     except Exception:
         log.exception("Teams 通知失敗")

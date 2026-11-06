@@ -2162,12 +2162,14 @@ def test_internal_teams_and_customer_mail_templates(app, monkeypatch):
             "reminder_enabled": "1", "teams_mention": "1", "teams_delivery_failed_on": "1", "teams_reminder_on": "1",
             "teams_reminder_title": "提醒 {date}", "teams_reminder_text": "狀態 {status}",
             "teams_delivery_failed_title": "中止 {doc_no}", "teams_delivery_failed_text": "{error}",
-            "teams_delivery_done_title": "完成 {doc_no}", "teams_delivery_done_text": "{mail_to}",
+            "teams_delivery_done_title": "完成 {doc_no}", "teams_delivery_done_text": "給 {mail_to} 副本 {mail_cc}",
+            "mail_to": "jamie@contoso.com\nak@contoso.com", "mail_cc": "iti@contoso.com",
             "teams_status_change_title": "{old_status}→{status}", "teams_status_change_text": "{actor}",
             "teams_health_title": "健檢 {summary}", "teams_health_text": "{abnormal}", "teams_health_times": "08:30, 17:30"}
     assert "Teams Workflow 網址應以 https://" in root.post("/admin/settings/delivery", {**form, "teams_webhook": "nope"}, status=400)
     html = root.post("/admin/settings/delivery/preview", form)
     assert "日報 CFXD-SCA-RLY-DPR-000903" in html and "提醒 2026-11-10" in html and "srcdoc=" in html
+    assert "給 jamie@contoso.com、ak@contoso.com 副本 iti@contoso.com" in html  # 預覽用表單上實際的收件人
     html = root.post("/admin/settings/delivery/test-mail", {**form, "test_to": "me@contoso.com"})
     assert "用日報 Mail 模版（範例資料）寄給 me@contoso.com" in html
     assert sent[-1][1] == "[測試] 日報 CFXD-SCA-RLY-DPR-000903" and "0123456789abcdef" in sent[-1][2]

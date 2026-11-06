@@ -46,14 +46,14 @@ EVENTS = {
     "delivery_done": {
         "label": "發送完成：已上傳 SharePoint 並寄出日報 Mail",
         "title": "【已寄出】{doc_no}（{date}）",
-        "text": "已寄出：給 {mail_to}\n\n檔案：{filename}\n\nMD5：{md5}",
+        "text": "收件人：{mail_to}\n\n副本：{mail_cc}\n\n檔案：{filename}\n\nMD5：{md5}",
         "default_on": False,
     },
 }
 FIELDS = {
     "date": "日報日期", "doc_no": "文件編號", "status": "目前狀態", "deadline": "期限", "step": "失敗的步驟",
     "error": "失敗原因", "filename": "正式 PDF 檔名", "md5": "MD5", "share_link": "SharePoint 連結",
-    "mail_to": "收件人", "closed_by": "結案人", "time": "通知時間",
+    "mail_to": "收件人", "mail_cc": "副本", "closed_by": "結案人", "time": "通知時間",
     "old_status": "原狀態（狀態變更）", "action": "動作（狀態變更）", "actor": "操作者（狀態變更）",
     "comment": "意見 / 原因（狀態變更）", "summary": "各等級數量（健康檢查）",
     "abnormal": "不是正常的項目清單（健康檢查）", "storage": "各磁碟用量 GB（健康檢查）",
@@ -61,7 +61,7 @@ FIELDS = {
 SAMPLE = {"date": "2026-11-10", "doc_no": "CFXD-SCA-RLY-DPR-000903", "status": "待審核", "deadline": "13:00",
           "step": "寄送日報 Mail", "error": "HTTP 401：用戶端密碼已過期", "filename": "CFXD-SCA-RLY-DPR-000903_0_IFI.pdf",
           "md5": "0123456789abcdef0123456789abcdef", "share_link": "https://contoso.sharepoint.com/:b:/s/CFXD/xyz",
-          "mail_to": "jamie@rallytech.com.tw", "closed_by": "Alan Lin", "time": "12:30",
+          "mail_to": "a@company.com", "mail_cc": "b@company.com", "closed_by": "Alan Lin", "time": "12:30",
           "old_status": "待審核", "action": "退回", "actor": "Alan Lin", "comment": "原因：4.3 截圖日期不對",
           "summary": "正常 30、注意 1、告警 1",
           "abnormal": "• [告警] 儲存空間 / 磁碟 /：已用 181.2 GB / 共 200.0 GB（90.6%），剩餘 18.8 GB\n"
@@ -85,6 +85,25 @@ def defaults():
         out[key(ev, "title")] = d["title"]
         out[key(ev, "text")] = d["text"]
     return out
+
+
+def sample(c=None):
+    """預覽／測試用的範例資料；收件人、副本用設定（表單）上實際填的信箱。"""
+    from .graph import addresses
+
+    out = dict(SAMPLE)
+    if c is not None:
+        out["mail_to"] = "、".join(addresses(c.get("mail_to"))) or "（未設定）"
+        out["mail_cc"] = "、".join(addresses(c.get("mail_cc"))) or "（無）"
+    return out
+
+
+def split_recipients(stored):
+    """Delivery.mail_to 存成「a, b, cc c」：拆回收件人與副本（顯示用）。"""
+    parts = [p.strip() for p in (stored or "").split(",") if p.strip()]
+    to = [p for p in parts if not p.startswith("cc ")]
+    cc = [p[3:] for p in parts if p.startswith("cc ")]
+    return "、".join(to), "、".join(cc) or "（無）"
 
 
 # ---------------------------------------------------------------- 網址（等同密碼，加密保存）

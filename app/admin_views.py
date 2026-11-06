@@ -720,7 +720,7 @@ def delivery_test_teams():
     url = request.form.get("teams_webhook", "").strip() or teams.webhook()
     if not url:
         return _delivery_page(c, [(False, "Teams", "還沒填 Teams Workflow 網址")])
-    title, text = teams.render(ev, teams.SAMPLE, c[teams.key(ev, "title")], c[teams.key(ev, "text")])
+    title, text = teams.render(ev, teams.sample(c), c[teams.key(ev, "title")], c[teams.key(ev, "text")])
     mentions = teams.mention_list() if c["teams_mention"] and ev == "reminder" else []
     try:
         teams.post(url, teams.card("[測試] " + title, text, "https://report.corp.local/reports/1", mentions))
@@ -744,6 +744,6 @@ def delivery_preview():
 
     msgs = []
     for ev, d in teams.EVENTS.items():
-        title, text = teams.render(ev, teams.SAMPLE, c[teams.key(ev, "title")], c[teams.key(ev, "text")])
+        title, text = teams.render(ev, teams.sample(c), c[teams.key(ev, "title")], c[teams.key(ev, "text")])
         msgs.append((d["label"], title, md(text)))
     return _delivery_page(c, preview={"subject": subject, "body": body, "teams": msgs})
