@@ -678,23 +678,40 @@ cmd_apply_tls() {
 
 # ---------------------------------------------------------------- doctor
 
-N_OK=0; N_WARN=0; N_FAIL=0; LAST_GROUP=""
-item() {  # item 狀態 分組 名稱 說明 [修正方式]
-  local st="$1" grp="$2" name="$3" detail="$4" fix="${5:-}" mark
+N_OK=0; N_EVENT=0; N_WARN=0; N_FAIL=0; LAST_GROUP=""; ABNORMAL=()
+item() {  # item 狀態（ok / event / warn / alert / danger / fail）分組 名稱 說明 [修正方式]
+  local st="$1" grp="$2" name="$3" detail="$4" fix="${5:-}" mark label
   if [[ "$grp" != "$LAST_GROUP" ]]; then echo; echo "${B}$grp${N}"; LAST_GROUP="$grp"; fi
   case "$st" in
     ok) mark="${G}✔${N}"; N_OK=$((N_OK + 1)) ;;
-    warn) mark="${Y}!${N}"; N_WARN=$((N_WARN + 1)) ;;
-    *) mark="${R}✘${N}"; N_FAIL=$((N_FAIL + 1)) ;;
+    event) mark="${D}i${N}"; label="事件"; N_EVENT=$((N_EVENT + 1)) ;;
+    warn) mark="${Y}!${N}"; label="注意"; N_WARN=$((N_WARN + 1)) ;;
+    alert) mark="${R}!!${N}"; label="告警"; N_FAIL=$((N_FAIL + 1)) ;;
+    danger) mark="${R}✘${N}"; label="危險"; N_FAIL=$((N_FAIL + 1)) ;;
+    *) mark="${R}✘${N}"; label="失敗"; N_FAIL=$((N_FAIL + 1)) ;;
   esac
+  [[ "$st" != ok ]] && ABNORMAL+=("[$label] $grp / $name：$detail")
   printf '  %s %s%*s %s\n' "$mark" "$name" "$(( 18 - $(printf '%s' "$name" | LC_ALL=C.UTF-8 wc -L) ))" "" "$detail"
   [[ -n "$fix" && "$st" != ok ]] && printf '      %s→ %s%s\n' "$D" "$fix" "$N"
   return 0
 }
 
+storage_item() {  # 與 app/doctor.py 相同的分級；單位 GB（1024³）
+  local line mount total used avail pct lv
+  line="$(df -P -B1 "$1" 2>/dev/null | awk 'NR==2 {print $6, $2, $3, $4}')" || return 0
+  read -r mount total used avail <<< "$line"
+  [[ -n "${total:-}" && "$total" -gt 0 ]] || return 0
+  pct=$(( used * 1000 / (used + avail) ))  # 與 df 的 Use% 相同
+  if (( pct >= 950 )); then lv=danger; elif (( pct >= 900 )); then lv=alert; elif (( pct >= 850 )); then lv=warn
+  elif (( pct >= 800 )); then lv=event; else lv=ok; fi
+  item "$lv" "儲存空間" "磁碟 $mount" "$(awk -v u="$used" -v t="$total" -v a="$avail" -v p="$pct" \
+    'BEGIN {g=1024^3; printf "已用 %.1f GB / 共 %.1f GB（%.1f%%），剩餘 %.1f GB", u/g, t/g, p/10, a/g}')" \
+    "清理舊資料或擴充磁碟；備份可在「系統設定 → 備份還原」減少保留份數或改存 NAS"
+}
+
 cmd_doctor() {
   need_root
-  N_OK=0; N_WARN=0; N_FAIL=0; LAST_GROUP=""
+  N_OK=0; N_EVENT=0; N_WARN=0; N_FAIL=0; LAST_GROUP=""; ABNORMAL=()
   echo "${B}CFXD 日報系統健檢${N}  $(date '+%Y-%m-%d %H:%M:%S')  $(hostname)"
   local g
 
@@ -705,11 +722,10 @@ cmd_doctor() {
     ubuntu:24.04|ubuntu:26.04|debian:13) item ok "$g" "作業系統" "$PRETTY_NAME" ;;
     *) item warn "$g" "作業系統" "$PRETTY_NAME（未驗證）" ;;
   esac
-  local mem disk
+  local mem
   mem=$(awk '/MemAvailable/ {printf "%d", $2/1024}' /proc/meminfo)
   item "$( ((mem >= 1024)) && echo ok || echo warn)" "$g" "可用記憶體" "${mem} MB" "OCR 約需 1 GB，建議加記憶體或 swap"
-  disk=$(df -Pm "$DIR" 2>/dev/null | awk 'NR==2 {print $4}')
-  item "$( ((disk >= 5000)) && echo ok || { ((disk >= 1000)) && echo warn || echo fail; })" "$g" "可用磁碟" "${disk} MB（$DIR）" "系統設定 → 備份還原：減少保留份數或改存 NAS；或擴充磁碟"
+  # 磁碟用量（80% 事件、85% 注意、90% 告警、95% 危險）由下方應用程式檢查逐一列出各掛載點
   if [[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" == yes ]]; then item ok "$g" "時間同步" "NTP 已同步"
   else item warn "$g" "時間同步" "NTP 未同步（截圖日期檢查依賴正確的系統時間）" \
     "確認防火牆允許 UDP 123 對外（chronyc sources 查看）；或改用公司時間伺服器：sudo bash $DIR/scripts/dailyreport.sh install --ntp <伺服器>"; fi
@@ -753,6 +769,7 @@ for x in json.load(sys.stdin):
     print("\t".join(str(x[k]).replace("\t", " ").replace("\n", " ") for k in ("status", "group", "name", "detail", "fix")))')
   else
     item fail "應用程式" "啟動" "應用程式無法載入" "sudo -u $APP_USER env -C $DIR $VENV/bin/flask --app wsgi doctor-json 查看錯誤"
+    storage_item "$DIR"  # 應用程式無法載入時至少檢查程式所在磁碟
   fi
 
   g="服務"
@@ -803,7 +820,11 @@ for x in json.load(sys.stdin):
 
 summary_doctor() {
   echo
-  echo "${B}結果${N}：${G}正常 $N_OK${N}、${Y}注意 $N_WARN${N}、${R}失敗 $N_FAIL${N}"
+  echo "${B}結果${N}：${G}正常 $N_OK${N}、事件 $N_EVENT、${Y}注意 $N_WARN${N}、${R}告警 / 危險 / 失敗 $N_FAIL${N}"
+  if (( ${#ABNORMAL[@]} )); then
+    echo "${B}不是正常的項目${N}："
+    printf '  %s\n' "${ABNORMAL[@]}"
+  fi
   if (( N_FAIL > 0 )); then echo "依照每一項下方 → 的指令修正後，再執行一次 doctor。"; return 1; fi
   return 0
 }

@@ -103,6 +103,15 @@
       每日提醒時 @ 二線管理員</label>
     <p class="hint">會 @：{% for name, mail in mentions %}{{ name }}（{{ mail }}）{{ '、' if not loop.last }}{% else %}（沒有：二線管理員帳號沒有 email，AD 帳號登入一次後會帶入）{% endfor %}</p>
 
+    <h4>排程推送：系統健康檢查</h4>
+    <div class="form-grid">
+      <label>推送時間（多個用逗號分隔）<input name="teams_health_times" value="{{ c.teams_health_times }}" placeholder="08:30,17:30"></label>
+      <label class="inline"><input type="checkbox" name="teams_health_only_abnormal" value="1" {{ 'checked' if c.teams_health_only_abnormal }}>
+        只在有不是正常的項目時推送</label>
+    </div>
+    <p class="hint">每個時間點執行一次健康檢查，把結果推送到頻道；不是正常的項目（事件、注意、告警、危險、失敗）逐條列出，並附各磁碟用量（GB）。
+      開關與內容在下方「排程推送：系統健康檢查」。</p>
+
     <h4>通知事件與模版</h4>
     {% for ev, d in events.items() %}
     <fieldset class="tpl">

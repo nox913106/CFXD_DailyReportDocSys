@@ -19,7 +19,7 @@
     <div class="actions">
       {% if last %}
       <span class="hint">{{ last.at.strftime('%Y-%m-%d %H:%M') }}（{{ '手動' if last.trigger == 'manual' else '自動' }}）</span>
-      <span class="sev sev-ok">正常 {{ last.ok }}</span><span class="sev sev-warn">注意 {{ last.warn }}</span><span class="sev sev-fail">失敗 {{ last.fail }}</span>
+      {% for k, label in LEVEL_LABELS.items() if k == 'ok' or last.get(k) %}<span class="sev sev-{{ k }}">{{ label }} {{ last.get(k, 0) }}</span>{% endfor %}
       {% endif %}
       <form method="post" action="{{ url_for('settings.health_run') }}" class="inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -31,6 +31,15 @@
   <div class="flash">設定已變更，背景正在重新檢查（約 10～30 秒，頁面會自動更新）。下面是變更前的結果。</div>
   {% endif %}
   {% if last %}
+  {% if abnormal %}
+  <div class="abnormal">
+    <h4>需要處理的項目（{{ abnormal|length }}）</h4>
+    <table class="list health">
+      {% for it in abnormal %}{{ row(it, show_group=true) }}{% endfor %}
+    </table>
+  </div>
+  {% else %}<p class="sev sev-ok">全部正常</p>{% endif %}
+  <h4>全部項目</h4>
   <table class="list health">
     {% for g, items in groups.items() %}
     <tr class="group"><th colspan="3">{{ g }}</th></tr>

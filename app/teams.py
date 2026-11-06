@@ -7,6 +7,7 @@ received），把產生的網址填到「系統設定 → 發送與通知 → �
 每種事件都有自己的開關與模版（標題、內容），模版用 {欄位} 代入。
 """
 
+import json
 import logging
 import string
 from datetime import datetime
@@ -30,6 +31,18 @@ EVENTS = {
         "text": "「{step}」失敗：{error}\n\n客戶還沒收到這份日報。請修正後在日報頁最下方按「重試」。",
         "default_on": True,
     },
+    "status_change": {
+        "label": "當日案件狀態變更：今天的日報每次狀態改變都通知，直到結案",
+        "title": "【{date} 日報】{old_status} → {status}",
+        "text": "{actor} {action}。{comment}",
+        "default_on": True,
+    },
+    "health": {
+        "label": "排程推送：系統健康檢查（不是正常的項目逐條列出）",
+        "title": "【系統健康檢查】{summary}",
+        "text": "{abnormal}\n\n儲存空間：\n{storage}",
+        "default_on": True,
+    },
     "delivery_done": {
         "label": "發送完成：已上傳 SharePoint 並寄給客戶",
         "title": "【已寄出】{doc_no}（{date}）",
@@ -41,11 +54,19 @@ FIELDS = {
     "date": "日報日期", "doc_no": "文件編號", "status": "目前狀態", "deadline": "期限", "step": "失敗的步驟",
     "error": "失敗原因", "filename": "正式 PDF 檔名", "md5": "MD5", "share_link": "SharePoint 連結",
     "mail_to": "客戶收件人", "closed_by": "結案人", "time": "通知時間",
+    "old_status": "原狀態（狀態變更）", "action": "動作（狀態變更）", "actor": "操作者（狀態變更）",
+    "comment": "意見 / 原因（狀態變更）", "summary": "各等級數量（健康檢查）",
+    "abnormal": "不是正常的項目清單（健康檢查）", "storage": "各磁碟用量 GB（健康檢查）",
 }
 SAMPLE = {"date": "2026-11-10", "doc_no": "CFXD-SCA-RLY-DPR-000903", "status": "待審核", "deadline": "13:00",
           "step": "寄送客戶", "error": "HTTP 401：用戶端密碼已過期", "filename": "CFXD-SCA-RLY-DPR-000903_0_IFI.pdf",
           "md5": "0123456789abcdef0123456789abcdef", "share_link": "https://contoso.sharepoint.com/:b:/s/CFXD/xyz",
-          "mail_to": "customer@client.com", "closed_by": "Alan Lin", "time": "12:30"}
+          "mail_to": "customer@client.com", "closed_by": "Alan Lin", "time": "12:30",
+          "old_status": "待審核", "action": "退回", "actor": "Alan Lin", "comment": "原因：4.3 截圖日期不對",
+          "summary": "正常 30、注意 1、告警 1",
+          "abnormal": "• [告警] 儲存空間 / 磁碟 /：已用 181.2 GB / 共 200.0 GB（90.6%），剩餘 18.8 GB\n"
+                      "• [注意] 系統 / 時間同步：NTP 未同步",
+          "storage": "• /：已用 181.2 GB / 共 200.0 GB（90.6%），剩餘 18.8 GB"}
 
 
 class TeamsError(RuntimeError):
@@ -57,7 +78,8 @@ def key(event, part):
 
 
 def defaults():
-    out = {"teams_webhook_enc": "", "teams_mention": True, "teams_last_result": ""}
+    out = {"teams_webhook_enc": "", "teams_mention": True, "teams_last_result": "",
+           "teams_health_times": "08:30,17:30", "teams_health_only_abnormal": False, "teams_health_last": ""}
     for ev, d in EVENTS.items():
         out[key(ev, "on")] = d["default_on"]
         out[key(ev, "title")] = d["title"]
@@ -177,3 +199,116 @@ def notify(event, values, report=None, force=False):
     sysconf.put("teams_last_result", f"{now:%Y-%m-%d %H:%M} {detail}")
     db.session.commit()
     return ok, detail
+
+
+# ---------------------------------------------------------------- 佇列（網頁上的動作不等 Teams 回應；維護服務送出）
+
+
+def enqueue(event, values, report=None):
+    """排入一則通知（未啟用就不排）。由維護背景服務在 10 秒內送出。"""
+    from .models import TeamsMessage
+
+    if not sysconf.get(key(event, "on")):
+        return None
+    m = TeamsMessage(event=event, values=json.dumps(values, ensure_ascii=False, default=str),
+                     report_id=report.id if report is not None else None)
+    db.session.add(m)
+    return m
+
+
+def flush(limit=20):
+    """送出排隊中的通知；每則最多試 3 次。回傳送出（含失敗）的數量。"""
+    from .models import Report, TeamsMessage
+
+    n = 0
+    for m in (TeamsMessage.query.filter(TeamsMessage.sent_at.is_(None), TeamsMessage.attempts < 3)
+              .order_by(TeamsMessage.id).limit(limit).all()):
+        m.attempts += 1
+        report = db.session.get(Report, m.report_id) if m.report_id else None
+        ok, detail = notify(m.event, json.loads(m.values or "{}"), report=report, force=True)
+        m = db.session.get(TeamsMessage, m.id)
+        m.result = detail[:500]
+        if ok:
+            m.sent_at = datetime.now()
+        db.session.commit()
+        n += 1
+    return n
+
+
+# ---------------------------------------------------------------- 當日案件狀態變更
+
+
+ACTIONS = {"create": "建立", "submit": "送審", "approve": "核准", "reject": "退回", "return": "退回修正",
+           "close": "結案（1 分鐘後發送給客戶）", "close_cancel": "取消結案", "delete": "刪除"}
+
+
+def status_changed(report, old_status, action, actor, comment=""):
+    """今天的日報狀態改變時排入 Teams 通知；結案後就不再通知（發送結果另有通知）。"""
+    from datetime import date
+
+    from .models import STATUS_LABELS
+
+    if report.report_date != date.today() or old_status == "closed" and action != "close_cancel":
+        return None
+    new = "deleted" if action == "delete" else report.status
+    labels = {**STATUS_LABELS, "new": "（新建）", "deleted": "已刪除"}
+    return enqueue("status_change", {
+        "date": report.report_date.isoformat(), "doc_no": report.doc_no, "old_status": labels.get(old_status, old_status),
+        "status": labels.get(new, new), "action": ACTIONS.get(action, action),
+        "actor": getattr(actor, "name", "") or "", "comment": f"意見：{comment}" if comment else ""},
+        report=None if action == "delete" else report)
+
+
+# ---------------------------------------------------------------- 排程推送：系統健康檢查
+
+
+def health_slots(now):
+    out = []
+    for t in str(sysconf.get("teams_health_times") or "").replace("，", ",").split(","):
+        try:
+            h, m = (int(x) for x in t.strip().split(":"))
+            out.append(now.replace(hour=h, minute=m, second=0, microsecond=0))
+        except ValueError:
+            continue
+    return sorted(out)
+
+
+def health_due(now=None):
+    """今天已到、還沒推送過的最近一個時段（錯過的時段只補推最近的一次）。"""
+    now = now or datetime.now()
+    if not sysconf.get(key("health", "on")):
+        return None
+    past = [s for s in health_slots(now) if s <= now]
+    if not past:
+        return None
+    last = sysconf.get("teams_health_last") or ""
+    return past[-1] if last < past[-1].isoformat() else None
+
+
+def health_values(summary):
+    from .doctor import GB, LEVEL_LABELS, LEVELS, abnormal_items, storage
+
+    items = summary.get("items", [])
+    bad = abnormal_items(items)
+    counts = "、".join(f"{LEVEL_LABELS[k]} {summary.get(k, 0)}" for k in LEVELS if k == "ok" or summary.get(k))
+    lines = [f"• [{LEVEL_LABELS.get(i['status'], i['status'])}] {i['group']} / {i['name']}：{i['detail']}" for i in bad]
+    disks = [f"• {s['mount']}：已用 {s['used'] / GB:.1f} GB / 共 {s['total'] / GB:.1f} GB（{s['pct']:.1f}%），"
+             f"剩餘 {s['free'] / GB:.1f} GB（{LEVEL_LABELS[s['level']]}）" for s in storage()]
+    return {"summary": counts, "abnormal": "\n".join(lines) if lines else "全部正常。",
+            "storage": "\n".join(disks), "date": datetime.now().date().isoformat()}, bool(bad)
+
+
+def push_health(now=None):
+    """執行健康檢查並推送到 Teams（設定「只在有異常時推送」時，全部正常就不推）。"""
+    from .maint import run_health
+
+    now = now or datetime.now()
+    slot = health_due(now)
+    sysconf.put("teams_health_last", (slot or now).isoformat())
+    db.session.commit()
+    summary = run_health(trigger="scheduled")
+    values, abnormal = health_values(summary)
+    if not abnormal and sysconf.get("teams_health_only_abnormal"):
+        return None, "全部正常，未推送"
+    return notify("health", values, force=True)
+

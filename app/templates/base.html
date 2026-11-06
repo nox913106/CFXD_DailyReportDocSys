@@ -21,8 +21,8 @@
   </header>
   <main class="container">
     {% if health_alert and request.endpoint != 'settings.index' %}
-      <div class="flash error">健康檢查有 {{ health_alert.fail }} 個失敗項目（{{ health_alert.at[5:16].replace('T', ' ') }}）：
-        {{ health_alert['items']|selectattr('status', 'equalto', 'fail')|map(attribute='name')|join('、') }}。
+      <div class="flash error">健康檢查有 {{ health_alert['items']|length }} 個需要處理的項目（{{ health_alert.at[5:16].replace('T', ' ') }}）：
+        {% for it in health_alert['items'] %}{{ LEVEL_LABELS.get(it.status, '失敗') }} {{ it.name }}{{ '、' if not loop.last }}{% endfor %}。
         <a href="{{ url_for('settings.index') }}">查看與修正方式</a></div>
     {% endif %}
     {% with messages = get_flashed_messages(with_categories=true) %}

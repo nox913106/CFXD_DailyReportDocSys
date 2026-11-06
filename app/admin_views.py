@@ -46,7 +46,10 @@ def index():
              "截圖資料夾": current_app.config["UPLOAD_DIR"], "程式版本": (bk.version() or "")[:7],
              "反向代理": "是" if os.environ.get("BEHIND_PROXY") == "1" else "否",
              "Cookie 只經 HTTPS": "是" if current_app.config["SESSION_COOKIE_SECURE"] else "否"}
+    from .doctor import abnormal_items
+
     return render_template("admin_status.html", tab="status", last=last, groups=groups, infra=infra,
+                           abnormal=abnormal_items((last or {}).get("items", [])),
                            refreshing=bool(sysconf.get("health_refresh")),
                            health=sysconf.many(("health_enabled", "health_interval_hours")),
                            jobs=_jobs(5), **_job_ctx())
@@ -55,8 +58,10 @@ def index():
 @bp.route("/health/run", methods=["POST"])
 def health_run():
     s = maint.run_health(trigger="manual")
-    flash(f"健康檢查完成：正常 {s['ok']}、注意 {s['warn']}、失敗 {s['fail']}。",
-          "error" if s["fail"] else "success")
+    from .doctor import LEVEL_LABELS, LEVELS, SEVERE
+
+    flash("健康檢查完成：" + "、".join(f"{LEVEL_LABELS[k]} {s.get(k, 0)}" for k in LEVELS if k == "ok" or s.get(k)) + "。",
+          "error" if any(s.get(k) for k in SEVERE) else "success")
     return redirect(url_for("settings.index"))
 
 
@@ -558,6 +563,9 @@ def _delivery_from_form():
     for ev in teams.EVENTS:
         c[teams.key(ev, "on")] = f.get(teams.key(ev, "on")) == "1"
     c["teams_mention"] = f.get("teams_mention") == "1"
+    c["teams_health_times"] = ",".join(t.strip() for t in f.get("teams_health_times", "").replace("，", ",").split(",")
+                                       if t.strip())
+    c["teams_health_only_abnormal"] = f.get("teams_health_only_abnormal") == "1"
     return c
 
 
@@ -571,6 +579,9 @@ def _check_delivery(c):
             return f"{label}格式應為 HH:MM（24 小時制）"
     if c["reminder_time"] >= c["deadline_time"]:
         return "提醒時間必須早於期限"
+    bad = [t for t in c["teams_health_times"].split(",") if t and not TIME_RE.match(t)]
+    if bad:
+        return f"健康檢查推送時間「{bad[0]}」格式應為 HH:MM，多個用逗號分隔（例如 08:30,17:30）"
     for k, label in (("mail_sender", "寄件信箱"), ("mail_to", "客戶收件人"), ("mail_cc", "副本")):
         bad = [a for a in graph.addresses(c[k]) if not MAIL_RE.match(a)]
         if bad:
@@ -600,6 +611,7 @@ def _delivery_page(c=None, steps=None, status=200, preview=None):
     from . import graph, teams
 
     keys = DELIVERY_FORM + ("delivery_enabled", "reminder_enabled", "sp_link_expire_days", "teams_mention",
+                            "teams_health_times", "teams_health_only_abnormal",
                             *_teams_keys(), *(teams.key(ev, "on") for ev in teams.EVENTS))
     url = teams.webhook()
     return render_template("admin_delivery.html", tab="delivery", c=c or sysconf.many(keys), steps=steps,

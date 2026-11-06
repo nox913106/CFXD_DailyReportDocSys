@@ -2154,7 +2154,9 @@ def test_internal_teams_and_customer_mail_templates(app, monkeypatch):
             "reminder_enabled": "1", "teams_mention": "1", "teams_delivery_failed_on": "1", "teams_reminder_on": "1",
             "teams_reminder_title": "提醒 {date}", "teams_reminder_text": "狀態 {status}",
             "teams_delivery_failed_title": "中止 {doc_no}", "teams_delivery_failed_text": "{error}",
-            "teams_delivery_done_title": "完成 {doc_no}", "teams_delivery_done_text": "{mail_to}"}
+            "teams_delivery_done_title": "完成 {doc_no}", "teams_delivery_done_text": "{mail_to}",
+            "teams_status_change_title": "{old_status}→{status}", "teams_status_change_text": "{actor}",
+            "teams_health_title": "健檢 {summary}", "teams_health_text": "{abnormal}", "teams_health_times": "08:30, 17:30"}
     assert "Teams Workflow 網址應以 https://" in root.post("/admin/settings/delivery", {**form, "teams_webhook": "nope"}, status=400)
     html = root.post("/admin/settings/delivery/preview", form)
     assert "日報 CFXD-SCA-RLY-DPR-000903" in html and "提醒 2026-11-10" in html and "srcdoc=" in html
@@ -2167,3 +2169,85 @@ def test_internal_teams_and_customer_mail_templates(app, monkeypatch):
     with app.app_context():
         assert sysconf.get("teams_reminder_title") == "提醒 {date}" and sysconf.get("mail_subject") == "日報 {doc_no}"
         assert not sysconf.get("teams_delivery_done_on") and teams.webhook().startswith("https://prod-01")
+
+
+def test_status_change_and_health_push_to_teams(app, monkeypatch):
+    """當日案件每次狀態變更都排入 Teams（結案後停止）；排程推送健康檢查，不是正常的項目逐條列出；儲存空間分級。"""
+    from collections import namedtuple
+    from datetime import date, datetime, timedelta
+
+    from app import db, doctor, sysconf, teams
+    from app.models import TeamsMessage
+
+    posted = []
+    monkeypatch.setattr("app.teams.post", lambda url, payload: posted.append(payload["attachments"][0]["content"]))
+    with app.app_context():
+        teams.set_webhook("https://prod-01.westus.logic.azure.com/workflows/abc")
+        db.session.commit()
+
+    alice, boss, carol = Browser(app), Browser(app), Browser(app)
+    alice.login("alice")
+    boss.login("boss")
+    carol.login("carol")
+    set_role(app, "boss", "file_manager")
+    set_role(app, "carol", "second_line")
+    today = date.today().isoformat()
+    rid = report_id_from(alice.post("/reports/new", {"report_date": today}))
+    old = report_id_from(alice.post("/reports/new", {"report_date": (date.today() - timedelta(days=3)).isoformat()}))
+    fill_checklist(alice, rid)
+    alice.get(f"/reports/{rid}")
+    alice.post(f"/reports/{rid}/submit")
+    boss.get(f"/reports/{rid}")
+    boss.post(f"/reports/{rid}/review", {"action": "reject", "comment": "截圖不對"})
+    alice.get(f"/reports/{rid}")
+    alice.post(f"/reports/{rid}/submit")
+    boss.get(f"/reports/{rid}")
+    boss.post(f"/reports/{rid}/review", {"action": "approve"})
+    carol.get(f"/reports/{rid}")
+    carol.post(f"/reports/{rid}/close")
+    boss.post(f"/reports/{rid}/delete", {"confirm_doc_no": "x"}, status=403)  # 已結案不能刪
+    with app.app_context():
+        assert TeamsMessage.query.filter(TeamsMessage.sent_at.is_(None)).count() == 6  # 舊日期的日報不通知
+        assert teams.flush() == 6 and teams.flush() == 0
+    titles = [p["body"][0]["text"] for p in posted]
+    assert titles == [f"【{today} 日報】（新建） → 草稿", f"【{today} 日報】草稿 → 待審核",
+                      f"【{today} 日報】待審核 → 退回", f"【{today} 日報】退回 → 待審核",
+                      f"【{today} 日報】待審核 → 已核准（待結案）", f"【{today} 日報】已核准（待結案） → 已結案"]
+    assert "意見：截圖不對" in posted[2]["body"][1]["text"] and "boss" in posted[2]["body"][1]["text"]
+    assert old  # 舊日期日報沒有通知
+
+    # 儲存空間：80% 事件、85% 注意、90% 告警、95% 危險（與 df 的 Use% 相同算法）
+    DU = namedtuple("DU", "total used free")
+    gb = 1024 ** 3
+    monkeypatch.setattr(doctor.shutil, "disk_usage", lambda p: DU(200 * gb, 182 * gb, 18 * gb))  # 91%
+    with app.app_context():
+        items = doctor.run()
+        st = [i for i in items if i["group"] == "儲存空間" and i["name"].startswith("磁碟")]
+        assert st and st[0]["status"] == "alert" and "已用 182.0 GB / 共 200.0 GB（91.0%），剩餘 18.0 GB" in st[0]["detail"]
+        assert [doctor.storage_level(p) for p in (79, 80, 85, 90, 95)] == ["ok", "event", "warn", "alert", "danger"]
+
+        # 排程推送：08:30 到了才推，同一時段只推一次；不是正常的項目逐條列出
+        sysconf.put("teams_health_times", "08:30,17:30")
+        db.session.commit()
+        assert teams.health_due(datetime(2026, 11, 10, 8, 29)) is None
+        assert teams.health_due(datetime(2026, 11, 10, 8, 31)) == datetime(2026, 11, 10, 8, 30)
+        posted.clear()
+        ok, _ = teams.push_health(datetime(2026, 11, 10, 8, 31))
+        assert ok and teams.health_due(datetime(2026, 11, 10, 9, 0)) is None
+        assert teams.health_due(datetime(2026, 11, 10, 17, 31)) == datetime(2026, 11, 10, 17, 30)
+        text = posted[0]["body"][1]["text"]
+        assert posted[0]["body"][0]["text"].startswith("【系統健康檢查】正常 ") and "告警 " in posted[0]["body"][0]["text"]
+        assert "• [告警] 儲存空間 / 磁碟 " in text and "（告警）" in text
+        last = sysconf.get("health_last")
+        assert last["alert"] >= 1
+
+    # 系統狀態頁：不是正常的項目另外列出；系統管理員每一頁看到告警
+    runner = app.test_cli_runner()
+    runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "a-very-long-pass"])
+    root = Browser(app)
+    root.get("/login")
+    root.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
+    html = root.get("/admin/settings/")
+    assert "需要處理的項目" in html and "sev-alert" in html and "91.0%" in html
+    assert "需要處理的項目（" in root.get("/") or "告警 磁碟" in root.get("/")
+

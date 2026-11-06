@@ -72,10 +72,10 @@ def run_health(trigger="scheduled"):
     from .doctor import run
 
     items = run(system=True)
-    summary = {"at": datetime.now().isoformat(timespec="seconds"), "trigger": trigger,
-               "ok": sum(1 for i in items if i["status"] == "ok"),
-               "warn": sum(1 for i in items if i["status"] == "warn"),
-               "fail": sum(1 for i in items if i["status"] == "fail"), "items": items}
+    from .doctor import summarize
+
+    summary = {"at": datetime.now().isoformat(timespec="seconds"), "trigger": trigger, **summarize(items),
+               "items": items}
     sysconf.put("health_last", summary)
     sysconf.put("health_refresh", "")
     db.session.commit()
@@ -160,6 +160,12 @@ def tick(now=None):
         did = delivery.tick(now) or did  # 結案後的正式 PDF、SharePoint、寄信
         if delivery.reminder_due(now):
             delivery.send_reminder(now)
+            did = True
+        from . import teams
+
+        did = bool(teams.flush()) or did  # 網頁動作排入的 Teams 通知（當日案件狀態變更）
+        if teams.health_due(now):
+            teams.push_health(now)  # 排程推送健康檢查
             did = True
     except Exception:
         log.exception("發送流程 / 每日提醒錯誤")

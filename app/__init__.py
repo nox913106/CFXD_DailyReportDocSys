@@ -141,6 +141,9 @@ def create_app():
                                  REVIEW_ACTION_LABELS=models.REVIEW_ACTION_LABELS,
                                  ocr_status=ocr.status_for, ocr_clock=ocr.clock_of)
     app.jinja_env.filters["ai_html"] = ai.md_to_html
+    from .doctor import LEVEL_LABELS
+
+    app.jinja_env.globals["LEVEL_LABELS"] = LEVEL_LABELS
 
     @app.context_processor
     def _admin_alert():
@@ -155,7 +158,8 @@ def create_app():
             last = sysconf.get("health_last") or {}
         except Exception:
             return {}
-        return {"health_alert": last if last.get("fail") else None}
+        severe = [i for i in last.get("items", []) if i.get("status") in ("alert", "danger", "fail")]
+        return {"health_alert": {"at": last.get("at", ""), "items": severe} if severe else None}
     app.jinja_env.tests["ocr_is"] = lambda img, code, day: ocr.status_for(img, day)[0] == code
 
     with app.app_context():

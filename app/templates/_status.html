@@ -1,8 +1,8 @@
 {# 健康檢查結果的一列：it = {status, name, detail, fix} #}
-{% macro row(it) %}
+{% macro row(it, show_group=false) %}
 <tr class="health-{{ it.status }}">
-  <td class="nw">{% if it.status == 'ok' %}<span class="sev sev-ok">正常</span>{% elif it.status == 'warn' %}<span class="sev sev-warn">注意</span>{% else %}<span class="sev sev-fail">失敗</span>{% endif %}</td>
-  <td class="nw">{{ it.name }}</td>
+  <td class="nw"><span class="sev sev-{{ it.status if it.status in LEVEL_LABELS else 'fail' }}">{{ LEVEL_LABELS.get(it.status, '失敗') }}</span></td>
+  <td class="nw">{% if show_group %}<span class="hint">{{ it.group }} ·</span> {% endif %}{{ it.name }}</td>
   <td>{{ it.detail }}{% if it.fix and it.status != 'ok' %}<br><span class="hint">→ {{ it.fix }}</span>{% endif %}</td>
 </tr>
 {% endmacro %}

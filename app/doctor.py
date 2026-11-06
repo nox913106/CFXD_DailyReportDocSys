@@ -21,8 +21,82 @@ DEFAULT_SECRET = ("dev-only-change-me", "請改成一段很長的隨機字串")
 DIR = os.environ.get("DR_DIR", "/opt/dailyreport")
 
 
+# 健康檢查等級：正常 → 事件 → 注意 → 告警 → 危險；失敗 = 功能無法運作
+LEVELS = ("ok", "event", "warn", "alert", "danger", "fail")
+LEVEL_LABELS = {"ok": "正常", "event": "事件", "warn": "注意", "alert": "告警", "danger": "危險", "fail": "失敗"}
+SEVERE = ("alert", "danger", "fail")  # 系統管理員每一頁上方提醒、主機 doctor 結束代碼 1
+STORAGE_LEVELS = ((95, "danger"), (90, "alert"), (85, "warn"), (80, "event"))  # 使用率 ≥ 門檻（%）
+GB = 1024 ** 3
+
+
 def _item(out, group, name, status, detail="", fix=""):
     out.append({"group": group, "name": name, "status": status, "detail": detail, "fix": fix})
+
+
+def abnormal_items(items):
+    """不是正常的項目，最嚴重的在前面。"""
+    order = {k: i for i, k in enumerate(LEVELS)}
+    return sorted((i for i in items if i["status"] != "ok"), key=lambda i: -order.get(i["status"], len(LEVELS)))
+
+
+def summarize(items):
+    return {k: sum(1 for i in items if i["status"] == k) for k in LEVELS}
+
+
+def storage_level(pct):
+    return next((lv for th, lv in STORAGE_LEVELS if pct >= th), "ok")
+
+
+def _mount_of(path):
+    path = os.path.realpath(path)
+    while not os.path.ismount(path) and path != os.path.dirname(path):
+        path = os.path.dirname(path)
+    return path
+
+
+def storage():
+    """每個掛載點的用量（資料、截圖、備份、系統）：[{mount, uses, total, used, free, pct, level}]，單位 bytes。"""
+    from . import sysconf
+
+    cfg = current_app.config
+    paths = [(current_app.instance_path, "資料庫與正式 PDF"), (cfg.get("UPLOAD_DIR"), "截圖"),
+             (sysconf.backup_dir(), "備份"), ("/", "系統")]
+    mounts = {}
+    for p, use in paths:
+        if not p:
+            continue
+        probe = p
+        while probe and not os.path.exists(probe):  # 備份位置還沒建立時看上一層
+            probe = os.path.dirname(probe)
+        if not probe:
+            continue
+        m = _mount_of(probe)
+        mounts.setdefault(m, []).append(use)
+    out = []
+    for m, uses in mounts.items():
+        try:
+            du = shutil.disk_usage(m)
+        except OSError:
+            continue
+        # 與 df 的 Use% 相同：已用 /（已用 + 可用），不含保留給 root 的空間
+        pct = du.used / (du.used + du.free) * 100 if du.used + du.free else 0
+        out.append({"mount": m, "uses": "、".join(dict.fromkeys(uses)), "total": du.total, "used": du.used,
+                    "free": du.free, "pct": pct, "level": storage_level(pct)})
+    return out
+
+
+def storage_text(s):
+    return (f"已用 {s['used'] / GB:.1f} GB / 共 {s['total'] / GB:.1f} GB（{s['pct']:.1f}%），"
+            f"剩餘 {s['free'] / GB:.1f} GB · {s['uses']}")
+
+
+def _storage_checks(out):
+    g = "儲存空間"
+    for s in storage():
+        lv = s["level"]
+        _item(out, g, f"磁碟 {s['mount']}", lv, storage_text(s),
+              "" if lv == "ok" else "清理舊資料或擴充磁碟；備份可在「系統設定 → 備份還原」減少保留份數或改存 NAS"
+              + ("（已達危險等級，空間用完時資料庫與備份會寫入失敗）" if lv == "danger" else ""))
 
 
 def run(system=False):
@@ -164,15 +238,11 @@ def run(system=False):
         _item(out, g, "檢查結果.md 匯出", "ok" if writable else "warn", md_dir,
               "" if writable else f"系統設定 → AI 建議：改成可寫入的位置，或 sudo mkdir -p {md_dir} && sudo chown dailyreport:www-data {md_dir}")
 
-    # ---------------------------------------------------------------- 儲存空間
-    g = "儲存空間"
+    # ---------------------------------------------------------------- 儲存空間（80% 事件、85% 注意、90% 告警、95% 危險）
+    _storage_checks(out)
     up = cfg.get("UPLOAD_DIR")
-    if up and os.path.isdir(up):
-        free = shutil.disk_usage(up).free / 1e9
-        writable = os.access(up, os.W_OK)
-        _item(out, g, "截圖資料夾", "ok" if writable and free > 5 else ("fail" if not writable else "warn"),
-              f"{up}，剩餘 {free:.1f} GB" + ("" if writable else "，無法寫入"),
-              "" if writable and free > 5 else f"sudo chown -R dailyreport:www-data {up}；清理磁碟或擴充容量")
+    if up and os.path.isdir(up) and not os.access(up, os.W_OK):
+        _item(out, "儲存空間", "截圖資料夾", "fail", f"{up} 無法寫入", f"sudo chown -R dailyreport:www-data {up}")
 
     _backup_checks(out)
     if system:
@@ -189,9 +259,7 @@ def _backup_checks(out):
     if err:
         _item(out, g, "備份位置", "fail", f"{root} {err}", "系統設定 → 備份還原：改成可寫入的位置")
         return
-    free = shutil.disk_usage(root).free / 1e9
-    _item(out, g, "備份位置", "ok" if free > 2 else "warn", f"{root}，剩餘 {free:.1f} GB",
-          "" if free > 2 else "系統設定 → 備份還原：減少保留份數，或改到空間較大的位置（NAS）")
+    _item(out, g, "備份位置", "ok", f"{root}（可寫入；空間見「儲存空間」）")
     nxt = maint.next_backup()
     if nxt:
         _item(out, g, "排程", "ok", f"每天 {sysconf.get('backup_time')}，保留 {sysconf.get('backup_keep')} 份（下次 {nxt:%m/%d %H:%M}）")
@@ -237,9 +305,6 @@ def _system_checks(out):
               "" if avail >= 1024 else "截圖 OCR 約需 1 GB，建議增加記憶體或 swap")
     except OSError:
         pass
-    free = shutil.disk_usage(current_app.instance_path).free / 1e6
-    _item(out, g, "可用磁碟", "ok" if free >= 5000 else ("warn" if free >= 1000 else "fail"),
-          f"{free:.0f} MB（{current_app.instance_path}）", "" if free >= 5000 else "清理舊備份或擴充磁碟")
     rc, ntp = _run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"])
     if rc is not None:
         _item(out, g, "時間同步", "ok" if ntp == "yes" else "warn", "NTP 已同步" if ntp == "yes" else "NTP 未同步（截圖日期檢查依賴正確的系統時間）",

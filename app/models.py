@@ -570,3 +570,16 @@ class Delivery(db.Model):
         data[key] = cur
         self.steps = json.dumps(data, ensure_ascii=False)
 
+
+class TeamsMessage(db.Model):
+    """排隊中的 Teams 內部通知（網頁動作排入，維護背景服務送出）。"""
+
+    id = db.Column(db.Integer, primary_key=True)
+    event = db.Column(db.String(24), nullable=False)
+    values = db.Column(db.Text, default="{}")
+    report_id = db.Column(db.Integer)  # 不設外鍵：日報刪除後通知仍要送出
+    created_at = db.Column(db.DateTime, default=datetime.now, nullable=False)
+    sent_at = db.Column(db.DateTime, index=True)
+    attempts = db.Column(db.Integer, default=0, nullable=False)
+    result = db.Column(db.String(512))
+

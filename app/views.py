@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 from flask import Blueprint, Response, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 
-from . import db, docno
+from . import db, docno, teams
 import os
 
 from flask import current_app
@@ -192,6 +192,7 @@ def create():
         db.session.add(ChecklistResult(report_id=report.id, item_id=item_id, result=res, note=note))
     if official:
         _copy_photos(report, official)
+    teams.status_changed(report, "new", "create", current_user)
     db.session.commit()
     flash(f"已建立 {d} 日報 {report.doc_no}"
           + (f"，已複製 {official.report_date} 已核准日報的內容（截圖除外），請逐項確認今天的狀況。" if official else "。"),
@@ -248,11 +249,13 @@ def submit(report_id):
         flash(f"還有 {n} 張截圖正在辨識系統時間，辨識完成後才能送審（審核者需要看到辨識結果）。", "error")
         return redirect(url_for("views.detail", report_id=report.id))
 
+    old_status = report.status
     report.status = "submitted"
     report.submitted_at = datetime.now()
     report.submitted_by_id = current_user.id
     report.updated_by_id = current_user.id
     snapshot(report, "submit", current_user, ai=True)  # 檢查結果.md，並排入 AI 建議
+    teams.status_changed(report, old_status, "submit", current_user)
     db.session.commit()
     flash("已送出審核。", "success")
     return redirect(url_for("views.detail", report_id=report.id))
@@ -283,6 +286,7 @@ def review(report_id):
     if action == "approve" and (n := ocr_pending(report)):
         flash(f"還有 {n} 張截圖正在辨識，辨識完成、確認截圖內容後才能核准。", "error")
         return redirect(url_for("views.detail", report_id=report.id))
+    old_status = report.status
     signer = principal or current_user  # 文件上的簽核者：代簽時仍是核准人本人
     if report.approver_id is None:
         report.approver_id = signer.id
@@ -313,6 +317,7 @@ def review(report_id):
                              on_behalf_of_id=principal.id if principal else None, comment=comment))
     # 審核當下的檢查結果與決定，留給日後 RAG（哪些問題會被退回）
     snapshot(report, action, current_user, review=(action, current_user, principal, comment))
+    teams.status_changed(report, old_status, action, current_user, comment)
     db.session.commit()
     flash(msg, "success")
     return redirect(url_for("views.detail", report_id=report.id))
@@ -459,6 +464,7 @@ def delete(report_id):
     folder = os.path.join(current_app.config["UPLOAD_DIR"], str(report.id))
     db.session.add(AuditLog(action="delete_report", actor_id=current_user.id, target=report.doc_no,
                             detail=f"{report.report_date} {report.status_label}"))
+    teams.status_changed(report, report.status, "delete", current_user)
     for log in report.review_logs:
         db.session.delete(log)
     db.session.delete(report)
@@ -575,6 +581,7 @@ def close(report_id):
         flash("這份日報剛剛已被其他人結案。", "error")
         return redirect(url_for("views.detail", report_id=report.id))
     delivery.close(report, current_user)
+    teams.status_changed(report, "approved", "close", current_user)
     db.session.commit()
     flash(f"已結案並鎖檔。{delivery.LOCK_SECONDS} 秒後產生正式 PDF、上傳 SharePoint 並寄給客戶；進度顯示在下方流程。",
           "success")
@@ -590,10 +597,12 @@ def return_fix(report_id):
     if not d or not reason:
         flash(d.reason if not d else "請填寫退回原因。", "error")
         return redirect(url_for("views.detail", report_id=report.id))
+    old_status = report.status
     report.status = "rejected"
     report.review_comment = reason
     report.updated_by_id = current_user.id
     db.session.add(ReviewLog(report_id=report.id, action="return", actor_id=current_user.id, comment=reason))
+    teams.status_changed(report, old_status, "return", current_user, reason)
     db.session.commit()
     flash("已退回給撰寫人修正，修正後需要重新送審。", "success")
     return redirect(url_for("views.detail", report_id=report.id))
@@ -610,6 +619,7 @@ def cancel_close(report_id):
         flash(d.reason if not d else "請填寫取消原因。", "error")
         return redirect(url_for("views.detail", report_id=report.id))
     delivery.cancel(report, current_user, reason)
+    teams.status_changed(report, "closed", "close_cancel", current_user, reason)
     db.session.commit()
     flash("已取消結案，日報回到「已核准（待結案）」。", "success")
     return redirect(url_for("views.detail", report_id=report.id))

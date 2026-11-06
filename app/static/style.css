@@ -246,3 +246,9 @@ fieldset.tpl legend { padding: 0 6px; font-weight: 600; }
 iframe.mail-preview { width: 100%; height: 220px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; }
 .teams-preview { border-left: 4px solid #6264a7; background: #f5f5fb; padding: 8px 12px; margin: 8px 0; border-radius: 4px; }
 .teams-preview .pre { white-space: pre-wrap; margin-top: 4px; }
+/* 健康檢查等級 */
+.sev-event { background: #e0f2fe; color: #075985; }
+.sev-alert { background: #ffedd5; color: #c2410c; }
+.sev-danger { background: #7f1d1d; color: #fff; }
+.abnormal { border: 1px solid #fcd34d; background: #fffbeb; border-radius: 8px; padding: 6px 12px; margin: 8px 0 14px; }
+.abnormal h4 { margin: 6px 0; }
