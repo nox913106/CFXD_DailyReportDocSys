@@ -40,7 +40,7 @@
       <label class="wide">Second Line Backup Support<input name="second_line_support" value="{{ report.second_line_support }}"
              placeholder="例：Akshay Sampath / Allen Tsai / Jhengyu Wu"></label>
     </div>
-    <p class="hint">文件編號依日期自動產生{% if can_doc_no %}，可以直接修改（清空後儲存 = 恢復自動編號；變更會記在審核歷程）{% else %}，二線管理員以上可以修改{% endif %}；新增日報時會沿用前一份日報的值班人員與核准人。
+    <p class="hint">文件編號依日期自動產生{% if can_doc_no %}，可以直接修改（清空後儲存 = 恢復自動編號；變更會記在審核歷程）{% else %}，檔案管理員可以修改（二線管理員需經授權代理）{% endif %}；新增日報時會沿用前一份日報的值班人員與核准人。
       {% if can_assign %}{% if can_assign.principal %}您以 {{ can_assign.principal.name }} 的代理人身分指派。{% endif %}
       {% else %}撰寫人與核准人由檔案管理員（或其授權的二線管理員）指派。{% endif %}
       二線管理員代為核准時，文件上的 Approval / Document Approved 仍顯示核准人本人。</p>

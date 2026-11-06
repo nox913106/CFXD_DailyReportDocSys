@@ -6,7 +6,7 @@
 {% if current_user.role == 'file_manager' %}
 <section class="card">
   <h2>授權二線管理員代理</h2>
-  <p class="hint">代理人可在有效期間內代您審核、退件、指派與刪除日報。文件上的 Approval / Document Approved
+  <p class="hint">代理人可在有效期間內代您審核、退件、指派、刪除日報與覆寫文件編號。文件上的 Approval / Document Approved
     仍顯示 <strong>{{ current_user.name }}</strong>，處理紀錄會註明實際代理人。只能授權給二線管理員。</p>
   <form method="post" class="form-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

@@ -3,7 +3,7 @@
 角色：
   系統管理員 admin         所有動作（本機帳號，平時不使用）
   檔案管理員 file_manager  指派、審核、退件、送審、新增、編輯、刪除
-  二線管理員 second_line   送審、新增、編輯；經檔案管理員授權後可「代」審核 / 指派 / 退件 / 刪除
+  二線管理員 second_line   送審、新增、編輯；經檔案管理員授權後可「代」審核 / 指派 / 退件 / 刪除 / 覆寫文件編號
   一線使用者 first_line    送審、新增、編輯
   檢視者     viewer        只能下載已結案日報的正式 PDF
 
@@ -60,7 +60,7 @@ def _principal_for(user, report, assigned_only):
 
 
 def _manager_action(user, report, assigned_only, what):
-    """檔案管理員類動作（審核 / 退件 / 指派 / 刪除）。
+    """檔案管理員類動作（審核 / 退件 / 指派 / 刪除 / 覆寫文件編號）。
     assigned_only=True：指定了核准人時，只有該核准人或其代理人可以做（審核、退件）。"""
     if user.is_admin:
         # 系統管理員可做任何事；文件上的簽核者仍是指定的核准人
@@ -131,10 +131,10 @@ def can_assign(user, report):
 
 
 def can_override_doc_no(user, report):
-    """Document No. / Contractor Doc No. 覆寫：二線管理員以上（二線、檔案管理員、本機系統管理員），草稿或退回時。"""
+    """Document No. / Contractor Doc No. 覆寫：系統管理員、檔案管理員；二線管理員需經檔案管理員授權代理。草稿或退回時。"""
     if not report.editable:
         return Decision(False, None, "只能在草稿或退回狀態變更文件編號。")
-    return Decision(_reviewer(user), None, "只有二線管理員以上可以變更文件編號。")
+    return _manager_action(user, report, False, "變更文件編號")
 
 
 def can_close(user, report):
@@ -210,7 +210,7 @@ PERMISSION_MATRIX = (
         ("截圖上傳（含批次上傳）", "yyyyn"),
         ("線上預覽 PDF", "yyyyn"),
         ("指派撰寫人、核准人", "yydnn"),
-        ("覆寫文件編號", "yyynn"),
+        ("覆寫文件編號", "yydnn"),
         ("審核：核准 / 退回", "yydnn"),
         ("審核自己撰寫或送審的日報", "ynnnn"),
         ("結案、結案前退回修正", "yyynn"),

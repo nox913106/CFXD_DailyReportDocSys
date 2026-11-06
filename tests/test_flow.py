@@ -1431,14 +1431,27 @@ def test_doc_no_override(app):
 
     # 一線使用者：欄位唯讀，送出也不會改
     html = alice.get(f"/reports/{rid}/basic")
-    assert 'name="doc_no"' not in html and "二線管理員以上可以修改" in html
+    assert 'name="doc_no"' not in html and "二線管理員需經授權代理" in html
     alice.post(f"/reports/{rid}/basic", {**base, "doc_no": "HACK-1", "contractor_doc_no": "HACK-2"})
     with app.app_context():
         assert db.session.get(Report, rid).doc_no == "CFXD-SCA-RLY-DPR-000897"
 
-    carol = Browser(app)
+    carol, boss = Browser(app), Browser(app)
     carol.login("carol")
-    set_role(app, "carol", "second_line")
+    boss.login("boss")
+    carol_id = set_role(app, "carol", "second_line")
+    boss_id = set_role(app, "boss", "file_manager")
+    # 二線未經授權：欄位唯讀，送出也不會改
+    assert 'name="doc_no"' not in carol.get(f"/reports/{rid}/basic")
+    carol.post(f"/reports/{rid}/basic", {**base, "doc_no": "NO-DELEGATION", "contractor_doc_no": "X"})
+    with app.app_context():
+        assert db.session.get(Report, rid).doc_no == "CFXD-SCA-RLY-DPR-000897"
+        from datetime import date
+
+        from app.models import ApprovalDelegation
+
+        db.session.add(ApprovalDelegation(principal_id=boss_id, delegate_id=carol_id, start_date=date.today()))
+        db.session.commit()
     assert 'name="doc_no"' in carol.get(f"/reports/{rid}/basic")
     html = carol.post(f"/reports/{rid}/basic", {**base, "doc_no": " CFXD-SCA-RLY-DPR-000900 ",
                                                 "contractor_doc_no": "RT230018-CFXD SLA-RP-000800"})
