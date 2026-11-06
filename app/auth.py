@@ -231,11 +231,13 @@ def login():
             display_name, email, in_approver_group = result
             user = User.query.filter_by(username=username).first()
             if not user:
-                # 首次登入：預設一線使用者；設定檔 / AD 群組指定的帳號預設為檔案管理員。
+                # 首次登入：AD 帳號一律為訪客（只能看歡迎頁，等系統管理員開通）；
+                # 「系統設定 → AD 驗證」明確指定的帳號 / 群組預設為檔案管理員。開發模式沿用一線使用者。
                 # 之後角色一律由系統管理員在「帳號管理」設定，登入時不再變更。
                 user = User(username=username)
                 bootstrap = in_approver_group or username in sysconf.ldap_config()["approver_users_set"]
-                user.set_role("file_manager" if bootstrap else "first_line")
+                dev = current_app.config["AUTH_MODE"] == "dev"
+                user.set_role("file_manager" if bootstrap else ("first_line" if dev else "guest"))
                 db.session.add(user)
             user.display_name = display_name
             user.email = email

@@ -11,8 +11,9 @@ ROLE_LABELS = {
     "second_line": "二線管理員",
     "first_line": "一線使用者",
     "viewer": "檢視者（只能下載已結案 PDF）",
+    "guest": "訪客（尚未開通）",
 }
-ASSIGNABLE_ROLES = ("file_manager", "second_line", "first_line", "viewer")  # 本機緊急帳號只能用指令建立
+ASSIGNABLE_ROLES = ("file_manager", "second_line", "first_line", "viewer", "guest")  # 本機緊急帳號只能用指令建立
 REVIEWER_ROLES = ("admin", "file_manager", "second_line")  # 二線以上：結案、退回修正、重試發送
 ADMIN_ELIGIBLE_ROLES = ("file_manager", "second_line")  # 可被指派為系統管理員的角色；一線使用者強制排除
 

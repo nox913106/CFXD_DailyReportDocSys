@@ -238,3 +238,5 @@ button[disabled], .button[disabled] { opacity: .45; cursor: not-allowed; }
 .perm-matrix .mark-n { color: #cf222e; font-size: 16px; }
 .perm-matrix .mark-d { color: #1a7f37; font-weight: 700; font-size: 16px; }
 .perm-matrix tr.group td { background: #f6f8fa; font-weight: 700; }
+tr.guest-row td { background: #fff8c5; }
+.welcome { max-width: 760px; margin: 40px auto; }

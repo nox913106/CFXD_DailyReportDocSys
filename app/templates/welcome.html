@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}歡迎 - CFXD{% endblock %}
+{% block content %}
+<section class="card welcome">
+  <h2>歡迎使用 CFXD SLA 日報系統，{{ current_user.name }}</h2>
+  <p>您已用 AD 帳號 <code>{{ current_user.username }}</code> 登入，但<strong>帳號尚未開通權限</strong>，
+    目前只能看到這個頁面，系統的內容與操作都無法使用。</p>
+  <h3>請聯絡系統管理員設定權限</h3>
+  <p>請告訴系統管理員您的帳號 <code>{{ current_user.username }}</code> 與需要的角色
+    （一線使用者、二線管理員、檔案管理員或檢視者）。開通後重新整理這個頁面或重新登入即可使用。</p>
+  {% if admins %}
+  <table class="list">
+    <tr><th>系統管理員</th><th>Email</th></tr>
+    {% for a in admins %}
+    <tr><td>{{ a.name }}</td><td>{% if a.email %}<a href="mailto:{{ a.email }}?subject={{ ('CFXD 日報系統權限申請：' ~ current_user.username)|urlencode }}">{{ a.email }}</a>{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="hint">請聯絡負責這套系統的 IT 人員。</p>
+  {% endif %}
+  <p><a class="button secondary" href="{{ url_for('views.welcome') }}">重新整理</a>
+    <a class="button secondary" href="{{ url_for('auth.logout') }}">登出</a></p>
+</section>
+{% endblock %}

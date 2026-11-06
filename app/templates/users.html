@@ -5,13 +5,16 @@
 {% include "_admin_nav.html" %}
 <section class="card">
   <h3>AD 帳號</h3>
-  <p class="hint">AD 帳號首次登入後才會出現在這裡（預設為一線使用者）。檔案管理員與二線管理員可以被指派為系統管理員
+  {% set waiting = users|selectattr('role', 'equalto', 'guest')|list %}
+  {% if waiting %}<div class="flash" id="guests">等待開通（訪客）：{% for u in waiting %}<strong>{{ u.name }}</strong>（{{ u.username }}）{{ '、' if not loop.last }}{% endfor %}。
+    在下方把角色改成一線使用者、二線管理員、檔案管理員或檢視者即可開通。</div>{% endif %}
+  <p class="hint">AD 帳號首次登入後才會出現在這裡（預設為訪客：只能看歡迎頁，所有內容與操作都禁止，直到在這裡設定角色）。檔案管理員與二線管理員可以被指派為系統管理員
     （AD 帳號也可以），一線使用者不能。改成一線使用者時，系統管理員權限會自動移除；改成非二線管理員時，會一併撤銷其代理授權。
     本機緊急帳號在下方管理。</p>
   <table class="list">
     <tr><th>帳號</th><th>顯示名稱</th><th>Email</th><th>最後登入</th><th>角色</th><th>系統管理員</th></tr>
     {% for u in users if not u.is_local_admin and '#' not in u.username %}
-    <tr>
+    <tr class="{{ 'guest-row' if u.role == 'guest' }}">
       <td>{{ u.username }}</td><td>{{ u.display_name or '' }}</td><td>{{ u.email or '' }}</td>
       <td>{{ u.last_login.strftime('%Y-%m-%d %H:%M') if u.last_login }}</td>
       <td>

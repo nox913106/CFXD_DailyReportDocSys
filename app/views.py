@@ -46,6 +46,16 @@ def _require_login():
     pass
 
 
+@bp.route("/welcome")
+def welcome():
+    """訪客（AD 首次登入、尚未開通）唯一能看到的頁面：請系統管理員設定權限。"""
+    if current_user.role != "guest":
+        return redirect(url_for("views.index"))
+    admins = [u for u in User.query.order_by(User.display_name, User.username) if u.is_admin and not u.is_local_admin
+              and "#" not in u.username]
+    return render_template("welcome.html", admins=admins)
+
+
 @bp.route("/")
 def index():
     month = request.args.get("month") or date.today().strftime("%Y-%m")
@@ -66,6 +76,7 @@ def index():
         pending_checks=pending_checks,
         today=date.today().isoformat(), can_create=perm.can_create(current_user),
         official=last_official(date.today() + timedelta(days=1)), **_desk(),
+        guests=User.query.filter_by(role="guest").count() if current_user.is_admin else 0,
     )
 
 
@@ -482,6 +493,7 @@ def users():
     from . import admin_views as adm
 
     all_users = User.query.order_by(User.role, User.display_name, User.username).all()
+    all_users.sort(key=lambda u: u.role != "guest")  # 等待開通的訪客排最前面
     return render_template("users.html", tab="users", users=all_users, roles=ASSIGNABLE_ROLES, role_labels=ROLE_LABELS,
                            logs=adm.recent_audit(), audit_labels=adm.AUDIT_LABELS, admin_roles=ADMIN_ELIGIBLE_ROLES,
                            local_accounts=adm.local_accounts(), min_pw=adm.MIN_PASSWORD,

@@ -1957,7 +1957,7 @@ def test_permission_matrix_matches_code(app):
         fm = mk("fmx", "file_manager")
         users = {"sysadmin": [mk("root", "admin"), mk("fmadmin", "file_manager", True)],
                  "file_manager": [mk("fm", "file_manager")], "second_line": [mk("sl", "second_line")],
-                 "first_line": [mk("fl", "first_line")], "viewer": [mk("vw", "viewer")]}
+                 "first_line": [mk("fl", "first_line")], "viewer": [mk("vw", "viewer")], "guest": [mk("gst", "guest")]}
         db.session.flush()
 
         def rep(status, author=None, delivery_state=None, day=[0]):
@@ -1979,7 +1979,7 @@ def test_permission_matrix_matches_code(app):
             return {
                 "新增、編輯（草稿 / 退回）、送審": lambda: bool(perm.can_create(u) and perm.can_edit(u, draft) and perm.can_submit(u, draft)),
                 "截圖上傳（含批次上傳）": lambda: bool(perm.can_edit(u, draft)),
-                "線上預覽 PDF": lambda: u.role != "viewer",
+                "線上預覽 PDF": lambda: u.role not in ("viewer", "guest"),
                 "指派撰寫人、核准人": lambda: bool(perm.can_assign(u, draft)),
                 "覆寫文件編號": lambda: bool(perm.can_override_doc_no(u, draft)),
                 "審核：核准 / 退回": lambda: bool(perm.can_review(u, submitted)),
@@ -1989,7 +1989,7 @@ def test_permission_matrix_matches_code(app):
                 "發送中止時重試": lambda: bool(perm.can_retry_delivery(u, failed)),
                 "刪除日報（未結案；刪除後文件編號可再使用）": lambda: bool(perm.can_delete(u, draft) and not perm.can_delete(u, locked)),
                 "授權二線管理員代理": lambda: bool(perm.can_manage_delegations(u)),
-                "下載已結案的正式 PDF": lambda: True,
+                "下載已結案的正式 PDF": lambda: u.role != "guest",
                 "調整角色、指派系統管理員": lambda: perm.can_manage_users(u),
                 "本機緊急帳號（新增、改密碼、停用）": lambda: perm.can_manage_users(u),
                 "系統設定（AD、備份還原、健康檢查、PDF 範本、HTTPS、發送與提醒、AI）": lambda: perm.can_manage_settings(u),
@@ -2019,3 +2019,40 @@ def test_permission_matrix_matches_code(app):
     root.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
     html = root.get("/admin/users")
     assert "perm-matrix" in html and html.count("✔") > 20 and "✔*" in html and "不受職責分離限制" in html
+
+
+def test_ad_first_login_is_guest(app, monkeypatch):
+    """AD 首次登入一律是訪客：只能看歡迎頁（列出系統管理員），其他內容與操作都禁止；開通後才能使用。"""
+    from app import auth, db
+    from app.models import User
+
+    app.config["AUTH_MODE"] = "ldap"
+    monkeypatch.setattr(auth, "ad_authenticate", lambda u, p, c=None: (u.title(), f"{u}@corp.local", False))
+    # 系統管理員（被指派的檔案管理員，有 email）
+    adm = Browser(app)
+    adm.get("/login")
+    adm.post("/login", {"username": "anna", "password": "pw"})
+    with app.app_context():
+        a = User.query.filter_by(username="anna").one()
+        assert a.role == "guest"
+        a.set_role("file_manager")
+        a.sys_admin = True
+        db.session.commit()
+
+    g = Browser(app)
+    g.get("/login")
+    html = g.post("/login", {"username": "gary", "password": "pw"})
+    assert "帳號尚未開通權限" in html and "anna@corp.local" in html and "請聯絡系統管理員" in html
+    assert "正式文件" not in html and "日報清單" not in html
+    for url in ("/", "/archive", "/reports/1", "/delegations", "/admin/users", "/admin/settings/"):
+        r = g.c.get(url)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/welcome"), url
+    assert g.c.post("/reports/new", data={"csrf_token": g.tok, "report_date": "2026-11-20"}).status_code == 403
+
+    # 系統管理員看到等待開通，設定角色後訪客即可使用
+    assert "等待開通" in adm.get("/") and "gary" in adm.get("/admin/users")
+    with app.app_context():
+        gid = User.query.filter_by(username="gary").one().id
+    adm.post("/admin/users", {"user_id": str(gid), "role": "first_line"})
+    assert "日報清單" in g.get("/") and g.c.get("/welcome").status_code == 302
+

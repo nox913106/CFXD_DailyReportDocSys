@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
+{% if guests %}
+<div class="flash">有 {{ guests }} 個 AD 帳號以訪客身分登入、等待開通權限。
+  <a href="{{ url_for('views.users') }}#guests">前往帳號管理設定角色</a></div>
+{% endif %}
 {% if pending %}
 <section class="card">
   <h2>待我審核（{{ pending|length }}）</h2>
