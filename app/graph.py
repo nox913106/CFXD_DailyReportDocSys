@@ -3,7 +3,7 @@
 需要公司 M365 管理員在 Entra ID 註冊應用程式：
   - SharePoint：Sites.Selected（只授權指定的網站，建議）或 Sites.ReadWrite.All
   - 寄信：Mail.Send（建議以 Application Access Policy 限制只能用指定的寄件信箱）
-設定在「系統設定 → 發送與提醒」；用 urllib 直接呼叫，遵守主機的 https_proxy 設定。
+設定在「系統設定 → 發送與通知」；用 urllib 直接呼叫，遵守主機的 https_proxy 設定。
 """
 
 import json
@@ -37,7 +37,7 @@ def _login_base():
 
 def config():
     keys = ("graph_tenant_id", "graph_client_id", "sp_site_url", "sp_library", "sp_folder", "sp_link_scope",
-            "sp_link_expire_days", "mail_sender", "mail_to", "mail_cc", "mail_subject", "mail_body", "reminder_sender")
+            "sp_link_expire_days", "mail_sender", "mail_to", "mail_cc", "mail_subject", "mail_body")
     c = sysconf.many(keys)
     c["client_secret"] = secret()
     return c
@@ -63,16 +63,14 @@ def set_secret(plain, user=None):
     sysconf.put("graph_client_secret_enc", _fernet().encrypt(plain.encode()).decode() if plain else "", user)
 
 
-def missing(c=None, mail=True, sharepoint=True, reminder=False):
-    """尚未填寫的必要設定（顯示名稱）。mail = 寄給客戶的寄件信箱；reminder = 內部提醒的寄件信箱。"""
+def missing(c=None, mail=True, sharepoint=True):
+    """尚未填寫的必要設定（顯示名稱）。mail = 寄給客戶的寄件信箱。"""
     c = c or config()
     need = [("graph_tenant_id", "租用戶 ID"), ("graph_client_id", "應用程式 ID")]
     if sharepoint:
         need += [("sp_site_url", "SharePoint 網站網址")]
     if mail:
         need += [("mail_sender", "客戶信件寄件信箱")]
-    if reminder:
-        need += [("reminder_sender", "內部提醒寄件信箱")]
     out = [label for k, label in need if not (c.get(k) or "").strip()]
     if not c.get("client_secret"):
         out.append("用戶端密碼" + ("（無法解密，請重新輸入）" if c.get("client_secret") is None else ""))

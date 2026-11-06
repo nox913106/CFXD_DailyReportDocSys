@@ -524,29 +524,45 @@ def recent_audit(limit=50):
     return AuditLog.query.order_by(AuditLog.id.desc()).limit(limit).all()
 
 
-# ---------------------------------------------------------------- 發送與提醒（SharePoint、寄信、每日提醒）
+# ---------------------------------------------------------------- 發送與通知（對外：SharePoint + 正式 Mail；內部：Teams）
 
 DELIVERY_FORM = ("graph_tenant_id", "graph_client_id", "sp_site_url", "sp_library", "sp_folder", "sp_link_scope",
-                 "mail_sender", "mail_to", "mail_cc", "mail_subject", "mail_body", "reminder_time", "deadline_time",
-                 "reminder_extra", "reminder_sender")
+                 "mail_sender", "mail_to", "mail_cc", "mail_subject", "mail_body", "reminder_time", "deadline_time")
 LINK_SCOPES = {"organization": "公司內部（需登入公司帳號）", "anonymous": "任何有連結的人",
                "none": "不建立分享連結（沿用文件庫權限，只給檔案網址）"}
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 MAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+MAIL_SAMPLE = {"doc_no": "CFXD-SCA-RLY-DPR-000903", "contractor_doc_no": "RT230018-CFXD SLA-RP-000803",
+               "date": "2026-11-10", "revision": 0, "filename": "CFXD-SCA-RLY-DPR-000903_0_IFI_2026-11-10.pdf",
+               "md5": "0123456789abcdef0123456789abcdef", "sha256": "…",
+               "link": "https://contoso.sharepoint.com/:b:/s/CFXD/xyz", "approver": "Alan Lin"}
+
+
+def _teams_keys():
+    from . import teams
+
+    return [teams.key(ev, p) for ev in teams.EVENTS for p in ("title", "text")]
 
 
 def _delivery_from_form():
+    from . import teams
+
     f = request.form
     c = {k: f.get(k, "").strip() for k in DELIVERY_FORM}
     c["sp_folder"] = c["sp_folder"].strip("/")
     c["delivery_enabled"] = f.get("delivery_enabled") == "1"
     c["reminder_enabled"] = f.get("reminder_enabled") == "1"
     c["sp_link_expire_days"] = _int("sp_link_expire_days", 0, 3650, 0)
+    for k in _teams_keys():
+        c[k] = f.get(k, "").replace("\r\n", "\n").strip()
+    for ev in teams.EVENTS:
+        c[teams.key(ev, "on")] = f.get(teams.key(ev, "on")) == "1"
+    c["teams_mention"] = f.get("teams_mention") == "1"
     return c
 
 
 def _check_delivery(c):
-    from . import graph
+    from . import graph, teams
 
     if c["sp_link_scope"] not in LINK_SCOPES:
         return "分享連結類型不正確"
@@ -555,19 +571,20 @@ def _check_delivery(c):
             return f"{label}格式應為 HH:MM（24 小時制）"
     if c["reminder_time"] >= c["deadline_time"]:
         return "提醒時間必須早於期限"
-    for k, label in (("mail_sender", "客戶信件寄件信箱"), ("mail_to", "客戶收件人"), ("mail_cc", "副本"),
-                     ("reminder_extra", "其他提醒收件人"), ("reminder_sender", "內部提醒寄件信箱")):
+    for k, label in (("mail_sender", "寄件信箱"), ("mail_to", "客戶收件人"), ("mail_cc", "副本")):
         bad = [a for a in graph.addresses(c[k]) if not MAIL_RE.match(a)]
         if bad:
             return f"{label}：「{bad[0]}」不是 email 地址"
-    for k, label in (("mail_sender", "客戶信件寄件信箱"), ("reminder_sender", "內部提醒寄件信箱")):
-        if len(graph.addresses(c[k])) > 1:
-            return f"{label}只能填一個信箱"
-    doms = {a.split("@")[1].lower() for a in (c["mail_sender"], c["reminder_sender"]) if "@" in a}
-    if len(doms) > 1:
-        return "客戶信件與內部提醒的寄件信箱應在同一個 M365 網域（同一個應用程式寄信）"
+    if len(graph.addresses(c["mail_sender"])) > 1:
+        return "寄件信箱只能填一個"
     if c["sp_site_url"] and not re.match(r"^https://[^/\s]+(/\S*)?$", c["sp_site_url"]):
         return "SharePoint 網站網址格式應為 https://公司.sharepoint.com/sites/網站名稱"
+    url = request.form.get("teams_webhook", "").strip()
+    if url and not re.match(r"^https://[^/\s]+/\S+$", url):
+        return "Teams Workflow 網址應以 https:// 開頭（在 Teams 建立 Workflow 後複製的完整網址）"
+    for ev, d in teams.EVENTS.items():
+        if not c[teams.key(ev, "title")]:
+            return f"Teams「{d['label'].split('：')[0]}」的標題不能空白"
     return None
 
 
@@ -579,19 +596,24 @@ def _graph_config(c):
     return {**c, "client_secret": pw or graph.secret()}
 
 
-def _delivery_page(c=None, steps=None, status=200):
-    from . import delivery, graph
+def _delivery_page(c=None, steps=None, status=200, preview=None):
+    from . import graph, teams
 
-    saved = sysconf.many(DELIVERY_FORM + ("delivery_enabled", "reminder_enabled", "sp_link_expire_days"))
-    return render_template("admin_delivery.html", tab="delivery", c=c or saved, steps=steps, scopes=LINK_SCOPES,
-                           has_secret=bool(sysconf.get("graph_client_secret_enc")), secret_ok=graph.secret() is not None,
-                           recipients=delivery.reminder_recipients(), reminder=sysconf.get("reminder_result"),
-                           missing=graph.missing()), status
+    keys = DELIVERY_FORM + ("delivery_enabled", "reminder_enabled", "sp_link_expire_days", "teams_mention",
+                            *_teams_keys(), *(teams.key(ev, "on") for ev in teams.EVENTS))
+    url = teams.webhook()
+    return render_template("admin_delivery.html", tab="delivery", c=c or sysconf.many(keys), steps=steps,
+                           scopes=LINK_SCOPES, has_secret=bool(sysconf.get("graph_client_secret_enc")),
+                           secret_ok=graph.secret() is not None, missing=graph.missing(),
+                           events=teams.EVENTS, fields=teams.FIELDS, tkey=teams.key,
+                           teams_url=teams.masked(url) if url else ("無法解密，請重新輸入" if url is None else ""),
+                           mentions=teams.mention_list(), reminder=sysconf.get("reminder_result"),
+                           teams_last=sysconf.get("teams_last_result"), preview=preview), status
 
 
 @bp.route("/delivery", methods=["GET", "POST"])
 def delivery():
-    from . import graph
+    from . import graph, teams
 
     if request.method == "GET":
         return _delivery_page()
@@ -608,10 +630,14 @@ def delivery():
     if pw or request.form.get("clear_secret") == "1":
         graph.set_secret(pw if pw else "", current_user)
         changed.append("用戶端密碼")
+    url = request.form.get("teams_webhook", "").strip()
+    if url or request.form.get("clear_teams") == "1":
+        teams.set_webhook(url, current_user)
+        changed.append("Teams Workflow 網址")
     if changed:
-        _audit("sys_settings", "發送與提醒", "、".join(changed))
+        _audit("sys_settings", "發送與通知", "、".join(changed))
     db.session.commit()
-    flash("已儲存發送與提醒設定。", "success")
+    flash("已儲存發送與通知設定。", "success")
     return redirect(url_for("settings.delivery"))
 
 
@@ -639,24 +665,73 @@ def delivery_test():
     return _delivery_page(c, steps)
 
 
+def _render_customer_mail(c):
+    from .delivery import _Fmt
+
+    import html as _html
+
+    subject = _Fmt().format(c["mail_subject"] or "", **MAIL_SAMPLE)
+    body = _Fmt().format(c["mail_body"] or "", **{k: _html.escape(str(v)) for k, v in MAIL_SAMPLE.items()})
+    return subject, body
+
+
 @bp.route("/delivery/test-mail", methods=["POST"])
 def delivery_test_mail():
+    """用表單上的客戶信件模版（範例資料）寄一封測試信；主旨前加 [測試]。"""
     from . import graph
 
     c = _delivery_from_form()
     gc = _graph_config(c)
     to = graph.addresses(request.form.get("test_to", "")) or ([current_user.email] if current_user.email else [])
-    internal = request.form.get("test_from") == "reminder"
-    miss = graph.missing(gc, sharepoint=False, mail=not internal, reminder=internal)
-    if internal:
-        gc = {**gc, "mail_sender": gc["reminder_sender"]}
+    miss = graph.missing(gc, sharepoint=False)
     if miss or not to:
         steps = [(False, "設定", "還沒填：" + "、".join(miss) if miss else "請填寫測試收件人")]
         return _delivery_page(c, steps)
+    subject, body = _render_customer_mail(c)
     try:
-        graph.send_mail(gc, to, "CFXD 日報系統測試信", "這是「系統設定 → 發送與提醒」寄出的測試信。")
-        steps = [(True, "寄測試信", f"已由 {gc['mail_sender']}（{'內部提醒' if internal else '客戶信件'}寄件信箱）寄給 {', '.join(to)}")]
+        graph.send_mail(gc, to, "[測試] " + subject, body)
+        steps = [(True, "寄測試信", f"已由 {gc['mail_sender']} 用客戶信件模版（範例資料）寄給 {', '.join(to)}")]
     except graph.GraphError as e:
         steps = [(False, "寄測試信", str(e))]
     return _delivery_page(c, steps)
 
+
+@bp.route("/delivery/test-teams", methods=["POST"])
+def delivery_test_teams():
+    """用表單上的 Teams 模版（範例資料）發一則測試訊息到頻道。"""
+    from . import teams
+
+    c = _delivery_from_form()
+    ev = request.form.get("test_event", "reminder")
+    if ev not in teams.EVENTS:
+        abort(400)
+    url = request.form.get("teams_webhook", "").strip() or teams.webhook()
+    if not url:
+        return _delivery_page(c, [(False, "Teams", "還沒填 Teams Workflow 網址")])
+    title, text = teams.render(ev, teams.SAMPLE, c[teams.key(ev, "title")], c[teams.key(ev, "text")])
+    mentions = teams.mention_list() if c["teams_mention"] and ev == "reminder" else []
+    try:
+        teams.post(url, teams.card("[測試] " + title, text, "https://report.corp.local/reports/1", mentions))
+        steps = [(True, "Teams 測試訊息", f"已傳送「{title}」" + (f"，@ {len(mentions)} 位二線管理員" if mentions else ""))]
+    except teams.TeamsError as e:
+        steps = [(False, "Teams 測試訊息", str(e))]
+    return _delivery_page(c, steps)
+
+
+@bp.route("/delivery/preview", methods=["POST"])
+def delivery_preview():
+    """用表單上的模版與範例資料預覽客戶信件與 Teams 訊息（不寄出）。"""
+    from . import teams
+
+    c = _delivery_from_form()
+    subject, body = _render_customer_mail(c)
+    from markupsafe import Markup, escape
+
+    def md(text):  # 預覽時照 Teams 的樣子顯示 **粗體**
+        return Markup(re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", str(escape(text))))
+
+    msgs = []
+    for ev, d in teams.EVENTS.items():
+        title, text = teams.render(ev, teams.SAMPLE, c[teams.key(ev, "title")], c[teams.key(ev, "text")])
+        msgs.append((d["label"], title, md(text)))
+    return _delivery_page(c, preview={"subject": subject, "body": body, "teams": msgs})

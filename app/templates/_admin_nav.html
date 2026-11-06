@@ -8,7 +8,7 @@
       ('backup', 'settings.backup', '備份還原'),
       ('pdf', 'settings.pdf', 'PDF 與上傳'),
       ('tls', 'settings.tls', 'HTTPS 憑證'),
-      ('delivery', 'settings.delivery', '發送與提醒'),
+      ('delivery', 'settings.delivery', '發送與通知'),
       ('ai', 'settings.ai', 'AI 建議')] %}
   <a href="{{ url_for(endpoint) }}" class="{{ 'active' if tab == key }}">{{ label }}</a>
   {% endfor %}

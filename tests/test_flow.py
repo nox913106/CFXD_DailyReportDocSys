@@ -1750,32 +1750,30 @@ def test_preview_watermark_and_reminder(app, monkeypatch):
         cv.showPage()
         assert pages == ([wm, wm] if wm else [])
 
-    sent = []
-    monkeypatch.setattr("app.graph.send_mail", lambda c, to, subject, html, cc=(): sent.append((to, subject, c["mail_sender"])))
+    posted = []
+    monkeypatch.setattr("app.teams.post", lambda url, payload: posted.append((url, payload)))
     carol = Browser(app)
     carol.login("carol")
     set_role(app, "carol", "second_line")
     with app.app_context():
+        from app import teams
+
         User.query.filter_by(username="carol").one().email = "carol@contoso.com"
-        for k, v in {"graph_tenant_id": "t", "graph_client_id": "c", "mail_sender": "dr@contoso.com",
-                     "reminder_extra": "duty@contoso.com"}.items():
-            sysconf.put(k, v)
-        from app import graph
-
-        graph.set_secret("s")
-        # 沒有設定內部提醒寄件信箱：不會改用客戶信件的寄件信箱
-        assert "內部提醒寄件信箱" in delivery.send_reminder(datetime(2026, 11, 6, 12, 30)) and not sent
-        for k, v in {"reminder_sender": "notice@contoso.com"}.items():
-            sysconf.put(k, v)
-        from app import graph
-
-        graph.set_secret("s")
+        db.session.commit()
+        # 沒有設定 Teams 網址：提醒失敗並說明原因（不會改寄 email）
+        assert "尚未設定 Teams Workflow 網址" in delivery.send_reminder(datetime(2026, 11, 6, 12, 30)) and not posted
+        teams.set_webhook("https://prod-01.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=x")
         db.session.commit()
         assert not delivery.reminder_due(datetime(2026, 11, 7, 12, 29))
         assert delivery.reminder_due(datetime(2026, 11, 7, 12, 30))  # 週六也提醒
         res = delivery.send_reminder(datetime(2026, 11, 7, 12, 30))
-        assert "已由 notice@contoso.com 提醒 carol@contoso.com, duty@contoso.com（尚未建立）" in res
-        assert sent and "尚未結案（期限 13:00）" in sent[0][1] and sent[0][2] == "notice@contoso.com"
+        assert "已在 Teams 提醒（尚未建立）" in res
+        url, payload = posted[0]
+        card = payload["attachments"][0]["content"]
+        assert url.startswith("https://prod-01") and payload["type"] == "message"
+        assert card["body"][0]["text"] == "【提醒】2026-11-07 日報尚未結案（期限 13:00）"
+        assert "**尚未建立**" in card["body"][1]["text"]
+        assert card["msteams"]["entities"][0]["mentioned"] == {"id": "carol@contoso.com", "name": "carol"}  # @ 二線
         assert not delivery.reminder_due(datetime(2026, 11, 7, 12, 45))  # 一天一次
 
 
@@ -2001,7 +1999,7 @@ def test_permission_matrix_matches_code(app):
                 "下載已結案的正式 PDF": lambda: u.role != "guest",
                 "調整角色、指派系統管理員": lambda: perm.can_manage_users(u),
                 "本機緊急帳號（新增、改密碼、停用）": lambda: perm.can_manage_users(u),
-                "系統設定（AD、備份還原、健康檢查、PDF 範本、HTTPS、發送與提醒、AI）": lambda: perm.can_manage_settings(u),
+                "系統設定（AD、備份還原、健康檢查、PDF 範本、HTTPS、發送與通知、AI）": lambda: perm.can_manage_settings(u),
                 "稽核紀錄": lambda: perm.can_manage_users(u),
             }[label]()
 
@@ -2105,32 +2103,42 @@ def test_admin_manages_delegations(app):
         assert AuditLog.query.filter_by(action="delegation").count() == 2
 
 
-def test_reminder_only_when_not_closed_and_sender_settings(app, monkeypatch):
-    """提醒只看「今天的日報是否已結案」；客戶信件與內部提醒用不同寄件信箱，必須同一個網域。"""
+def test_internal_teams_and_customer_mail_templates(app, monkeypatch):
+    """內部狀態走 Teams（只有未結案才提醒、發送中止立即通知）；客戶信件與 Teams 模版都可在設定頁修改、預覽、測試。"""
     from datetime import date, datetime
 
-    from app import db, delivery, graph, sysconf
-    from app.models import Report, User
+    from app import db, delivery, graph, sysconf, teams
+    from app.models import Delivery, Report, User
 
-    sent = []
-    monkeypatch.setattr("app.graph.send_mail", lambda c, to, subject, html, cc=(): sent.append((c["mail_sender"], to, subject)))
+    posted, sent = [], []
+    monkeypatch.setattr("app.teams.post", lambda url, payload: posted.append(payload["attachments"][0]["content"]))
+    monkeypatch.setattr("app.graph.send_mail", lambda c, to, subject, html, cc=(): sent.append((to, subject, html)))
     with app.app_context():
         u = User(username="sl1", display_name="SL", email="sl1@contoso.com")
         u.set_role("second_line")
         db.session.add(u)
-        for k, v in {"graph_tenant_id": "t", "graph_client_id": "c", "mail_sender": "dr@contoso.com",
-                     "reminder_sender": "notice@contoso.com"}.items():
-            sysconf.put(k, v)
-        graph.set_secret("s")
+        teams.set_webhook("https://prod-01.westus.logic.azure.com/workflows/abc")
         r = Report(report_date=date(2026, 11, 9), doc_no="X1", contractor_doc_no="Y1", author_id=u.id, status="approved")
         db.session.add(r)
         db.session.commit()
-        assert "（已核准（待結案））" in delivery.send_reminder(datetime(2026, 11, 9, 12, 30))  # 核准但未結案仍提醒
+        assert "已在 Teams 提醒（已核准（待結案））" in delivery.send_reminder(datetime(2026, 11, 9, 12, 30))
         r.status = "closed"
         sysconf.put("reminder_last", "")
         db.session.commit()
         assert "已結案，不需要提醒" in delivery.send_reminder(datetime(2026, 11, 9, 12, 31))
-        assert len(sent) == 1 and sent[0][0] == "notice@contoso.com"
+        assert len(posted) == 1
+
+        # 發送中止：立即通知（自訂模版），不寄 email
+        sysconf.put(teams.key("delivery_failed", "text"), "壞在 {step}：{error}")
+        d = Delivery(report_id=r.id, state="queued", run_after=datetime.now(), closed_by_id=u.id)
+        db.session.add(d)
+        db.session.commit()
+        monkeypatch.setitem(delivery.STEP_FUNCS, "pdf", lambda d: (_ for _ in ()).throw(RuntimeError("disk full")))
+        assert delivery.run(d) is False
+        assert posted[-1]["body"][0]["text"] == "【發送中止】X1（2026-11-09）"
+        assert posted[-1]["body"][1]["text"] == "壞在 產生正式 PDF：disk full"
+        assert "msteams" not in posted[-1] or "entities" not in posted[-1]["msteams"]  # 只有每日提醒會 @
+        assert not sent
 
     runner = app.test_cli_runner()
     runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "a-very-long-pass"])
@@ -2138,13 +2146,24 @@ def test_reminder_only_when_not_closed_and_sender_settings(app, monkeypatch):
     root.get("/login")
     root.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
     html = root.get("/admin/settings/delivery")
-    assert 'name="reminder_sender"' in html and 'name="test_from"' in html
-    form = {"sp_link_scope": "organization", "reminder_time": "12:30", "deadline_time": "13:00",
-            "mail_sender": "dr@contoso.com", "reminder_sender": "notice@other.com", "sp_folder": "x",
-            "graph_tenant_id": "t", "graph_client_id": "c"}
-    assert "同一個 M365 網域" in root.post("/admin/settings/delivery", form, status=400)
-    assert "已儲存" in root.post("/admin/settings/delivery", {**form, "reminder_sender": "notice@contoso.com"})
-    html = root.post("/admin/settings/delivery/test-mail", {**form, "reminder_sender": "notice@contoso.com",
-                                                           "test_from": "reminder", "test_to": "me@contoso.com"})
-    assert "已由 notice@contoso.com（內部提醒寄件信箱）寄給 me@contoso.com" in html
-    assert sent[-1][0] == "notice@contoso.com"
+    assert "內部通知（Microsoft Teams）" in html and "寄給客戶（對外一律用正式 Mail）" in html
+    assert "reminder_sender" not in html and "logic.azure.com/…（已設定）" in html
+    form = {"sp_link_scope": "organization", "reminder_time": "12:30", "deadline_time": "13:00", "sp_folder": "x",
+            "graph_tenant_id": "t", "graph_client_id": "c", "graph_client_secret": "s", "mail_sender": "dr@contoso.com",
+            "mail_subject": "日報 {doc_no}", "mail_body": "<p>請見 <a href='{link}'>{filename}</a> MD5 {md5}</p>",
+            "reminder_enabled": "1", "teams_mention": "1", "teams_delivery_failed_on": "1", "teams_reminder_on": "1",
+            "teams_reminder_title": "提醒 {date}", "teams_reminder_text": "狀態 {status}",
+            "teams_delivery_failed_title": "中止 {doc_no}", "teams_delivery_failed_text": "{error}",
+            "teams_delivery_done_title": "完成 {doc_no}", "teams_delivery_done_text": "{mail_to}"}
+    assert "Teams Workflow 網址應以 https://" in root.post("/admin/settings/delivery", {**form, "teams_webhook": "nope"}, status=400)
+    html = root.post("/admin/settings/delivery/preview", form)
+    assert "日報 CFXD-SCA-RLY-DPR-000903" in html and "提醒 2026-11-10" in html and "srcdoc=" in html
+    html = root.post("/admin/settings/delivery/test-mail", {**form, "test_to": "me@contoso.com"})
+    assert "用客戶信件模版（範例資料）寄給 me@contoso.com" in html
+    assert sent[-1][1] == "[測試] 日報 CFXD-SCA-RLY-DPR-000903" and "0123456789abcdef" in sent[-1][2]
+    html = root.post("/admin/settings/delivery/test-teams", {**form, "test_event": "reminder"})
+    assert "已傳送「提醒 2026-11-10」" in html and posted[-1]["body"][0]["text"] == "[測試] 提醒 2026-11-10"
+    assert "已儲存發送與通知設定" in root.post("/admin/settings/delivery", form)
+    with app.app_context():
+        assert sysconf.get("teams_reminder_title") == "提醒 {date}" and sysconf.get("mail_subject") == "日報 {doc_no}"
+        assert not sysconf.get("teams_delivery_done_on") and teams.webhook().startswith("https://prod-01")

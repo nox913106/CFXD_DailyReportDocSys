@@ -65,6 +65,7 @@ def create_app():
         BACKUP_DIR=os.environ.get("DR_BACKUP_DIR", ""),
         SESSION_COOKIE_HTTPONLY=True,
         # 部署在 HTTPS（nginx）後方時，cookie 只經 HTTPS 傳送
+        PUBLIC_URL=os.environ.get("PUBLIC_URL", ""),  # 通知中的日報連結，例如 https://report.corp.local
         SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE") == "1",
         REMEMBER_COOKIE_SECURE=os.environ.get("COOKIE_SECURE") == "1",
         SESSION_COOKIE_SAMESITE="Lax",

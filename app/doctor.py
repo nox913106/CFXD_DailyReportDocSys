@@ -114,21 +114,27 @@ def run(system=False):
         miss = graph.missing()
         if miss:
             _item(out, g, "自動發送設定", "fail", "設定不完整：" + "、".join(miss) + "，結案後的發送會中止",
-                  "系統設定 → 發送與提醒")
+                  "系統設定 → 發送與通知")
         else:
             _item(out, g, "自動發送設定", "ok", f"{sysconf.get('sp_site_url')} → {sysconf.get('mail_to')}")
     else:
         _item(out, g, "自動發送設定", "warn", "未啟用：結案只產生正式 PDF，不會上傳 SharePoint 與寄給客戶",
-              "系統設定 → 發送與提醒 → 啟用")
+              "系統設定 → 發送與通知 → 啟用")
     errs = Delivery.query.filter_by(state="error").count()
     _item(out, g, "發送流程", "fail" if errs else "ok", f"{errs} 份日報發送中止" if errs else "沒有中止的發送",
           "開啟日報頁最下方的流程，修正原因後按「重試」" if errs else "")
-    rem = sysconf.get("reminder_result") or ""
-    if sysconf.get("reminder_enabled") and not (sysconf.get("reminder_sender") or "").strip():
-        _item(out, g, "每日提醒", "warn", "尚未設定內部提醒的寄件信箱，12:30 未結案時無法寄出提醒",
-              "系統設定 → 發送與提醒 → 每日提醒的寄件信箱")
-    elif sysconf.get("reminder_enabled") and "失敗" in rem:
-        _item(out, g, "每日提醒", "warn", rem, "系統設定 → 發送與提醒：確認寄信設定與二線管理員的 email")
+    from . import teams
+
+    url = teams.webhook()
+    wants = sysconf.get("reminder_enabled") or any(sysconf.get(teams.key(ev, "on")) for ev in teams.EVENTS if ev != "reminder")
+    if wants and not url:
+        _item(out, g, "Teams 內部通知", "warn",
+              "尚未設定 Teams Workflow 網址：每日提醒與發送中止通知不會送出" if url == "" else "Teams 網址無法解密",
+              "系統設定 → 發送與通知 → 內部通知（Teams）")
+    elif wants:
+        last = sysconf.get("teams_last_result") or ""
+        _item(out, g, "Teams 內部通知", "warn" if "失敗" in last else "ok", last or "已設定，尚未傳送過",
+              "系統設定 → 發送與通知：按「發 Teams 測試訊息」確認" if "失敗" in last else "")
 
     # ---------------------------------------------------------------- 背景工作
     g = "背景工作"

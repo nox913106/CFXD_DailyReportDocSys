@@ -1,8 +1,21 @@
 {% extends "base.html" %}
-{% block title %}發送與提醒 - CFXD{% endblock %}
+{% block title %}發送與通知 - CFXD{% endblock %}
 {% block content %}
 <p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>
 {% include "_admin_nav.html" %}
+
+{% if preview %}
+<section class="card">
+  <h3>預覽（範例資料，未寄出）</h3>
+  <h4>客戶信件</h4>
+  <p><b>主旨：</b>{{ preview.subject }}</p>
+  <iframe class="mail-preview" sandbox="" srcdoc="{{ preview.body }}" title="客戶信件預覽"></iframe>
+  <h4>Teams 內部通知</h4>
+  {% for label, title, text in preview.teams %}
+  <div class="teams-preview"><div class="hint">{{ label }}</div><b>{{ title }}</b><div class="pre">{{ text }}</div></div>
+  {% endfor %}
+</section>
+{% endif %}
 
 {% if steps is not none %}
 <section class="card">
@@ -29,7 +42,7 @@
 
     <h4>Microsoft 365 應用程式（Entra ID）</h4>
     <p class="hint">由公司 M365 管理員註冊應用程式並授予「應用程式」權限：SharePoint 用 <code>Sites.Selected</code>（只授權下面的網站），
-      寄信用 <code>Mail.Send</code>（建議以 Application Access Policy 限制只能用下面兩個寄件信箱：把兩個信箱放進同一個郵件安全群組，再以該群組建立原則）。主機需要能連到
+      寄信用 <code>Mail.Send</code>（建議以 Application Access Policy 限制只能用下面的寄件信箱）。主機需要能連到
       <code>login.microsoftonline.com</code> 與 <code>graph.microsoft.com</code>。</p>
     <div class="form-grid">
       <label>租用戶 ID（Tenant ID）<input name="graph_tenant_id" value="{{ c.graph_tenant_id }}" placeholder="xxxxxxxx-xxxx-…" spellcheck="false"></label>
@@ -52,41 +65,72 @@
       <label>連結有效天數（只用於「任何有連結的人」；0 = 不限）<input type="number" name="sp_link_expire_days" min="0" max="3650" value="{{ c.sp_link_expire_days }}"></label>
     </div>
 
-    <h4>寄給客戶</h4>
+    <h4>寄給客戶（對外一律用正式 Mail）</h4>
     <div class="form-grid">
-      <label>寄件信箱（寄給客戶）<input name="mail_sender" value="{{ c.mail_sender }}" placeholder="dailyreport@company.com"></label>
+      <label>寄件信箱<input name="mail_sender" value="{{ c.mail_sender }}" placeholder="dailyreport@company.com"></label>
       <label class="wide">收件人（多個用逗號或換行分隔）<textarea name="mail_to" rows="2">{{ c.mail_to }}</textarea></label>
       <label class="wide">副本<textarea name="mail_cc" rows="2">{{ c.mail_cc }}</textarea></label>
-      <label class="wide">主旨<input name="mail_subject" value="{{ c.mail_subject }}"></label>
-      <label class="wide">內容（HTML）<textarea name="mail_body" rows="6" spellcheck="false">{{ c.mail_body }}</textarea></label>
+      <label class="wide">主旨模版<input name="mail_subject" value="{{ c.mail_subject }}"></label>
+      <label class="wide">內容模版（HTML）<textarea name="mail_body" rows="7" spellcheck="false">{{ c.mail_body }}</textarea></label>
     </div>
-    <p class="hint">可代入：{doc_no} {contractor_doc_no} {date} {revision} {filename} {link} {md5} {sha256} {approver}</p>
+    <p class="hint">可代入：{doc_no} 文件編號、{contractor_doc_no}、{date} 日期、{revision} 版次、{filename} 檔名、{link} SharePoint 連結、
+      {md5}、{sha256}、{approver} 核准人。</p>
+    <div class="actions">
+      <input name="test_to" placeholder="測試收件人（空白 = 寄給自己）" style="max-width:260px">
+      <button type="submit" class="secondary" formaction="{{ url_for('settings.delivery_test_mail') }}">用這個模版寄測試信</button>
+    </div>
   </section>
 
   <section class="card">
-    <h3>每日提醒</h3>
-    <p class="hint">到了提醒時間，今天的日報還沒結案（未建立、草稿、待審核、退回或待結案），就用內部提醒寄件信箱寄信給二線管理員。每天一次，假日也會提醒。
-      發送中止另外在首頁與健康檢查提示。</p>
+    <h3>內部通知（Microsoft Teams）</h3>
+    <p class="hint">內部狀態訊息發到 Teams 頻道，不寄信。在頻道建立 Workflow「收到 webhook 要求時張貼到頻道」
+      （Post to a channel when a webhook request is received），把產生的網址貼在下面。網址等同密碼，加密保存、不會再顯示。
+      主機需要能連到網址的主機。</p>
+    <div class="form-grid">
+      <label class="wide">Teams Workflow 網址
+        <input type="password" name="teams_webhook" autocomplete="off" spellcheck="false"
+               placeholder="{{ teams_url + '（留空 = 不變更）' if teams_url else 'https://….logic.azure.com/workflows/…' }}"></label>
+      {% if teams_url %}<label class="inline"><input type="checkbox" name="clear_teams" value="1"> 清除已儲存的網址</label>{% endif %}
+    </div>
+
+    <h4>每日提醒</h4>
     <label class="inline"><input type="checkbox" name="reminder_enabled" value="1" {{ 'checked' if c.reminder_enabled }}> 啟用</label>
     <div class="form-grid">
-      <label>寄件信箱（內部提醒，與寄給客戶的不同；同一個 M365 網域）<input name="reminder_sender" value="{{ c.reminder_sender }}" placeholder="dailyreport-notice@company.com"></label>
-      <label>提醒時間<input name="reminder_time" value="{{ c.reminder_time }}" placeholder="12:30"></label>
-      <label>期限（寫在提醒信中）<input name="deadline_time" value="{{ c.deadline_time }}" placeholder="13:00"></label>
-      <label class="wide">其他收件人（選填）<textarea name="reminder_extra" rows="2">{{ c.reminder_extra }}</textarea></label>
+      <label>提醒時間（到這個時間今天的日報還沒結案就提醒）<input name="reminder_time" value="{{ c.reminder_time }}" placeholder="12:30"></label>
+      <label>期限（代入 {deadline}）<input name="deadline_time" value="{{ c.deadline_time }}" placeholder="13:00"></label>
     </div>
-    <p class="hint">目前收件人：{{ recipients|join('、') if recipients else '（沒有：二線管理員帳號沒有 email，AD 帳號登入一次後會帶入）' }}</p>
-    {% if reminder %}<p class="hint">最近一次：{{ reminder }}</p>{% endif %}
+    <label class="inline"><input type="checkbox" name="teams_mention" value="1" {{ 'checked' if c.teams_mention }}>
+      每日提醒時 @ 二線管理員</label>
+    <p class="hint">會 @：{% for name, mail in mentions %}{{ name }}（{{ mail }}）{{ '、' if not loop.last }}{% else %}（沒有：二線管理員帳號沒有 email，AD 帳號登入一次後會帶入）{% endfor %}</p>
+
+    <h4>通知事件與模版</h4>
+    {% for ev, d in events.items() %}
+    <fieldset class="tpl">
+      <legend><label class="inline">
+        {% if ev == 'reminder' %}<input type="checkbox" checked disabled title="由上方「每日提醒 → 啟用」控制">
+        {% else %}<input type="checkbox" name="{{ tkey(ev, 'on') }}" value="1" {{ 'checked' if c[tkey(ev, 'on')] }}>{% endif %}
+        {{ d.label }}</label></legend>
+      {% if ev == 'reminder' %}<input type="hidden" name="{{ tkey(ev, 'on') }}" value="1">{% endif %}
+      <label>標題<input name="{{ tkey(ev, 'title') }}" value="{{ c[tkey(ev, 'title')] }}"></label>
+      <label>內容（可用 **粗體**；空一行換段）<textarea name="{{ tkey(ev, 'text') }}" rows="3">{{ c[tkey(ev, 'text')] }}</textarea></label>
+    </fieldset>
+    {% endfor %}
+    <p class="hint">可代入：{% for k, label in fields.items() %}{{ '{' ~ k ~ '}' }} {{ label }}{{ '、' if not loop.last }}{% endfor %}。
+      訊息下方會附「開啟日報」按鈕。</p>
+    <div class="actions">
+      <select name="test_event" aria-label="測試的通知">
+        {% for ev, d in events.items() %}<option value="{{ ev }}">{{ d.label.split('：')[0] }}</option>{% endfor %}
+      </select>
+      <button type="submit" class="secondary" formaction="{{ url_for('settings.delivery_test_teams') }}">發 Teams 測試訊息</button>
+    </div>
+    {% if reminder %}<p class="hint">最近一次每日提醒：{{ reminder }}</p>{% endif %}
+    {% if teams_last %}<p class="hint">最近一次 Teams 通知：{{ teams_last }}</p>{% endif %}
   </section>
 
-  <div class="actions">
+  <div class="actions sticky-actions">
     <button type="submit">儲存</button>
+    <button type="submit" class="secondary" formaction="{{ url_for('settings.delivery_preview') }}">預覽模版</button>
     <button type="submit" class="secondary" formaction="{{ url_for('settings.delivery_test') }}">測試 SharePoint 連線</button>
-    <input name="test_to" placeholder="測試收件人（空白 = 寄給自己）" style="max-width:260px">
-    <select name="test_from" aria-label="測試信的寄件信箱">
-      <option value="customer">用客戶信件寄件信箱</option>
-      <option value="reminder">用內部提醒寄件信箱</option>
-    </select>
-    <button type="submit" class="secondary" formaction="{{ url_for('settings.delivery_test_mail') }}">寄測試信</button>
   </div>
 </form>
 {% endblock %}

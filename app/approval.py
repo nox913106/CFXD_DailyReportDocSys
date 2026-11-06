@@ -223,7 +223,7 @@ PERMISSION_MATRIX = (
     ("系統", (
         ("調整角色、指派系統管理員", "ynnnnn"),
         ("本機緊急帳號（新增、改密碼、停用）", "ynnnnn"),
-        ("系統設定（AD、備份還原、健康檢查、PDF 範本、HTTPS、發送與提醒、AI）", "ynnnnn"),
+        ("系統設定（AD、備份還原、健康檢查、PDF 範本、HTTPS、發送與通知、AI）", "ynnnnn"),
         ("稽核紀錄", "ynnnnn"),
     )),
 )

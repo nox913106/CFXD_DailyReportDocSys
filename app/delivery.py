@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from flask import current_app
 
 from . import db, sysconf
-from .models import DELIVERY_STEPS, Delivery, Report, ReviewLog, User
+from .models import DELIVERY_STEPS, Delivery, Report, ReviewLog
 
 log = logging.getLogger("dailyreport.delivery")
 LOCK_SECONDS = 60
@@ -100,7 +100,7 @@ def run(d):
         if d.step_map()[key]["status"] in ("done", "skipped"):
             continue
         if key != "pdf" and not enabled:
-            d.set_step(key, "skipped", "未啟用自動發送（系統設定 → 發送與提醒）")
+            d.set_step(key, "skipped", "未啟用自動發送（系統設定 → 發送與通知）")
             continue
         d.set_step(key, "running")
         db.session.commit()
@@ -113,12 +113,29 @@ def run(d):
             d.set_step(key, "error", str(e)[:1000])
             d.state = "error"
             db.session.commit()
+            _notify(d, "delivery_failed", step=label, error=str(e)[:500])
             return False
         d.set_step(key, "done", msg or "")
         db.session.commit()
     d.state, d.finished_at = "done", datetime.now()
     db.session.commit()
+    if enabled:
+        _notify(d, "delivery_done")
     return True
+
+
+def _notify(d, event, **extra):
+    """Teams 內部通知；失敗只記錄，不影響發送流程。"""
+    from . import teams
+
+    r = d.report
+    try:
+        teams.notify(event, {"date": r.report_date.isoformat(), "doc_no": r.doc_no, "filename": d.pdf_name or "",
+                             "md5": d.pdf_md5 or "", "share_link": d.share_url or "", "mail_to": d.mail_to or "",
+                             "closed_by": d.closed_by.name if d.closed_by else "", **extra}, report=r)
+    except Exception:
+        log.exception("Teams 通知失敗")
+        db.session.rollback()
 
 
 def _step_pdf(d):
@@ -157,7 +174,7 @@ def _config(mail=False, sharepoint=True):
     c = graph.config()
     miss = graph.missing(c, mail=mail, sharepoint=sharepoint)
     if miss:
-        raise StepError("發送設定不完整：" + "、".join(miss) + "（系統設定 → 發送與提醒）")
+        raise StepError("發送設定不完整：" + "、".join(miss) + "（系統設定 → 發送與通知）")
     return c
 
 
@@ -211,7 +228,7 @@ def _step_mail(d):
     c = _config(mail=True, sharepoint=False)
     to, cc = graph.addresses(c["mail_to"]), graph.addresses(c["mail_cc"])
     if not to:
-        raise StepError("沒有設定客戶收件人（系統設定 → 發送與提醒）")
+        raise StepError("沒有設定客戶收件人（系統設定 → 發送與通知）")
     subject, body = render_mail(d, c)
     graph.send_mail(c, to, subject, body, cc)
     d.mail_to = ", ".join(to + [f"cc {a}" for a in cc])
@@ -286,17 +303,6 @@ def _at(hhmm, now):
         return None
 
 
-def reminder_recipients():
-    from . import graph
-
-    users = [u.email for u in User.query.filter_by(role="second_line").order_by(User.username) if u.email]
-    out = []
-    for a in users + graph.addresses(sysconf.get("reminder_extra")):
-        if a.lower() not in {x.lower() for x in out}:
-            out.append(a)
-    return out
-
-
 def today_state(day):
     """今天的日報走到哪裡；已結案回傳 None（不需要提醒）。發送失敗另由首頁與健康檢查提示。"""
     r = Report.query.filter_by(report_date=day).first()
@@ -315,8 +321,8 @@ def reminder_due(now=None):
 
 
 def send_reminder(now=None):
-    """到了提醒時間今天的日報還沒結案，就用內部提醒寄件信箱寄給二線人員；一天一次。回傳結果文字（顯示在設定頁）。"""
-    from . import graph
+    """到了提醒時間今天的日報還沒結案，就在 Teams 頻道發內部提醒（@二線管理員）；一天一次。回傳結果文字。"""
+    from . import teams
 
     now = now or datetime.now()
     day = now.date()
@@ -325,28 +331,10 @@ def send_reminder(now=None):
     if state is None:
         result = f"{now:%Y-%m-%d %H:%M} 今日日報已結案，不需要提醒"
     else:
-        to = reminder_recipients()
-        deadline = sysconf.get("deadline_time") or "13:00"
-        try:
-            if not to:
-                raise StepError("沒有收件人（二線管理員帳號沒有 email，也沒有設定其他收件人）")
-            c = graph.config()
-            miss = graph.missing(c, mail=False, sharepoint=False, reminder=True)
-            if miss:
-                raise StepError("寄信設定不完整：" + "、".join(miss))
-            c = {**c, "mail_sender": c["reminder_sender"]}  # 內部提醒用自己的寄件信箱
-            link = ""
-            base = current_app.config.get("PUBLIC_URL") or ""
-            if r and base:
-                link = f'<br><a href="{html.escape(base.rstrip("/"))}/reports/{r.id}">開啟日報</a>'
-            body = (f"{day} 的日報目前狀態：<b>{html.escape(state)}</b>。<br>"
-                    f"請在 {html.escape(deadline)} 前完成審核與結案，系統會自動上傳 SharePoint 並寄給客戶。{link}"
-                    "<br><br>此信由 CFXD 日報系統自動發送。")
-            graph.send_mail(c, to, f"[提醒] {day} 日報尚未結案（期限 {deadline}）：{state}", body)
-            result = f"{now:%Y-%m-%d %H:%M} 已由 {c['mail_sender']} 提醒 {', '.join(to)}（{state}）"
-        except Exception as e:
-            log.exception("每日提醒失敗")
-            result = f"{now:%Y-%m-%d %H:%M} 提醒失敗：{e}"
+        ok, detail = teams.notify("reminder", {"date": day.isoformat(), "doc_no": r.doc_no if r else "", "status": state,
+                                       "deadline": sysconf.get("deadline_time") or "13:00"}, report=r, force=True)
+        result = (f"{now:%Y-%m-%d %H:%M} 已在 Teams 提醒（{state}）" if ok
+                  else f"{now:%Y-%m-%d %H:%M} 提醒失敗：{detail}")
     sysconf.put("reminder_result", result)
     db.session.commit()
     return result

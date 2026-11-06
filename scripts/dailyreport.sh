@@ -223,6 +223,7 @@ EOF
     info "已存在，只更新這次指定的項目"
   fi
   set_env BEHIND_PROXY 1
+  set_env PUBLIC_URL "$([[ "$TLS" == none ]] && echo http || echo https)://$HOST"
   set_env COOKIE_SECURE "$([[ "$TLS" == none ]] && echo 0 || echo 1)"
   chown root:"$APP_GROUP" "$ENV_FILE"
   chmod 640 "$ENV_FILE"
