@@ -1697,6 +1697,13 @@ def test_close_and_delivery(app, monkeypatch):
     assert "只有二線管理員以上可以重試" in alice.post(f"/reports/{rid}/delivery/retry")
     assert "已排入重試" in carol.post(f"/reports/{rid}/delivery/retry")
     with app.app_context():
+        from app.models import TeamsMessage
+
+        import json
+
+        last = TeamsMessage.query.filter_by(event="status_change").order_by(TeamsMessage.id.desc()).first()
+        v = json.loads(last.values)
+        assert (v["old_status"], v["status"], v["action"]) == ("已結案（發送中止）", "已結案（重新發送）", "重試發送")
         maint.tick()
         d = Delivery.query.one()
         assert d.state == "done" and calls == [False]  # 正式 PDF 沒有重新產生
@@ -2173,7 +2180,7 @@ def test_internal_teams_and_customer_mail_templates(app, monkeypatch):
 
 
 def test_status_change_and_health_push_to_teams(app, monkeypatch):
-    """當日案件每次狀態變更都排入 Teams（結案後停止）；排程推送健康檢查，不是正常的項目逐條列出；儲存空間分級。"""
+    """任何日報（不限日期）每次狀態變更都排入 Teams；排程推送健康檢查，不是正常的項目逐條列出；儲存空間分級。"""
     from collections import namedtuple
     from datetime import date, datetime, timedelta
 
@@ -2208,14 +2215,15 @@ def test_status_change_and_health_push_to_teams(app, monkeypatch):
     carol.post(f"/reports/{rid}/close")
     boss.post(f"/reports/{rid}/delete", {"confirm_doc_no": "x"}, status=403)  # 已結案不能刪
     with app.app_context():
-        assert TeamsMessage.query.filter(TeamsMessage.sent_at.is_(None)).count() == 6  # 舊日期的日報不通知
-        assert teams.flush() == 6 and teams.flush() == 0
+        assert TeamsMessage.query.filter(TeamsMessage.sent_at.is_(None)).count() == 7  # 舊日期的日報也通知
+        assert teams.flush() == 7 and teams.flush() == 0
     titles = [p["body"][0]["text"] for p in posted]
-    assert titles == [f"【{today} 日報】（新建） → 草稿", f"【{today} 日報】草稿 → 待審核",
+    past = (date.today() - timedelta(days=3)).isoformat()
+    assert titles == [f"【{today} 日報】（新建） → 草稿", f"【{past} 日報】（新建） → 草稿", f"【{today} 日報】草稿 → 待審核",
                       f"【{today} 日報】待審核 → 退回", f"【{today} 日報】退回 → 待審核",
                       f"【{today} 日報】待審核 → 已核准（待結案）", f"【{today} 日報】已核准（待結案） → 已結案"]
-    assert "意見：截圖不對" in posted[2]["body"][1]["text"] and "boss" in posted[2]["body"][1]["text"]
-    assert old  # 舊日期日報沒有通知
+    assert "意見：截圖不對" in posted[3]["body"][1]["text"] and "boss" in posted[3]["body"][1]["text"]
+    assert old
 
     # 儲存空間：80% 事件、85% 注意、90% 告警、95% 危險（與 df 的 Use% 相同算法）
     DU = namedtuple("DU", "total used free")

@@ -163,7 +163,7 @@ def tick(now=None):
             did = True
         from . import teams
 
-        did = bool(teams.flush()) or did  # 網頁動作排入的 Teams 通知（當日案件狀態變更）
+        did = bool(teams.flush()) or did  # 網頁動作排入的 Teams 通知（日報狀態變更）
         if teams.health_due(now):
             teams.push_health(now)  # 排程推送健康檢查
             did = True

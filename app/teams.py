@@ -32,7 +32,7 @@ EVENTS = {
         "default_on": True,
     },
     "status_change": {
-        "label": "當日案件狀態變更：今天的日報每次狀態改變都通知，直到結案",
+        "label": "日報狀態變更：任何日報（不限日期）每次狀態改變都通知",
         "title": "【{date} 日報】{old_status} → {status}",
         "text": "{actor} {action}。{comment}",
         "default_on": True,
@@ -235,23 +235,21 @@ def flush(limit=20):
     return n
 
 
-# ---------------------------------------------------------------- 當日案件狀態變更
+# ---------------------------------------------------------------- 日報狀態變更
 
 
 ACTIONS = {"create": "建立", "submit": "送審", "approve": "核准", "reject": "退回", "return": "退回修正",
-           "close": "結案（1 分鐘後寄出日報 Mail）", "close_cancel": "取消結案", "delete": "刪除"}
+           "close": "結案（1 分鐘後寄出日報 Mail）", "close_cancel": "取消結案", "delete": "刪除",
+           "retry": "重試發送"}
 
 
-def status_changed(report, old_status, action, actor, comment=""):
-    """今天的日報狀態改變時排入 Teams 通知；結案後就不再通知（發送結果另有通知）。"""
-    from datetime import date
-
+def status_changed(report, old_status, action, actor, comment="", new_status=None):
+    """任何日報（不限日期）狀態改變時排入 Teams 通知。發送完成／中止另有通知事件。"""
     from .models import STATUS_LABELS
 
-    if report.report_date != date.today() or old_status == "closed" and action != "close_cancel":
-        return None
-    new = "deleted" if action == "delete" else report.status
-    labels = {**STATUS_LABELS, "new": "（新建）", "deleted": "已刪除"}
+    new = new_status or ("deleted" if action == "delete" else report.status)
+    labels = {**STATUS_LABELS, "new": "（新建）", "deleted": "已刪除",
+              "delivery_error": "已結案（發送中止）", "delivery_retry": "已結案（重新發送）"}
     return enqueue("status_change", {
         "date": report.report_date.isoformat(), "doc_no": report.doc_no, "old_status": labels.get(old_status, old_status),
         "status": labels.get(new, new), "action": ACTIONS.get(action, action),

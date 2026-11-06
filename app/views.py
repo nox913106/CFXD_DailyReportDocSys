@@ -635,6 +635,7 @@ def retry_delivery(report_id):
         flash(d.reason, "error")
         return redirect(url_for("views.detail", report_id=report.id))
     delivery.retry(report, current_user)
+    teams.status_changed(report, "delivery_error", "retry", current_user, new_status="delivery_retry")
     db.session.commit()
     flash("已排入重試，維護服務會在幾秒內從失敗的步驟繼續。", "success")
     return redirect(url_for("views.detail", report_id=report.id))
