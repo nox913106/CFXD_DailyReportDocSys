@@ -374,10 +374,18 @@ def checks_md(report_id):
 @bp.route("/delegations", methods=["GET", "POST"])
 def delegations():
     """核准人設定代簽人；代簽人可看到自己被授權代誰簽核。"""
-    if current_user.role == "first_line":
+    if not (current_user.is_admin or current_user.role in ("file_manager", "second_line")):
         abort(403)
     if request.method == "POST":
-        if current_user.role != "file_manager":
+        # 檔案管理員授權自己的代理人；系統管理員可替任何檔案管理員設定
+        if current_user.is_admin:
+            principal = db.session.get(User, request.form.get("principal_id", type=int) or 0)
+            if not principal or principal.role != "file_manager":
+                flash("請選擇要被代理的檔案管理員。", "error")
+                return redirect(url_for("views.delegations"))
+        elif current_user.role == "file_manager":
+            principal = current_user
+        else:
             abort(403)
         delegate = db.session.get(User, request.form.get("delegate_id", type=int) or 0)
         try:
@@ -387,17 +395,19 @@ def delegations():
         except ValueError:
             flash("日期格式錯誤。", "error")
             return redirect(url_for("views.delegations"))
-        if not delegate or delegate.id == current_user.id or delegate.role != "second_line":
+        if not delegate or delegate.id == principal.id or delegate.role != "second_line":
             flash("請選擇一位二線管理員作為代理人。", "error")
         elif end and end < start:
             flash("結束日期不能早於開始日期。", "error")
         else:
             db.session.add(ApprovalDelegation(
-                principal_id=current_user.id, delegate_id=delegate.id, start_date=start, end_date=end,
+                principal_id=principal.id, delegate_id=delegate.id, start_date=start, end_date=end,
                 note=request.form.get("note", "").strip()[:256], created_by_id=current_user.id,
             ))
+            db.session.add(AuditLog(action="delegation", actor_id=current_user.id, target=delegate.username,
+                                    detail=f"代理 {principal.name}（{start}～{end or '撤銷為止'}）"))
             db.session.commit()
-            flash(f"已授權 {delegate.name} 代簽（{start}～{end or '撤銷為止'}）。文件上仍顯示 {current_user.name}。",
+            flash(f"已授權 {delegate.name} 代理 {principal.name}（{start}～{end or '撤銷為止'}）。文件上仍顯示 {principal.name}。",
                   "success")
         return redirect(url_for("views.delegations"))
 
@@ -406,8 +416,9 @@ def delegations():
     granted = (ApprovalDelegation.query.filter_by(delegate_id=current_user.id)
                .order_by(ApprovalDelegation.id.desc()).all())
     users = User.query.filter_by(role="second_line").order_by(User.display_name, User.username).all()
-    return render_template("delegations.html", mine=mine, granted=granted, users=users,
-                           today=date.today().isoformat())
+    managers = User.query.filter_by(role="file_manager").order_by(User.display_name, User.username).all()
+    return render_template("delegations.html", mine=mine, granted=granted, users=users, managers=managers,
+                           today=date.today().isoformat(), tab="delegations")
 
 
 @bp.route("/delegations/<int:delegation_id>/revoke", methods=["POST"])
@@ -417,6 +428,8 @@ def revoke_delegation(delegation_id):
         abort(403)
     if d.revoked_at is None:
         d.revoked_at = datetime.now()
+        db.session.add(AuditLog(action="delegation", actor_id=current_user.id, target=d.delegate.username,
+                                detail=f"撤銷代理 {d.principal.name}"))
         db.session.commit()
         flash(f"已撤銷 {d.delegate.name} 的代簽權限。", "success")
     return redirect(url_for("views.delegations"))

@@ -2056,3 +2056,41 @@ def test_ad_first_login_is_guest(app, monkeypatch):
     adm.post("/admin/users", {"user_id": str(gid), "role": "first_line"})
     assert "日報清單" in g.get("/") and g.c.get("/welcome").status_code == 302
 
+
+
+def test_admin_manages_delegations(app):
+    """系統管理員在「系統設定 → 代理權限」替檔案管理員設定 / 撤銷代理；二線不能設定；都寫入稽核紀錄。"""
+    from app import db
+    from app.models import ApprovalDelegation, AuditLog, User
+
+    runner = app.test_cli_runner()
+    runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "a-very-long-pass"])
+    root, boss, sl = Browser(app), Browser(app), Browser(app)
+    root.get("/login")
+    root.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
+    boss.login("boss")
+    sl.login("sam")
+    boss_id = set_role(app, "boss", "file_manager")
+    sam_id = set_role(app, "sam", "second_line")
+
+    html = root.get("/admin/settings/")
+    assert "代理權限" in html
+    html = root.get("/delegations")
+    assert 'name="principal_id"' in html and "系統管理員可以替任何檔案管理員設定" in html and "admin-tabs" in html
+    assert "請選擇要被代理的檔案管理員" in root.post("/delegations", {"delegate_id": str(sam_id), "start_date": "2026-11-01"})
+    html = root.post("/delegations", {"principal_id": str(boss_id), "delegate_id": str(sam_id),
+                                      "start_date": "2026-11-01", "note": "出差"})
+    assert "已授權" in html and "代理" in html
+    with app.app_context():
+        d = ApprovalDelegation.query.one()
+        assert (d.principal_id, d.delegate_id) == (boss_id, sam_id)
+        did = d.id
+    assert "我可代理的檔案管理員" in sl.get("/delegations")
+    sl.post("/delegations", {"principal_id": str(boss_id), "delegate_id": str(sam_id), "start_date": "2026-11-01"},
+            status=403)
+    # 檔案管理員仍可自行授權（代理人只能是二線）
+    assert 'name="principal_id"' not in boss.get("/delegations")
+    root.post(f"/delegations/{did}/revoke")
+    with app.app_context():
+        assert ApprovalDelegation.query.one().revoked_at
+        assert AuditLog.query.filter_by(action="delegation").count() == 2
