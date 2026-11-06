@@ -124,7 +124,10 @@ def run(system=False):
     _item(out, g, "發送流程", "fail" if errs else "ok", f"{errs} 份日報發送中止" if errs else "沒有中止的發送",
           "開啟日報頁最下方的流程，修正原因後按「重試」" if errs else "")
     rem = sysconf.get("reminder_result") or ""
-    if sysconf.get("reminder_enabled") and "失敗" in rem:
+    if sysconf.get("reminder_enabled") and not (sysconf.get("reminder_sender") or "").strip():
+        _item(out, g, "每日提醒", "warn", "尚未設定內部提醒的寄件信箱，12:30 未結案時無法寄出提醒",
+              "系統設定 → 發送與提醒 → 每日提醒的寄件信箱")
+    elif sysconf.get("reminder_enabled") and "失敗" in rem:
         _item(out, g, "每日提醒", "warn", rem, "系統設定 → 發送與提醒：確認寄信設定與二線管理員的 email")
 
     # ---------------------------------------------------------------- 背景工作

@@ -298,14 +298,12 @@ def reminder_recipients():
 
 
 def today_state(day):
-    """今天的日報走到哪裡；完成發送（或未啟用發送時已產生正式 PDF）回傳 None。"""
+    """今天的日報走到哪裡；已結案回傳 None（不需要提醒）。發送失敗另由首頁與健康檢查提示。"""
     r = Report.query.filter_by(report_date=day).first()
     if not r:
         return None, "尚未建立"
-    if r.status == "closed" and r.delivery and r.delivery.state == "done":
+    if r.status == "closed":
         return r, None
-    if r.status == "closed" and r.delivery:
-        return r, f"已結案，發送{r.delivery.state_label}"
     return r, r.status_label
 
 
@@ -317,7 +315,7 @@ def reminder_due(now=None):
 
 
 def send_reminder(now=None):
-    """期限前還沒完成發送就寄信給二線人員；一天一次。回傳結果文字（顯示在設定頁）。"""
+    """到了提醒時間今天的日報還沒結案，就用內部提醒寄件信箱寄給二線人員；一天一次。回傳結果文字（顯示在設定頁）。"""
     from . import graph
 
     now = now or datetime.now()
@@ -325,7 +323,7 @@ def send_reminder(now=None):
     sysconf.put("reminder_last", day.isoformat())
     r, state = today_state(day)
     if state is None:
-        result = f"{now:%Y-%m-%d %H:%M} 今日日報已完成，不需要提醒"
+        result = f"{now:%Y-%m-%d %H:%M} 今日日報已結案，不需要提醒"
     else:
         to = reminder_recipients()
         deadline = sysconf.get("deadline_time") or "13:00"
@@ -333,9 +331,10 @@ def send_reminder(now=None):
             if not to:
                 raise StepError("沒有收件人（二線管理員帳號沒有 email，也沒有設定其他收件人）")
             c = graph.config()
-            miss = graph.missing(c, sharepoint=False)
+            miss = graph.missing(c, mail=False, sharepoint=False, reminder=True)
             if miss:
                 raise StepError("寄信設定不完整：" + "、".join(miss))
+            c = {**c, "mail_sender": c["reminder_sender"]}  # 內部提醒用自己的寄件信箱
             link = ""
             base = current_app.config.get("PUBLIC_URL") or ""
             if r and base:
@@ -343,8 +342,8 @@ def send_reminder(now=None):
             body = (f"{day} 的日報目前狀態：<b>{html.escape(state)}</b>。<br>"
                     f"請在 {html.escape(deadline)} 前完成審核與結案，系統會自動上傳 SharePoint 並寄給客戶。{link}"
                     "<br><br>此信由 CFXD 日報系統自動發送。")
-            graph.send_mail(c, to, f"[提醒] {day} 日報尚未完成（期限 {deadline}）：{state}", body)
-            result = f"{now:%Y-%m-%d %H:%M} 已提醒 {', '.join(to)}（{state}）"
+            graph.send_mail(c, to, f"[提醒] {day} 日報尚未結案（期限 {deadline}）：{state}", body)
+            result = f"{now:%Y-%m-%d %H:%M} 已由 {c['mail_sender']} 提醒 {', '.join(to)}（{state}）"
         except Exception as e:
             log.exception("每日提醒失敗")
             result = f"{now:%Y-%m-%d %H:%M} 提醒失敗：{e}"

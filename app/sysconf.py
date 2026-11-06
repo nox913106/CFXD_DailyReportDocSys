@@ -58,6 +58,7 @@ DEFAULTS = {
     "reminder_time": "12:30",
     "deadline_time": "13:00",
     "reminder_extra": "",
+    "reminder_sender": "",  # 內部提醒的寄件信箱（與寄給客戶的 mail_sender 不同，同一個 M365 網域）
     # 內部狀態（不在表單上）
     "reminder_last": "",
     "reminder_result": "",

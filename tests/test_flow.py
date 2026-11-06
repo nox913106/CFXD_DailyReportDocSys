@@ -1751,7 +1751,7 @@ def test_preview_watermark_and_reminder(app, monkeypatch):
         assert pages == ([wm, wm] if wm else [])
 
     sent = []
-    monkeypatch.setattr("app.graph.send_mail", lambda c, to, subject, html, cc=(): sent.append((to, subject)))
+    monkeypatch.setattr("app.graph.send_mail", lambda c, to, subject, html, cc=(): sent.append((to, subject, c["mail_sender"])))
     carol = Browser(app)
     carol.login("carol")
     set_role(app, "carol", "second_line")
@@ -1763,12 +1763,19 @@ def test_preview_watermark_and_reminder(app, monkeypatch):
         from app import graph
 
         graph.set_secret("s")
+        # 沒有設定內部提醒寄件信箱：不會改用客戶信件的寄件信箱
+        assert "內部提醒寄件信箱" in delivery.send_reminder(datetime(2026, 11, 6, 12, 30)) and not sent
+        for k, v in {"reminder_sender": "notice@contoso.com"}.items():
+            sysconf.put(k, v)
+        from app import graph
+
+        graph.set_secret("s")
         db.session.commit()
         assert not delivery.reminder_due(datetime(2026, 11, 7, 12, 29))
         assert delivery.reminder_due(datetime(2026, 11, 7, 12, 30))  # 週六也提醒
         res = delivery.send_reminder(datetime(2026, 11, 7, 12, 30))
-        assert "已提醒 carol@contoso.com, duty@contoso.com（尚未建立）" in res
-        assert sent and "期限 13:00" in sent[0][1]
+        assert "已由 notice@contoso.com 提醒 carol@contoso.com, duty@contoso.com（尚未建立）" in res
+        assert sent and "尚未結案（期限 13:00）" in sent[0][1] and sent[0][2] == "notice@contoso.com"
         assert not delivery.reminder_due(datetime(2026, 11, 7, 12, 45))  # 一天一次
 
 
@@ -2096,3 +2103,48 @@ def test_admin_manages_delegations(app):
     with app.app_context():
         assert ApprovalDelegation.query.one().revoked_at
         assert AuditLog.query.filter_by(action="delegation").count() == 2
+
+
+def test_reminder_only_when_not_closed_and_sender_settings(app, monkeypatch):
+    """提醒只看「今天的日報是否已結案」；客戶信件與內部提醒用不同寄件信箱，必須同一個網域。"""
+    from datetime import date, datetime
+
+    from app import db, delivery, graph, sysconf
+    from app.models import Report, User
+
+    sent = []
+    monkeypatch.setattr("app.graph.send_mail", lambda c, to, subject, html, cc=(): sent.append((c["mail_sender"], to, subject)))
+    with app.app_context():
+        u = User(username="sl1", display_name="SL", email="sl1@contoso.com")
+        u.set_role("second_line")
+        db.session.add(u)
+        for k, v in {"graph_tenant_id": "t", "graph_client_id": "c", "mail_sender": "dr@contoso.com",
+                     "reminder_sender": "notice@contoso.com"}.items():
+            sysconf.put(k, v)
+        graph.set_secret("s")
+        r = Report(report_date=date(2026, 11, 9), doc_no="X1", contractor_doc_no="Y1", author_id=u.id, status="approved")
+        db.session.add(r)
+        db.session.commit()
+        assert "（已核准（待結案））" in delivery.send_reminder(datetime(2026, 11, 9, 12, 30))  # 核准但未結案仍提醒
+        r.status = "closed"
+        sysconf.put("reminder_last", "")
+        db.session.commit()
+        assert "已結案，不需要提醒" in delivery.send_reminder(datetime(2026, 11, 9, 12, 31))
+        assert len(sent) == 1 and sent[0][0] == "notice@contoso.com"
+
+    runner = app.test_cli_runner()
+    runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "a-very-long-pass"])
+    root = Browser(app)
+    root.get("/login")
+    root.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
+    html = root.get("/admin/settings/delivery")
+    assert 'name="reminder_sender"' in html and 'name="test_from"' in html
+    form = {"sp_link_scope": "organization", "reminder_time": "12:30", "deadline_time": "13:00",
+            "mail_sender": "dr@contoso.com", "reminder_sender": "notice@other.com", "sp_folder": "x",
+            "graph_tenant_id": "t", "graph_client_id": "c"}
+    assert "同一個 M365 網域" in root.post("/admin/settings/delivery", form, status=400)
+    assert "已儲存" in root.post("/admin/settings/delivery", {**form, "reminder_sender": "notice@contoso.com"})
+    html = root.post("/admin/settings/delivery/test-mail", {**form, "reminder_sender": "notice@contoso.com",
+                                                           "test_from": "reminder", "test_to": "me@contoso.com"})
+    assert "已由 notice@contoso.com（內部提醒寄件信箱）寄給 me@contoso.com" in html
+    assert sent[-1][0] == "notice@contoso.com"

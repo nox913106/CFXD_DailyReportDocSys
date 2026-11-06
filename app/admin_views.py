@@ -528,7 +528,7 @@ def recent_audit(limit=50):
 
 DELIVERY_FORM = ("graph_tenant_id", "graph_client_id", "sp_site_url", "sp_library", "sp_folder", "sp_link_scope",
                  "mail_sender", "mail_to", "mail_cc", "mail_subject", "mail_body", "reminder_time", "deadline_time",
-                 "reminder_extra")
+                 "reminder_extra", "reminder_sender")
 LINK_SCOPES = {"organization": "公司內部（需登入公司帳號）", "anonymous": "任何有連結的人",
                "none": "不建立分享連結（沿用文件庫權限，只給檔案網址）"}
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -555,11 +555,17 @@ def _check_delivery(c):
             return f"{label}格式應為 HH:MM（24 小時制）"
     if c["reminder_time"] >= c["deadline_time"]:
         return "提醒時間必須早於期限"
-    for k, label in (("mail_sender", "寄件信箱"), ("mail_to", "客戶收件人"), ("mail_cc", "副本"),
-                     ("reminder_extra", "其他提醒收件人")):
+    for k, label in (("mail_sender", "客戶信件寄件信箱"), ("mail_to", "客戶收件人"), ("mail_cc", "副本"),
+                     ("reminder_extra", "其他提醒收件人"), ("reminder_sender", "內部提醒寄件信箱")):
         bad = [a for a in graph.addresses(c[k]) if not MAIL_RE.match(a)]
         if bad:
             return f"{label}：「{bad[0]}」不是 email 地址"
+    for k, label in (("mail_sender", "客戶信件寄件信箱"), ("reminder_sender", "內部提醒寄件信箱")):
+        if len(graph.addresses(c[k])) > 1:
+            return f"{label}只能填一個信箱"
+    doms = {a.split("@")[1].lower() for a in (c["mail_sender"], c["reminder_sender"]) if "@" in a}
+    if len(doms) > 1:
+        return "客戶信件與內部提醒的寄件信箱應在同一個 M365 網域（同一個應用程式寄信）"
     if c["sp_site_url"] and not re.match(r"^https://[^/\s]+(/\S*)?$", c["sp_site_url"]):
         return "SharePoint 網站網址格式應為 https://公司.sharepoint.com/sites/網站名稱"
     return None
@@ -640,13 +646,16 @@ def delivery_test_mail():
     c = _delivery_from_form()
     gc = _graph_config(c)
     to = graph.addresses(request.form.get("test_to", "")) or ([current_user.email] if current_user.email else [])
-    miss = graph.missing(gc, sharepoint=False)
+    internal = request.form.get("test_from") == "reminder"
+    miss = graph.missing(gc, sharepoint=False, mail=not internal, reminder=internal)
+    if internal:
+        gc = {**gc, "mail_sender": gc["reminder_sender"]}
     if miss or not to:
         steps = [(False, "設定", "還沒填：" + "、".join(miss) if miss else "請填寫測試收件人")]
         return _delivery_page(c, steps)
     try:
         graph.send_mail(gc, to, "CFXD 日報系統測試信", "這是「系統設定 → 發送與提醒」寄出的測試信。")
-        steps = [(True, "寄測試信", f"已由 {gc['mail_sender']} 寄給 {', '.join(to)}")]
+        steps = [(True, "寄測試信", f"已由 {gc['mail_sender']}（{'內部提醒' if internal else '客戶信件'}寄件信箱）寄給 {', '.join(to)}")]
     except graph.GraphError as e:
         steps = [(False, "寄測試信", str(e))]
     return _delivery_page(c, steps)
