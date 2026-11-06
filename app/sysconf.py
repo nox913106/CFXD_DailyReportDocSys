@@ -49,10 +49,9 @@ DEFAULTS = {
     "mail_sender": "",
     "mail_to": "",
     "mail_cc": "",
-    "mail_subject": "{doc_no} CFXD SLA Daily Work Report {date}",
-    "mail_body": ("Dear all,<br><br>Please find the CFXD SLA Daily Work Report for {date} "
-                  "({doc_no}, Rev. {revision}) at the link below:<br><a href=\"{link}\">{filename}</a><br><br>"
-                  "MD5: {md5}<br><br>This message was sent automatically."),
+    "mail_subject": "CFXD SLA Project - Daily Report_{date}",
+    "mail_body": ("今日報告檔案：<a href=\"{link}\">{filename}</a><br><br>"
+                  "MD5：{md5}<br><br>Best regards,<br>"),
     # 每日提醒：期限前還沒完成發送，寄信給二線人員
     "reminder_enabled": True,
     "reminder_time": "12:30",

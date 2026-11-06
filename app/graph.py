@@ -64,13 +64,13 @@ def set_secret(plain, user=None):
 
 
 def missing(c=None, mail=True, sharepoint=True):
-    """尚未填寫的必要設定（顯示名稱）。mail = 寄給客戶的寄件信箱。"""
+    """尚未填寫的必要設定（顯示名稱）。mail = 日報 Mail 的寄件信箱。"""
     c = c or config()
     need = [("graph_tenant_id", "租用戶 ID"), ("graph_client_id", "應用程式 ID")]
     if sharepoint:
         need += [("sp_site_url", "SharePoint 網站網址")]
     if mail:
-        need += [("mail_sender", "客戶信件寄件信箱")]
+        need += [("mail_sender", "日報 Mail 寄件信箱")]
     out = [label for k, label in need if not (c.get(k) or "").strip()]
     if not c.get("client_secret"):
         out.append("用戶端密碼" + ("（無法解密，請重新輸入）" if c.get("client_secret") is None else ""))

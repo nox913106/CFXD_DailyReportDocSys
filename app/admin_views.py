@@ -538,7 +538,7 @@ LINK_SCOPES = {"organization": "公司內部（需登入公司帳號）", "anony
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 MAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MAIL_SAMPLE = {"doc_no": "CFXD-SCA-RLY-DPR-000903", "contractor_doc_no": "RT230018-CFXD SLA-RP-000803",
-               "date": "2026-11-10", "revision": 0, "filename": "CFXD-SCA-RLY-DPR-000903_0_IFI_2026-11-10.pdf",
+               "date": "2026-11-10", "yyyymmdd": "20261110", "month_range": "20261101-1130", "revision": 0, "filename": "CFXD-SCA-RLY-DPR-000903_0_IFI_2026-11-10.pdf",
                "md5": "0123456789abcdef0123456789abcdef", "sha256": "…",
                "link": "https://contoso.sharepoint.com/:b:/s/CFXD/xyz", "approver": "Alan Lin"}
 
@@ -582,7 +582,7 @@ def _check_delivery(c):
     bad = [t for t in c["teams_health_times"].split(",") if t and not TIME_RE.match(t)]
     if bad:
         return f"健康檢查推送時間「{bad[0]}」格式應為 HH:MM，多個用逗號分隔（例如 08:30,17:30）"
-    for k, label in (("mail_sender", "寄件信箱"), ("mail_to", "客戶收件人"), ("mail_cc", "副本")):
+    for k, label in (("mail_sender", "寄件信箱"), ("mail_to", "收件人"), ("mail_cc", "副本")):
         bad = [a for a in graph.addresses(c[k]) if not MAIL_RE.match(a)]
         if bad:
             return f"{label}：「{bad[0]}」不是 email 地址"
@@ -677,7 +677,7 @@ def delivery_test():
     return _delivery_page(c, steps)
 
 
-def _render_customer_mail(c):
+def _render_report_mail(c):
     from .delivery import _Fmt
 
     import html as _html
@@ -689,7 +689,7 @@ def _render_customer_mail(c):
 
 @bp.route("/delivery/test-mail", methods=["POST"])
 def delivery_test_mail():
-    """用表單上的客戶信件模版（範例資料）寄一封測試信；主旨前加 [測試]。"""
+    """用表單上的日報 Mail 模版（範例資料）寄一封測試信；主旨前加 [測試]。"""
     from . import graph
 
     c = _delivery_from_form()
@@ -699,10 +699,10 @@ def delivery_test_mail():
     if miss or not to:
         steps = [(False, "設定", "還沒填：" + "、".join(miss) if miss else "請填寫測試收件人")]
         return _delivery_page(c, steps)
-    subject, body = _render_customer_mail(c)
+    subject, body = _render_report_mail(c)
     try:
         graph.send_mail(gc, to, "[測試] " + subject, body)
-        steps = [(True, "寄測試信", f"已由 {gc['mail_sender']} 用客戶信件模版（範例資料）寄給 {', '.join(to)}")]
+        steps = [(True, "寄測試信", f"已由 {gc['mail_sender']} 用日報 Mail 模版（範例資料）寄給 {', '.join(to)}")]
     except graph.GraphError as e:
         steps = [(False, "寄測試信", str(e))]
     return _delivery_page(c, steps)
@@ -732,11 +732,11 @@ def delivery_test_teams():
 
 @bp.route("/delivery/preview", methods=["POST"])
 def delivery_preview():
-    """用表單上的模版與範例資料預覽客戶信件與 Teams 訊息（不寄出）。"""
+    """用表單上的模版與範例資料預覽日報 Mail與 Teams 訊息（不寄出）。"""
     from . import teams
 
     c = _delivery_from_form()
-    subject, body = _render_customer_mail(c)
+    subject, body = _render_report_mail(c)
     from markupsafe import Markup, escape
 
     def md(text):  # 預覽時照 Teams 的樣子顯示 **粗體**

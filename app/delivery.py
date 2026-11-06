@@ -4,7 +4,7 @@
   1. 產生正式 PDF（只產生一次，存檔並計算 MD5 / SHA-256，之後下載、上傳都用這個檔案）
   2. 上傳 SharePoint 指定資料夾
   3. 取得檔案連結
-  4. 寄信給客戶（含連結與 MD5）
+  4. 寄出日報 Mail（含連結與 MD5）
 任何一步失敗立即中止，畫面顯示原因，二線以上按「重試」從失敗的那一步繼續；已完成的步驟不會重做。
 """
 
@@ -210,7 +210,11 @@ class _Fmt(string.Formatter):
 
 def mail_values(d, escape=False):
     r = d.report
+    d0 = r.report_date
+    nxt = d0.replace(day=28) + timedelta(days=4)
+    month_end = nxt - timedelta(days=nxt.day)  # 當月最後一天
     v = {"doc_no": r.doc_no, "contractor_doc_no": r.contractor_doc_no, "date": r.report_date.isoformat(),
+         "yyyymmdd": f"{d0:%Y%m%d}", "month_range": f"{d0:%Y%m}01-{month_end:%m%d}",
          "revision": r.revision, "filename": d.pdf_name or "", "md5": d.pdf_md5 or "", "sha256": d.pdf_sha256 or "",
          "link": d.share_url or "", "approver": r.approver_name or ""}
     return {k: html.escape(str(x), quote=True) for k, x in v.items()} if escape else v
@@ -228,7 +232,7 @@ def _step_mail(d):
     c = _config(mail=True, sharepoint=False)
     to, cc = graph.addresses(c["mail_to"]), graph.addresses(c["mail_cc"])
     if not to:
-        raise StepError("沒有設定客戶收件人（系統設定 → 發送與通知）")
+        raise StepError("沒有設定收件人（系統設定 → 發送與通知）")
     subject, body = render_mail(d, c)
     graph.send_mail(c, to, subject, body, cc)
     d.mail_to = ", ".join(to + [f"cc {a}" for a in cc])

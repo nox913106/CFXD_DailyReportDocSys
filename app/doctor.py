@@ -192,7 +192,7 @@ def run(system=False):
         else:
             _item(out, g, "自動發送設定", "ok", f"{sysconf.get('sp_site_url')} → {sysconf.get('mail_to')}")
     else:
-        _item(out, g, "自動發送設定", "warn", "未啟用：結案只產生正式 PDF，不會上傳 SharePoint 與寄給客戶",
+        _item(out, g, "自動發送設定", "warn", "未啟用：結案只產生正式 PDF，不會上傳 SharePoint 與寄出日報 Mail",
               "系統設定 → 發送與通知 → 啟用")
     errs = Delivery.query.filter_by(state="error").count()
     _item(out, g, "發送流程", "fail" if errs else "ok", f"{errs} 份日報發送中止" if errs else "沒有中止的發送",

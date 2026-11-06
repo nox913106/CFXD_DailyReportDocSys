@@ -10,7 +10,7 @@
       {% if month %}<a href="{{ url_for('views.archive') }}">全部</a>{% endif %}
     </form>
   </div>
-  <p class="hint">每份 PDF 在結案時產生一次後就不再變動，與上傳 SharePoint、寄給客戶的是同一份檔案。
+  <p class="hint">每份 PDF 在結案時產生一次後就不再變動，與上傳 SharePoint、寄出的日報 Mail 附的是同一份檔案。
     下載後可用 MD5 核對檔案是否完整（Windows：<code>certutil -hashfile 檔名.pdf MD5</code>；Linux / macOS：<code>md5sum 檔名.pdf</code>）。</p>
   <div class="tablewrap">
   <table class="list">

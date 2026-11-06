@@ -583,7 +583,7 @@ def close(report_id):
     delivery.close(report, current_user)
     teams.status_changed(report, "approved", "close", current_user)
     db.session.commit()
-    flash(f"已結案並鎖檔。{delivery.LOCK_SECONDS} 秒後產生正式 PDF、上傳 SharePoint 並寄給客戶；進度顯示在下方流程。",
+    flash(f"已結案並鎖檔。{delivery.LOCK_SECONDS} 秒後產生正式 PDF、上傳 SharePoint 並寄出日報 Mail；進度顯示在下方流程。",
           "success")
     return redirect(url_for("views.detail", report_id=report.id))
 
@@ -642,7 +642,7 @@ def retry_delivery(report_id):
 
 @bp.route("/reports/<int:report_id>/final.pdf")
 def final_pdf(report_id):
-    """結案後產生的正式 PDF（凍結的檔案，與上傳 SharePoint、寄給客戶的是同一份）。"""
+    """結案後產生的正式 PDF（凍結的檔案，與上傳 SharePoint、寄出的日報 Mail 附的是同一份）。"""
     from flask import send_file
 
     from .delivery import final_path

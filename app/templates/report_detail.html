@@ -95,11 +95,11 @@
 <div class="card no-print">
   <h3>結案</h3>
   <p>已核准。請在下方預覽確認內容與排版沒有異常，再按「結案」。結案後立即鎖檔，
-    1 分鐘後產生正式 PDF（只產生這一次）、上傳 SharePoint 並寄給客戶；之後只有檔案管理員能在發送開始前取消。</p>
+    1 分鐘後產生正式 PDF（只產生這一次）、上傳 SharePoint 並寄出日報 Mail；之後只有檔案管理員能在發送開始前取消。</p>
   <div class="actions">
     {% if can.close %}
     <form method="post" action="{{ url_for('views.close', report_id=report.id) }}" class="inline"
-          onsubmit="return confirm('確定結案？結案後鎖檔，1 分鐘後自動產生正式 PDF 並寄給客戶。')">
+          onsubmit="return confirm('確定結案？結案後鎖檔，1 分鐘後自動產生正式 PDF 並寄出日報 Mail。')">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit">結案</button>
     </form>
@@ -159,7 +159,7 @@
 {% endif %}
 
 {% if fin %}
-<p class="hint no-print">以下為正式 PDF（結案後產生，與上傳 SharePoint、寄給客戶的是同一份檔案）。</p>
+<p class="hint no-print">以下為正式 PDF（結案後產生，與上傳 SharePoint、寄出的日報 Mail 附的是同一份檔案）。</p>
 <iframe class="pdf-view" src="{{ url_for('views.final_pdf', report_id=report.id) }}" title="{{ report.doc_no }} PDF"></iframe>
 {% elif report.status != 'closed' %}
 <p class="hint no-print">以下為預覽（每頁有 PREVIEW 浮水印，內容即時產生，首次約需 20 秒）。正式 PDF 只在結案後產生。</p>

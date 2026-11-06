@@ -1705,7 +1705,8 @@ def test_close_and_delivery(app, monkeypatch):
         msg = mail["message"]
         assert path.endswith("/users/dr%40contoso.com/sendMail")
         assert [r["emailAddress"]["address"] for r in msg["toRecipients"]] == ["customer@client.com", "pm@client.com"]
-        assert msg["subject"] == "CFXD-SCA-RLY-DPR-000897 CFXD SLA Daily Work Report 2026-11-04"
+        assert msg["subject"] == "CFXD SLA Project - Daily Report_2026-11-04"
+        assert "今日報告檔案：" in msg["body"]["content"]
         assert "share123" in msg["body"]["content"] and d.pdf_md5 in msg["body"]["content"]
 
     html = carol.get(f"/reports/{rid}")
@@ -2104,7 +2105,7 @@ def test_admin_manages_delegations(app):
 
 
 def test_internal_teams_and_customer_mail_templates(app, monkeypatch):
-    """內部狀態走 Teams（只有未結案才提醒、發送中止立即通知）；客戶信件與 Teams 模版都可在設定頁修改、預覽、測試。"""
+    """內部狀態走 Teams（只有未結案才提醒、發送中止立即通知）；日報 Mail與 Teams 模版都可在設定頁修改、預覽、測試。"""
     from datetime import date, datetime
 
     from app import db, delivery, graph, sysconf, teams
@@ -2146,7 +2147,7 @@ def test_internal_teams_and_customer_mail_templates(app, monkeypatch):
     root.get("/login")
     root.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
     html = root.get("/admin/settings/delivery")
-    assert "內部通知（Microsoft Teams）" in html and "寄給客戶（對外一律用正式 Mail）" in html
+    assert "內部通知（Microsoft Teams）" in html and "日報 Mail（正式寄送）" in html
     assert "reminder_sender" not in html and "logic.azure.com/…（已設定）" in html
     form = {"sp_link_scope": "organization", "reminder_time": "12:30", "deadline_time": "13:00", "sp_folder": "x",
             "graph_tenant_id": "t", "graph_client_id": "c", "graph_client_secret": "s", "mail_sender": "dr@contoso.com",
@@ -2161,7 +2162,7 @@ def test_internal_teams_and_customer_mail_templates(app, monkeypatch):
     html = root.post("/admin/settings/delivery/preview", form)
     assert "日報 CFXD-SCA-RLY-DPR-000903" in html and "提醒 2026-11-10" in html and "srcdoc=" in html
     html = root.post("/admin/settings/delivery/test-mail", {**form, "test_to": "me@contoso.com"})
-    assert "用客戶信件模版（範例資料）寄給 me@contoso.com" in html
+    assert "用日報 Mail 模版（範例資料）寄給 me@contoso.com" in html
     assert sent[-1][1] == "[測試] 日報 CFXD-SCA-RLY-DPR-000903" and "0123456789abcdef" in sent[-1][2]
     html = root.post("/admin/settings/delivery/test-teams", {**form, "test_event": "reminder"})
     assert "已傳送「提醒 2026-11-10」" in html and posted[-1]["body"][0]["text"] == "[測試] 提醒 2026-11-10"

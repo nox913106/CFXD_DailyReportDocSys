@@ -7,9 +7,9 @@
 {% if preview %}
 <section class="card">
   <h3>預覽（範例資料，未寄出）</h3>
-  <h4>客戶信件</h4>
+  <h4>日報 Mail</h4>
   <p><b>主旨：</b>{{ preview.subject }}</p>
-  <iframe class="mail-preview" sandbox="" srcdoc="{{ preview.body }}" title="客戶信件預覽"></iframe>
+  <iframe class="mail-preview" sandbox="" srcdoc="{{ preview.body }}" title="日報 Mail預覽"></iframe>
   <h4>Teams 內部通知</h4>
   {% for label, title, text in preview.teams %}
   <div class="teams-preview"><div class="hint">{{ label }}</div><b>{{ title }}</b><div class="pre">{{ text }}</div></div>
@@ -34,7 +34,7 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <section class="card">
     <h3>結案後自動發送</h3>
-    <p class="hint">結案後 1 分鐘：產生正式 PDF → 上傳 SharePoint → 取得檔案連結 → 寄給客戶。任何一步失敗就中止，
+    <p class="hint">結案後 1 分鐘：產生正式 PDF → 上傳 SharePoint → 取得檔案連結 → 寄出日報 Mail。任何一步失敗就中止，
       日報頁最下方的流程會顯示原因，二線以上按「重試」繼續。關閉時結案只產生正式 PDF。</p>
     <label class="inline"><input type="checkbox" name="delivery_enabled" value="1" {{ 'checked' if c.delivery_enabled }}>
       啟用自動上傳 SharePoint 與寄信</label>
@@ -65,7 +65,7 @@
       <label>連結有效天數（只用於「任何有連結的人」；0 = 不限）<input type="number" name="sp_link_expire_days" min="0" max="3650" value="{{ c.sp_link_expire_days }}"></label>
     </div>
 
-    <h4>寄給客戶（對外一律用正式 Mail）</h4>
+    <h4>日報 Mail（正式寄送）</h4>
     <div class="form-grid">
       <label>寄件信箱<input name="mail_sender" value="{{ c.mail_sender }}" placeholder="dailyreport@company.com"></label>
       <label class="wide">收件人（多個用逗號或換行分隔）<textarea name="mail_to" rows="2">{{ c.mail_to }}</textarea></label>
@@ -74,7 +74,8 @@
       <label class="wide">內容模版（HTML）<textarea name="mail_body" rows="7" spellcheck="false">{{ c.mail_body }}</textarea></label>
     </div>
     <p class="hint">可代入：{doc_no} 文件編號、{contractor_doc_no}、{date} 日期、{revision} 版次、{filename} 檔名、{link} SharePoint 連結、
-      {md5}、{sha256}、{approver} 核准人。</p>
+      {md5}、{sha256}、{approver} 核准人、{yyyymmdd}（例 20261110）、{month_range}（當月區間，例 20261101-1130，
+      可用於月度追蹤表檔名）。收件人與副本都是內部人員信箱。</p>
     <div class="actions">
       <input name="test_to" placeholder="測試收件人（空白 = 寄給自己）" style="max-width:260px">
       <button type="submit" class="secondary" formaction="{{ url_for('settings.delivery_test_mail') }}">用這個模版寄測試信</button>

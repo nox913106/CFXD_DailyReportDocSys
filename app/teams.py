@@ -1,4 +1,4 @@
-"""內部狀態通知（Microsoft Teams 頻道）。對外（客戶）一律用正式 Mail，見 delivery.py。
+"""內部狀態通知（Microsoft Teams 頻道）。日報本身一律用正式 Mail 寄出，見 delivery.py。
 
 做法：在 Teams 頻道建立 Workflow「收到 webhook 要求時張貼到頻道」（Post to a channel when a webhook request is
 received），把產生的網址填到「系統設定 → 發送與通知 → 內部通知」。系統送出 Adaptive Card，頻道就會出現訊息。
@@ -22,13 +22,13 @@ EVENTS = {
     "reminder": {
         "label": "每日提醒：今天的日報到提醒時間還沒結案",
         "title": "【提醒】{date} 日報尚未結案（期限 {deadline}）",
-        "text": "{date} 的日報目前狀態：**{status}**。\n\n請在 {deadline} 前完成審核與結案，系統會自動上傳 SharePoint 並寄給客戶。",
+        "text": "{date} 的日報目前狀態：**{status}**。\n\n請在 {deadline} 前完成審核與結案，系統會自動上傳 SharePoint 並寄出日報 Mail。",
         "default_on": True,
     },
     "delivery_failed": {
         "label": "發送中止：結案後的發送流程有一步失敗（立即通知）",
         "title": "【發送中止】{doc_no}（{date}）",
-        "text": "「{step}」失敗：{error}\n\n客戶還沒收到這份日報。請修正後在日報頁最下方按「重試」。",
+        "text": "「{step}」失敗：{error}\n\n收件人還沒收到這份日報。請修正後在日報頁最下方按「重試」。",
         "default_on": True,
     },
     "status_change": {
@@ -44,24 +44,24 @@ EVENTS = {
         "default_on": True,
     },
     "delivery_done": {
-        "label": "發送完成：已上傳 SharePoint 並寄給客戶",
+        "label": "發送完成：已上傳 SharePoint 並寄出日報 Mail",
         "title": "【已寄出】{doc_no}（{date}）",
-        "text": "已寄給客戶：{mail_to}\n\n檔案：{filename}\n\nMD5：{md5}",
+        "text": "已寄出：給 {mail_to}\n\n檔案：{filename}\n\nMD5：{md5}",
         "default_on": False,
     },
 }
 FIELDS = {
     "date": "日報日期", "doc_no": "文件編號", "status": "目前狀態", "deadline": "期限", "step": "失敗的步驟",
     "error": "失敗原因", "filename": "正式 PDF 檔名", "md5": "MD5", "share_link": "SharePoint 連結",
-    "mail_to": "客戶收件人", "closed_by": "結案人", "time": "通知時間",
+    "mail_to": "收件人", "closed_by": "結案人", "time": "通知時間",
     "old_status": "原狀態（狀態變更）", "action": "動作（狀態變更）", "actor": "操作者（狀態變更）",
     "comment": "意見 / 原因（狀態變更）", "summary": "各等級數量（健康檢查）",
     "abnormal": "不是正常的項目清單（健康檢查）", "storage": "各磁碟用量 GB（健康檢查）",
 }
 SAMPLE = {"date": "2026-11-10", "doc_no": "CFXD-SCA-RLY-DPR-000903", "status": "待審核", "deadline": "13:00",
-          "step": "寄送客戶", "error": "HTTP 401：用戶端密碼已過期", "filename": "CFXD-SCA-RLY-DPR-000903_0_IFI.pdf",
+          "step": "寄送日報 Mail", "error": "HTTP 401：用戶端密碼已過期", "filename": "CFXD-SCA-RLY-DPR-000903_0_IFI.pdf",
           "md5": "0123456789abcdef0123456789abcdef", "share_link": "https://contoso.sharepoint.com/:b:/s/CFXD/xyz",
-          "mail_to": "customer@client.com", "closed_by": "Alan Lin", "time": "12:30",
+          "mail_to": "jamie@rallytech.com.tw", "closed_by": "Alan Lin", "time": "12:30",
           "old_status": "待審核", "action": "退回", "actor": "Alan Lin", "comment": "原因：4.3 截圖日期不對",
           "summary": "正常 30、注意 1、告警 1",
           "abnormal": "• [告警] 儲存空間 / 磁碟 /：已用 181.2 GB / 共 200.0 GB（90.6%），剩餘 18.8 GB\n"
@@ -239,7 +239,7 @@ def flush(limit=20):
 
 
 ACTIONS = {"create": "建立", "submit": "送審", "approve": "核准", "reject": "退回", "return": "退回修正",
-           "close": "結案（1 分鐘後發送給客戶）", "close_cancel": "取消結案", "delete": "刪除"}
+           "close": "結案（1 分鐘後寄出日報 Mail）", "close_cancel": "取消結案", "delete": "刪除"}
 
 
 def status_changed(report, old_status, action, actor, comment=""):

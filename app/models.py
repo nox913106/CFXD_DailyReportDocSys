@@ -513,13 +513,13 @@ MAINT_STATUS_LABELS = {"pending": "排隊中", "running": "執行中", "done": "
 MAINT_TRIGGER_LABELS = {"manual": "手動", "scheduled": "排程", "pre_restore": "還原前自動"}
 
 
-DELIVERY_STEPS = (("pdf", "產生正式 PDF"), ("upload", "上傳 SharePoint"), ("link", "取得檔案連結"), ("mail", "寄送客戶"))
+DELIVERY_STEPS = (("pdf", "產生正式 PDF"), ("upload", "上傳 SharePoint"), ("link", "取得檔案連結"), ("mail", "寄送日報 Mail"))
 DELIVERY_STATE_LABELS = {"scheduled": "鎖檔中（1 分鐘後開始）", "queued": "排隊中", "running": "執行中",
                          "done": "完成", "error": "已中止（需要處理）"}
 
 
 class Delivery(db.Model):
-    """結案後的正式文件與發送流程：產生正式 PDF → 上傳 SharePoint → 取得連結 → 寄送客戶。
+    """結案後的正式文件與發送流程：產生正式 PDF → 上傳 SharePoint → 取得連結 → 寄送日報 Mail。
 
     任一步驟失敗立即中止（state=error），由二線以上手動重試；已完成的步驟不會重做。
     steps：JSON {step: {"status": pending/running/done/error/skipped, "message", "at", "attempts"}}
