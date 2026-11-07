@@ -47,7 +47,7 @@ EVENTS = {
         "label": "發送完成：已上傳 SharePoint 並寄出日報 Mail",
         "title": "【已寄出】{doc_no}（{date}）",
         "text": "收件人：{mail_to}\n\n副本：{mail_cc}\n\n檔案：{filename}\n\nMD5：{md5}",
-        "default_on": False,
+        "default_on": True,
     },
 }
 FIELDS = {
