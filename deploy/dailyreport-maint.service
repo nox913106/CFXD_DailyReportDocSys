@@ -12,7 +12,8 @@ ExecStart=/opt/dailyreport/.venv/bin/flask --app wsgi maint-worker
 Restart=always
 RestartSec=10
 Nice=10
-MemoryMax=512M
+# 結案後在這個服務產生正式 PDF：85 張 1920x1080 截圖約需 0.6–0.9 GB，512M 會被系統終止（發送停在「產生正式 PDF」）
+MemoryMax=2G
 
 [Install]
 WantedBy=multi-user.target

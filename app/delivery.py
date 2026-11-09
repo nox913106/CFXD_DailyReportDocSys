@@ -78,6 +78,36 @@ def retry(report, user):
 # ---------------------------------------------------------------- 背景執行
 
 
+STALE_MINUTES = 30  # 單一步驟執行超過這個時間視為中斷（正常產生 PDF 約 20–60 秒）
+INTERRUPTED = ("背景服務在執行這一步時中斷（最常見是記憶體不足被系統終止，或服務重新啟動），沒有完成。"
+               "請確認主機記憶體與 sudo journalctl -u dailyreport-maint，再按「重試」。")
+
+
+def recover_interrupted(now=None, all_running=False):
+    """維護服務被終止（例如記憶體不足）時，發送會永遠停在「執行中」，也不能重試。
+    服務啟動時（all_running=True）把所有執行中的改成中止；平時把執行超過 STALE_MINUTES 的改成中止。
+    只有一個維護服務在跑發送，所以它沒在執行 run() 時看到的「執行中」都是殘留。回傳處理的筆數。"""
+    now = now or datetime.now()
+    n = 0
+    for d in Delivery.query.filter_by(state="running"):
+        steps = d.step_map()
+        key = next((k for k, _ in DELIVERY_STEPS if steps[k]["status"] == "running"), None)
+        try:
+            started = datetime.fromisoformat(steps[key]["at"]) if key else None
+        except (TypeError, ValueError):
+            started = None
+        if not all_running and started and now - started < timedelta(minutes=STALE_MINUTES):
+            continue
+        key = key or next((k for k, _ in DELIVERY_STEPS if steps[k]["status"] not in ("done", "skipped")), "pdf")
+        d.set_step(key, "error", INTERRUPTED)
+        d.state = "error"
+        db.session.commit()
+        log.warning("發送流程中斷（%s，%s），已改為中止，可以重試", d.report.doc_no, dict(DELIVERY_STEPS)[key])
+        _notify(d, "delivery_failed", step=dict(DELIVERY_STEPS)[key], error=INTERRUPTED)
+        n += 1
+    return n
+
+
 def due(now=None):
     now = now or datetime.now()
     return (Delivery.query.filter(((Delivery.state == "scheduled") & (Delivery.run_after <= now))
@@ -85,7 +115,7 @@ def due(now=None):
 
 
 def tick(now=None):
-    did = False
+    did = bool(recover_interrupted(now))
     for d in due(now):
         run(d)
         did = True

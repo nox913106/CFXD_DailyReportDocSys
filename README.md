@@ -320,7 +320,9 @@ pytest -q
 | 作業系統 | Ubuntu 24.04 / 26.04、Debian 13（Python 3.12 以上） | Ubuntu 24.04（已實測，其餘未實測） |
 | 網路 | 安裝與更新時能連到 GitHub、PyPI 與 OCR 模型下載站；平時需要 UDP 123 連到 `time.google.com`（或 `--ntp` 指定的時間伺服器） | 公司有 Proxy 時先設定 `https_proxy`；私有 PyPI 鏡像用 `PIP_INDEX_URL` |
 
-- **記憶體**：截圖 OCR 背景服務（`dailyreport-ocr`）約需 1 GB，是最大宗；網頁、AI、維護服務與 nginx 用量小。
+- **記憶體**：截圖 OCR 背景服務（`dailyreport-ocr`）約需 1 GB；結案後由維護服務（`dailyreport-maint`）產生正式 PDF，
+  85 張截圖時約 0.6–0.9 GB（服務上限 2 GB，只在產生的幾十秒內用到）；網頁、AI 與 nginx 用量小。
+  維護服務在發送中被終止（例如記憶體不足）時，下次啟動或 30 分鐘後該發送會改為「已中止」，日報頁可以按「重試」。
   記憶體少於 4 GB 時網頁最多 2 個 worker；系統狀態頁可用記憶體低於 1 GB 會警告。
 - **磁碟**：主要是截圖與備份。備份預設在 `/var/backups/dailyreport`、保留 14 份，每份含完整資料庫與截圖，
   約佔目前資料量的 14 倍；可在「系統設定 → 備份還原」改到 NAS 或減少保留份數。

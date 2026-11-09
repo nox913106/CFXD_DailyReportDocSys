@@ -384,3 +384,41 @@ def test_import_cli(app, tmp_path):
         assert Report.query.filter(Report.import_meta.isnot(None)).count() == 2
         meta = json.loads(Report.query.first().import_meta)
         assert meta["sha256"] and meta["by"]
+
+
+def test_interrupted_delivery_becomes_retryable(app):
+    """維護服務在產生 PDF 時被終止（記憶體不足）：不能永遠停在「執行中」，要變成中止、可以重試。"""
+    from datetime import datetime, timedelta
+
+    from app import db, delivery, docno
+    from app.approval import can_retry_delivery
+    from app.models import Delivery, Report, User
+
+    with app.app_context():
+        u = User(username="well", display_name="Well Lai", role="second_line")
+        db.session.add(u)
+        db.session.flush()
+        d = dt.date(2026, 11, 6)
+        r = Report(report_date=d, doc_no=docno.doc_no(d), contractor_doc_no=docno.contractor_doc_no(d),
+                   author_id=u.id, status="closed")
+        db.session.add(r)
+        db.session.flush()
+        dl = Delivery(report=r, state="running", closed_by_id=u.id, run_after=datetime.now())
+        dl.set_step("pdf", "running")
+        db.session.add(dl)
+        db.session.commit()
+        assert not can_retry_delivery(u, r)
+        # 剛開始執行：平常的輪詢不動它
+        assert delivery.recover_interrupted() == 0
+        # 超過 30 分鐘：改成中止
+        later = datetime.now() + timedelta(minutes=31)
+        assert delivery.recover_interrupted(later) == 1
+        dl = db.session.get(Delivery, dl.id)
+        assert dl.state == "error" and "中斷" in dl.step_map()["pdf"]["message"]
+        assert can_retry_delivery(u, db.session.get(Report, r.id))
+        # 服務重新啟動時：所有執行中的都改成中止
+        dl.state = "running"
+        dl.set_step("pdf", "running")
+        db.session.commit()
+        assert delivery.recover_interrupted(all_running=True) == 1
+        assert db.session.get(Delivery, dl.id).state == "error"

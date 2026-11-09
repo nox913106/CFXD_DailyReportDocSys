@@ -189,6 +189,13 @@ def run_worker(app, once=False):
         for j in MaintJob.query.filter_by(status="running"):
             j.status, j.message, j.finished_at = "error", "維護服務中斷，工作未完成", datetime.now()
         db.session.commit()
+        from . import delivery
+
+        try:
+            delivery.recover_interrupted(all_running=True)  # 上次被終止時停在「執行中」的發送 → 中止，可重試
+        except Exception:
+            log.exception("檢查中斷的發送流程失敗")
+            db.session.rollback()
         last_hb = 0.0
         while True:
             if time.monotonic() - last_hb > HEARTBEAT_SECONDS:
