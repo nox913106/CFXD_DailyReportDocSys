@@ -9,6 +9,32 @@ from werkzeug.security import generate_password_hash
 
 
 def register_cli(app):
+    @app.cli.command("import-xlsx")
+    @click.argument("folder", type=click.Path(exists=True))
+    @click.option("--user", "username", required=True, help="匯入者帳號（記在審核歷程與稽核紀錄）")
+    @click.option("--dry-run", is_flag=True, help="只檢查，不寫入資料庫")
+    def import_xlsx(folder, username, dry_run):
+        """匯入歷史日報：資料夾（含子資料夾）中所有過去已結案的 CheckList Excel，依檔名排序。"""
+        from pathlib import Path
+
+        from .models import User
+        from .xlsx_import import import_one
+
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            raise click.ClickException(f"找不到帳號 {username}")
+        root = Path(folder)
+        files = sorted([root] if root.is_file() else
+                       [f for f in root.rglob("*") if f.suffix.lower() in (".xlsx", ".xlsm") and not f.name.startswith("~$")])
+        n = {}
+        for f in files:
+            r = import_one(f.name, f.read_bytes(), user, dry_run=dry_run)
+            n[r["status"]] = n.get(r["status"], 0) + 1
+            click.echo(f"[{r['status']}] {f} {r.get('date', '')} {r.get('doc_no', '')} {r.get('message', '')}")
+            for w in r.get("warnings") or []:
+                click.echo(f"    警告：{w}")
+        click.echo("合計：" + "、".join(f"{k} {v}" for k, v in sorted(n.items())) + ("（只檢查，未寫入）" if dry_run else ""))
+
     @app.cli.command("ocr-worker")
     @click.option("--once", is_flag=True, help="處理完目前排隊的截圖就結束")
     def ocr_worker(once):

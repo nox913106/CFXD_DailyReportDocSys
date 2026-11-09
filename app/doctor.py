@@ -166,6 +166,23 @@ def run(system=False):
     tpl = cfg.get("PDF_TEMPLATE_XLSX")
     if tpl and os.path.isfile(tpl) and os.access(tpl, os.R_OK):
         _item(out, g, "CheckList 範本", "ok", tpl)
+        try:
+            from flask import has_app_context
+
+            if has_app_context():
+                from .checklist_template import diff_rows, template_status
+
+                st = template_status()
+                if st["error"]:
+                    _item(out, g, "範本與檢查項目", "warn", st["error"])
+                elif not st["ok"]:
+                    _item(out, g, "範本與檢查項目", "warn",
+                          f"檢查項目修改過，範本有 {len(diff_rows(st))} 處需要改版；改版前 PDF 只呈現範本中有的項目",
+                          "檢查項目頁 → 下載範本修改清單，改好後在「系統設定 → PDF 與上傳」上傳")
+                else:
+                    _item(out, g, "範本與檢查項目", "ok", "一致")
+        except Exception as e:  # noqa: BLE001
+            _item(out, g, "範本與檢查項目", "warn", f"無法比對：{str(e)[:160]}")
     else:
         _item(out, g, "CheckList 範本", "fail", "尚未上傳，無法產生 PDF",
               "系統設定 → PDF 與上傳 → 上傳「CFXD SLA - SCADA Daily Inspection CheckList.xlsx」")

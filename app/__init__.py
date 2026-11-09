@@ -99,6 +99,11 @@ def create_app():
     from .settings_views import bp as settings_bp
 
     app.register_blueprint(settings_bp)
+    from .items_views import bp as items_bp
+    from .import_views import bp as import_bp
+
+    app.register_blueprint(items_bp)
+    app.register_blueprint(import_bp)
 
     @app.before_request
     def _viewer_only_archive():
@@ -167,6 +172,31 @@ def create_app():
         _add_missing_columns()
         _migrate_roles()
         seed_master_data()
+
+    from flask_wtf.csrf import CSRFError
+
+    @app.errorhandler(CSRFError)
+    def _csrf_error(e):
+        """頁面開太久（CSRF token 預設 1 小時過期）或登入已失效時送出表單。
+
+        自動儲存收到 JSON，app.js 會換新 token 再送一次；一般送出顯示說明頁，
+        畫面上的內容已暫存在瀏覽器，回到上一頁即可還原後再儲存。"""
+        from flask import jsonify, render_template
+
+        if request.headers.get("X-Autosave") == "1" or request.accept_mimetypes.best == "application/json":
+            return jsonify(ok=False, error="csrf", detail=e.description), 400
+        return render_template("csrf_expired.html", reason=e.description), 400
+
+    @app.get("/csrf-token")
+    def csrf_token_refresh():
+        """自動儲存遇到 token 過期時取得新的 token（需要登入；未登入時回 401，不轉到登入頁）。"""
+        from flask import jsonify
+        from flask_login import current_user
+        from flask_wtf.csrf import generate_csrf
+
+        if not getattr(current_user, "is_authenticated", False):
+            return jsonify(ok=False, error="login"), 401
+        return jsonify(ok=True, csrf=generate_csrf())
 
     @app.get("/healthz")
     def healthz():

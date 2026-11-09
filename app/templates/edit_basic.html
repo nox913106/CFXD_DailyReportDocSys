@@ -1,6 +1,6 @@
 {% extends "report_base.html" %}
 {% block tab %}
-<form method="post" class="card">
+<form method="post" class="card" data-dirty-guard {% if report.editable %}data-autosave data-updated="{{ report.updated_at.isoformat() if report.updated_at }}"{% endif %}>
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <fieldset {{ 'disabled' if not report.editable }}>
     <h3>封面 Document Information</h3>
@@ -44,7 +44,7 @@
       {% if can_assign %}{% if can_assign.principal %}您以 {{ can_assign.principal.name }} 的代理人身分指派。{% endif %}
       {% else %}撰寫人與核准人由檔案管理員（或其授權的二線管理員）指派。{% endif %}
       二線管理員代為核准時，文件上的 Approval / Document Approved 仍顯示核准人本人。</p>
-    <button type="submit">儲存</button>
+    {% if report.editable %}<div class="actions"><span class="autosave-status hint" data-autosave-status>每分鐘自動儲存</span><button type="submit">儲存</button></div>{% endif %}
   </fieldset>
 </form>
 {% endblock %}

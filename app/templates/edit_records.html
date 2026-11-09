@@ -1,7 +1,7 @@
 {% extends "report_base.html" %}
 {% import "macros.html" as m %}
 {% block tab %}
-<form method="post" data-dirty-guard>
+<form method="post" data-dirty-guard {% if report.editable %}data-autosave data-updated="{{ report.updated_at.isoformat() if report.updated_at }}"{% endif %}>
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <section class="card">
     <h3>2 Inspection Record</h3>
@@ -17,14 +17,13 @@
       <textarea name="onsite_summary" rows="2" {{ 'disabled' if not report.editable }}>{{ report.onsite_summary }}</textarea>
     </label>
   </section>
-  {% set g = groups[1] %}{{ m.record_list(g[0], g[1], g[2], g[3], report.editable) }}
+  {% set g = groups[1] %}{% call m.record_list(g[0], g[1], g[2], g[3], report.editable) %}
+  <h4>Work Photo（現場照片）</h4>
+  <p class="hint">照片上傳後立即存檔（不用按儲存），文件中放在 On-site Record 的 Work Photo 欄。</p>
+  {{ m.image_zone(report, 'onsite', onsite_images, report.editable) }}
+  {% endcall %}
   {% set g = groups[2] %}{{ m.record_list(g[0], g[1], g[2], g[3], report.editable) }}
 
-  {% if report.editable %}<div class="sticky-save"><button type="submit">儲存</button></div>{% endif %}
+  {% if report.editable %}<div class="sticky-save"><span class="autosave-status hint" data-autosave-status>每分鐘自動儲存</span><button type="submit">儲存</button></div>{% endif %}
 </form>
-
-<section class="card">
-  <h3>Work Photo（現場照片）</h3>
-  {{ m.image_zone(report, 'onsite', onsite_images, report.editable) }}
-</section>
 {% endblock %}

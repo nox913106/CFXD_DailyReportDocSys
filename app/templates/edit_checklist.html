@@ -5,7 +5,7 @@
   <a href="{{ url_for('editors.checklist', report_id=report.id, sheet=key) }}" class="{{ 'active' if key == sheet }}">{{ title }}</a>
   {% endfor %}
 </nav>
-<form method="post" class="card checklist" data-dirty-guard>
+<form method="post" class="card checklist" data-dirty-guard {% if report.editable %}data-autosave data-updated="{{ report.updated_at.isoformat() if report.updated_at }}"{% endif %}>
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="row-between">
     <h3>{{ sheet_title }}</h3>
@@ -47,6 +47,6 @@
     {% endfor %}
   </table>
   </div>
-  {% if report.editable %}<div class="sticky-save"><button type="submit">儲存本頁</button></div>{% endif %}
+  {% if report.editable %}<div class="sticky-save"><span class="autosave-status hint" data-autosave-status>每分鐘自動儲存</span><button type="submit">儲存本頁</button></div>{% endif %}
 </form>
 {% endblock %}

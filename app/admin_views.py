@@ -419,6 +419,16 @@ def pdf_template():
     _audit("sys_settings", "CheckList 範本", f.filename[:200])
     db.session.commit()
     flash("已更新 CheckList 範本，之後產生的 PDF 都會使用新範本。", "success")
+    try:
+        from .checklist_template import diff_rows, template_status
+
+        st = template_status()
+        if st["ok"]:
+            flash("範本與系統的檢查項目一致。", "success")
+        elif not st["error"]:
+            flash(f"範本與系統的檢查項目還有 {len(diff_rows(st))} 處不同，詳見「檢查項目」頁。", "error")
+    except Exception:  # noqa: BLE001 - 比對失敗不影響上傳
+        pass
     return redirect(url_for("settings.pdf"))
 
 
@@ -522,7 +532,7 @@ def local_accounts():
 AUDIT_LABELS = {"delete_report": "刪除日報", "set_role": "變更角色", "set_admin": "系統管理員", "ai_settings": "AI 設定",
                 "ai_provider_add": "新增 AI 服務", "ai_provider_edit": "修改 AI 服務", "ai_provider_delete": "刪除 AI 服務",
                 "sys_settings": "系統設定", "local_account": "本機緊急帳號", "backup": "備份", "restore": "還原",
-                "delegation": "代理權限"}
+                "delegation": "代理權限", "checklist_items": "檢查項目", "import_report": "匯入歷史日報"}
 
 
 def recent_audit(limit=50):

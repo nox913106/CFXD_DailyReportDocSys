@@ -252,6 +252,10 @@ def timeline(report):
     from .ocr import status_for
 
     r = report
+    if r.imported:
+        m = r.import_info
+        return [("done", "從 Excel 匯入（已結案）", f"{m.get('file', '')}，{m.get('by', '')} {(m.get('at') or '')[:16].replace('T', ' ')}"),
+                ("skipped", "送審 / 審核 / 正式 PDF / 發送", "過去的日報在系統外完成，匯入時不重做")]
     shots = [i for i in r.images if i.kind == "screenshot"]
     pend = ocr_pending(r)
     t = [("done", "建立日報", f"{r.author.name if r.author else ''}，{r.created_at:%Y-%m-%d %H:%M}")]

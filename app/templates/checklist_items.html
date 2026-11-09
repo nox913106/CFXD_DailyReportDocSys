@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}檢查項目 - CFXD{% endblock %}
+{% block content %}
+<h1>檢查項目（CheckList）</h1>
+<nav class="subtabs">
+  {% for key, title in sheets.items() %}
+  <a href="{{ url_for('items.sheet', sheet=key) }}" class="{{ 'active' if key == sheet }}">{{ title }}（{{ counts[key] }}）</a>
+  {% endfor %}
+</nav>
+
+<section class="card">
+  <h3>CheckList 範本（PDF）</h3>
+  {% if status.error %}
+  <div class="flash error">{{ status.error }}。PDF 需要範本，請系統管理員在「系統設定 → PDF 與上傳」上傳。</div>
+  {% elif status.ok %}
+  <p class="ok-text">範本與系統的檢查項目一致，PDF 的 CheckList 頁會完整呈現所有項目。</p>
+  {% else %}
+  <div class="flash warn">
+    系統的檢查項目已經修改，<b>CheckList 範本（Excel）需要改版</b>：共 {{ diffs|length }} 處{% if sheet_diffs %}，本頁 {{ sheet_diffs|length }} 處{% endif %}。
+    範本改版前，PDF 只會呈現範本中有的項目（已存在的項目仍會填在正確的列，不會錯位）；網頁上的勾選、檢查與統計已經使用新的項目。
+    <a href="{{ url_for('items.template_diff_csv') }}">下載範本修改清單（CSV）</a>
+  </div>
+  {% if sheet_diffs %}
+  <div class="table-scroll"><table class="grid-table">
+    <thead><tr><th>動作</th><th>Excel 列</th><th>範本目前內容 / 系統項目</th><th>說明</th></tr></thead>
+    <tbody>{% for d in sheet_diffs[:200] %}<tr><td class="nowrap">{{ d[1] }}</td><td class="center">{{ d[2] }}</td><td>{{ d[3] }}</td><td>{{ d[4] }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+  <p class="hint">改版方式：用 Excel 開啟範本，依清單新增 / 刪除 / 修改列（新增的列要複製上一列，連同勾選框與格式），
+    並確認統計（COUNTIFS）與圓餅圖的範圍包含新的列；存檔後由系統管理員在「系統設定 → PDF 與上傳」上傳，上傳後這裡會重新比對。</p>
+  {% endif %}
+</section>
+
+<form method="post" class="card" data-dirty-guard>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="row-between">
+    <h3>{{ sheets[sheet] }}</h3>
+    <button type="button" class="secondary" data-add-row="item">＋ 新增一列</button>
+  </div>
+  <p class="hint">拖曳 ⠿ 或按 ▲▼ 調整順序；修改後按「儲存」才會生效。儲存後套用到<b>可編輯的日報</b>（草稿、退回，目前 {{ open_reports }} 份）
+    與之後新增的日報；送審中、已核准、已結案的日報不變。刪除的項目在舊日報中保留；之後新增相同的 Item 編號會還原該項目。</p>
+  <div class="table-scroll">
+  <table class="grid-table items-table" data-row-container="item" data-next="{{ items|length }}" data-sortable>
+    <thead><tr><th>#</th>
+      {% for f, label, _ in fields %}{% if f != 'location' or show_location %}<th>{{ label }}</th>{% endif %}{% endfor %}<th></th></tr></thead>
+    <tbody>
+    {% for it in items %}{{ item_row(loop.index0, loop.index, it) }}{% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <template data-row-template="item">{{ item_row('__i__', '', none) }}</template>
+  <div class="sticky-save"><button type="submit">儲存</button></div>
+</form>
+
+{% if deleted %}
+<section class="card">
+  <h3>已刪除的項目（{{ deleted|length }}）</h3>
+  <p class="hint">新增一列並填相同的 Item 編號即可還原。</p>
+  <div class="table-scroll"><table class="grid-table">
+    <thead><tr><th>Item</th><th>Device Name</th><th>Status Type</th><th>Description</th></tr></thead>
+    <tbody>{% for it in deleted %}<tr><td>{{ it.item_no }}</td><td>{{ it.device_name }}</td><td>{{ it.status_type }}</td><td>{{ it.description }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+{% endblock %}
+
+{% macro item_row(i, no, it) %}
+<tr>
+  <td class="center nowrap"><span class="drag-handle" title="拖曳調整順序" aria-hidden="true">⠿</span><span data-row-no>{{ no }}</span>
+    <input type="hidden" name="item-{{ i }}-id" value="{{ it.id if it else '' }}"></td>
+  {% for f, label, limit in fields %}{% if f != 'location' or show_location %}
+  <td>{% if f == 'description' %}<textarea name="item-{{ i }}-{{ f }}" rows="2" maxlength="{{ limit }}">{{ it[f] if it else '' }}</textarea>
+      {% else %}<input name="item-{{ i }}-{{ f }}" value="{{ (it[f] or '') if it else '' }}" maxlength="{{ limit }}"
+             class="{{ 'short' if f in ('no', 'item_no', 'group_item') }}" {{ 'required' if f == 'item_no' }} aria-label="{{ label }}">{% endif %}</td>
+  {% else %}<input type="hidden" name="item-{{ i }}-{{ f }}" value="{{ (it[f] or '') if it else '' }}">{% endif %}{% endfor %}
+  <td class="nowrap"><button type="button" class="link" data-row-move="up" title="往上">▲</button><button type="button" class="link" data-row-move="down" title="往下">▼</button>
+    <button type="button" class="link danger" data-remove-row>刪除</button></td>
+</tr>
+{% endmacro %}

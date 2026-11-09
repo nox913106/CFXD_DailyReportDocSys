@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}匯入歷史日報 - CFXD{% endblock %}
+{% block content %}
+<h1>匯入歷史日報（Excel）</h1>
+<section class="card">
+  <p>把過去<b>已結案</b>日報的 CheckList Excel（<code>CFXD SLA - SCADA Daily Inspection CheckList*.xlsx</code>）匯入系統，成為「已結案（Excel 匯入）」的日報，
+    用於跨日比對、告警歷程（365 天）與檢查結果.md。</p>
+  <ul class="hint">
+    <li>一個檔案 = 一天；日期取 Alarm Summary 的 Inspection Date，讀不到時用檔名中的日期。該日期已經有日報就略過，不會覆蓋。</li>
+    <li>匯入：Inspection Time、Revision、Recorded By、文件編號、Alarm Summary、四張檢查表的勾選與 Note。New / Known Alarm 依前一份正式日報計算。</li>
+    <li>Excel 裡沒有的封面記錄（值班 / 問題 / 現場 / 告警記錄）、照片、截圖、核准人與正式 PDF 不會有。</li>
+    <li>檢查表依每列的文字對應系統的檢查項目，舊版範本多出或少的項目會列在警告中。</li>
+    <li>建議先勾「只檢查不匯入」跑一次，確認沒有錯誤再正式匯入。量很大（例如整年）時，也可以在主機上執行
+      <code>flask --app wsgi import-xlsx &lt;資料夾&gt; --user &lt;帳號&gt; [--dry-run]</code>（可直接讀 NAS 掛載的資料夾）。</li>
+  </ul>
+  <div class="batch-drop" data-import-upload="{{ url_for('imports.upload') }}">
+    <label><input type="checkbox" data-import-dry checked> 只檢查不匯入</label>
+    <div class="actions top-gap">
+      <label class="button secondary">選擇檔案<input type="file" multiple accept=".xlsx,.xlsm" data-import-files hidden></label>
+      <label class="button secondary">選擇資料夾<input type="file" webkitdirectory multiple data-import-files hidden></label>
+      <span class="hint">或把檔案 / 資料夾拖曳到這裡</span>
+    </div>
+    <progress hidden></progress> <span class="import-log hint"></span>
+  </div>
+  <div class="table-scroll top-gap">
+    <table class="grid-table" data-import-results hidden>
+      <thead><tr><th>檔案</th><th>結果</th><th>日期</th><th>文件編號</th><th>Recorded By</th><th>告警</th><th>檢查表（已對應 / 列）</th><th>說明與警告</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+{% if recent %}
+<section class="card">
+  <h3>已匯入（{{ recent|length }}）</h3>
+  <div class="table-scroll"><table class="grid-table">
+    <thead><tr><th>日期</th><th>文件編號</th><th>檔案</th><th>匯入</th><th>警告</th></tr></thead>
+    <tbody>{% for r in recent %}{% set m = r.import_info %}
+      <tr><td><a href="{{ url_for('views.detail', report_id=r.id) }}">{{ r.report_date }}</a></td><td>{{ r.doc_no }}</td>
+        <td>{{ m.file }}</td><td class="nowrap">{{ m.by }} {{ (m.at or '')[:16].replace('T', ' ') }}</td>
+        <td>{% if m.warnings %}<details><summary>{{ m.warnings|length }} 則</summary><ul>{% for w in m.warnings %}<li>{{ w }}</li>{% endfor %}</ul></details>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+{% endblock %}

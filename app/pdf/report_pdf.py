@@ -19,13 +19,7 @@ from .xlsx_print import Workbook, render_sheets
 PAGE = (595.32, 841.92)
 ASSETS = os.path.join(os.path.dirname(__file__), "assets")
 SHEETS = ["Alarm Summary", "Summary", "Virtual Machines", "Software", "Physical devices", "PI"]
-# 各檢查表工作表：(Normal, Warning, Failed, Note) 欄
-CHECK_COLS = {
-    "vm": ("Virtual Machines", "F", "H", "J", "L"),
-    "software": ("Software", "I", "K", "M", "O"),
-    "physical": ("Physical devices", "I", "K", "M", "O"),
-    "pi": ("PI", "F", "H", "J", "L"),
-}
+from ..checklist_template import CHECK_COLS  # noqa: E402  各檢查表工作表：(Normal, Warning, Failed, Note) 欄
 ALARM_FIRST_ROW = 7
 ALARM_LINE_H = 15.5
 # 第二層章節在原範本中有手動換頁者
@@ -271,17 +265,26 @@ def _line_count(ws, col, row, text):
 
 
 def _fill_checklist(book, report):
-    results = {}
-    for res in report.results:
-        results[(res.item.sheet, res.item.order)] = res
+    """依每一列的文字找出是哪個檢查項目（見 checklist_template），不是第 N 列 = 第 N 項；
+    範本還沒依「檢查項目」頁的修改改版時，已存在的項目照樣填在正確的列，範本沒有的項目不會出現在 PDF。"""
+    from ..checklist_template import active_items, map_workbook
+
+    results = {res.item_id: res for res in report.results}
+    items = active_items()
+    for res in report.results:  # 舊日報：已刪除的項目也要對應得到
+        if not res.item.active:
+            items.setdefault(res.item.sheet, []).append(res.item)
+    for sheet, items_ in items.items():
+        items_.sort(key=lambda i: (i.order, i.id))
+    maps = map_workbook(book.wb, items)
     for sheet, (name, cn, cw, cf, cnote) in CHECK_COLS.items():
         ws = book.wb[name]
-        order = 0
+        pairs = maps[sheet].pairs
         for r in range(1, ws.max_row + 1):
             if not isinstance(ws[f"{cn}{r}"].value, bool):
                 continue
-            order += 1
-            res = results.get((sheet, order))
+            it = pairs.get(r)
+            res = results.get(it.id) if it else None
             val = res.result if res else None
             book.set(name, f"{cn}{r}", val == "N")
             book.set(name, f"{cw}{r}", val == "W")

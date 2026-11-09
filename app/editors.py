@@ -9,7 +9,7 @@ from sqlalchemy.orm import contains_eager
 from . import db, docno
 from . import approval as perm
 from .approval import approvers
-from .helpers import SHEETS, checklist_stats, get_report, locked_redirect, parse_rows
+from .helpers import SHEETS, autosave_reply, checklist_stats, get_report, is_autosave, locked_redirect, parse_rows, saved
 from .models import (
     AlarmSummaryRow,
     ChecklistItem,
@@ -110,6 +110,8 @@ def basic(report_id):
         if perm.can_override_doc_no(current_user, report):
             err = _doc_numbers(report)
             if err:
+                if is_autosave():
+                    return autosave_reply(err, 400)
                 flash(err, "error")
                 return redirect(url_for("editors.basic", report_id=report.id))
         report.revision = _int(request.form.get("revision"))
@@ -120,8 +122,7 @@ def basic(report_id):
             _assign(report, assign.principal)
         _touch(report)
         db.session.commit()
-        flash("已儲存。", "success")
-        return redirect(url_for("editors.basic", report_id=report.id))
+        return saved(report, "已儲存。", "editors.basic")
     choices = approvers()
     if report.approver and report.approver not in choices:
         choices.append(report.approver)
@@ -194,8 +195,7 @@ def records(report_id):
         )
         _touch(report)
         db.session.commit()
-        flash("已儲存。", "success")
-        return redirect(url_for("editors.records", report_id=report.id))
+        return saved(report, "已儲存。", "editors.records")
     return render_template(
         "edit_records.html",
         report=report,
@@ -230,8 +230,7 @@ def alarms(report_id):
         _replace_rows(report.alarm_rows, AlarmSummaryRow, rows)
         _touch(report)
         db.session.commit()
-        flash("已儲存。", "success")
-        return redirect(url_for("editors.alarms", report_id=report.id))
+        return saved(report, "已儲存。", "editors.alarms")
     return render_template(
         "edit_alarms.html",
         report=report,
@@ -312,8 +311,8 @@ def checklist(report_id, sheet):
         _touch(report)
         db.session.commit()
         missing = sum(1 for res in results if res.result is None)
-        flash(f"已儲存。{'還有 %d 項未勾選。' % missing if missing else '本頁已全部勾選。'}", "success")
-        return redirect(url_for("editors.checklist", report_id=report.id, sheet=sheet))
+        return saved(report, f"已儲存。{'還有 %d 項未勾選。' % missing if missing else '本頁已全部勾選。'}",
+                     "editors.checklist", sheet=sheet)
 
     # 依編號 (No.) 分組顯示，對應 Excel 的合併儲存格
     groups = [(no, list(rows)) for no, rows in groupby(results, key=lambda r: r.item.no)]

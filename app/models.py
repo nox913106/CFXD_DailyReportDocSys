@@ -92,7 +92,8 @@ class ChecklistItem(db.Model):
     location = db.Column(db.String(32), default="")
     status_type = db.Column(db.String(128), default="")
     description = db.Column(db.Text, default="")
-    active = db.Column(db.Boolean, default=True, nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False)  # False = 已刪除（舊日報仍保留結果）
+    updated_at = db.Column(db.DateTime)  # 「檢查項目」頁最後修改時間
 
     __table_args__ = (db.UniqueConstraint("sheet", "item_no"),)
 
@@ -192,9 +193,26 @@ class Report(db.Model):
     images = db.relationship("ReportImage", cascade="all, delete-orphan", order_by="ReportImage.order")
     review_logs = db.relationship("ReviewLog", cascade="all, delete-orphan", order_by="ReviewLog.id")
     delivery = db.relationship("Delivery", uselist=False, cascade="all, delete-orphan", back_populates="report")
+    # 從過去的 CheckList Excel 匯入的已結案日報：JSON {file, sha256, author, warnings, at, by}
+    import_meta = db.Column(db.Text)
+
+    @property
+    def imported(self):
+        return bool(self.import_meta)
+
+    @property
+    def import_info(self):
+        import json
+
+        try:
+            return json.loads(self.import_meta) if self.import_meta else {}
+        except ValueError:
+            return {}
 
     @property
     def status_label(self):
+        if self.imported and self.status == "closed":
+            return "已結案（Excel 匯入）"
         return STATUS_LABELS.get(self.status, self.status)
 
     @property
@@ -355,6 +373,7 @@ REVIEW_ACTION_LABELS = {
     "void": "作廢",
     "void_request": "申請作廢",
     "void_request_reject": "駁回作廢申請",
+    "import": "匯入歷史日報（Excel）",
 }
 
 

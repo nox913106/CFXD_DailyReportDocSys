@@ -17,12 +17,21 @@
 
   // ---------- 可增減的記錄 / 表格列 ----------
 
-  function cloneTemplate(tpl, container) {
+  function cloneTemplate(tpl, container, index) {
     var next = parseInt(container.dataset.next || "0", 10);
-    container.dataset.next = next + 1;
-    var html = tpl.innerHTML.replace(/__i__/g, String(next));
+    if (index === undefined) index = next;
+    container.dataset.next = Math.max(next, index + 1);
+    var html = tpl.innerHTML.replace(/__i__/g, String(index));
     container.insertAdjacentHTML("beforeend", html);
     markDirty(container);
+    renumberRows(container.closest("table"));
+  }
+
+  // Alarm Summary 的 No. 欄依畫面順序重新編號
+  function renumberRows(table) {
+    if (!table) return;
+    var n = 0;
+    table.querySelectorAll("tbody tr [data-row-no]").forEach(function (el) { el.textContent = String(++n); });
   }
 
   document.addEventListener("click", function (e) {
@@ -45,7 +54,18 @@
       table.dataset.next = tbody.dataset.next;
     } else if (t.matches("[data-remove-row]")) {
       markDirty(t);
+      var tbl = t.closest("table");
       t.closest("tr").remove();
+      renumberRows(tbl);
+    } else if (t.matches("[data-row-move]")) {
+      var tr = t.closest("tr");
+      var sib = t.dataset.rowMove === "up" ? tr.previousElementSibling : tr.nextElementSibling;
+      if (!sib) return;
+      if (t.dataset.rowMove === "up") tr.parentNode.insertBefore(tr, sib);
+      else tr.parentNode.insertBefore(sib, tr);
+      markDirty(tr);
+      renumberRows(tr.closest("table"));
+      t.focus();
     } else if (t.matches("[data-delete-image]")) {
       deleteImage(t.closest(".thumb"));
     } else if (t.matches("[data-requeue-ocr]")) {
@@ -62,14 +82,254 @@
 
   var dirtyForms = new Set();
   function markDirty(el) {
-    var form = el.closest && el.closest("form[data-dirty-guard]");
-    if (form) dirtyForms.add(form);
+    if (!el.closest || el.closest(".image-zone")) return;  // 照片上傳後立即存檔，不算未儲存
+    var form = el.closest("form[data-dirty-guard]");
+    if (form) {
+      dirtyForms.add(form);
+      form.dispatchEvent(new CustomEvent("dirty"));
+    }
   }
   document.addEventListener("input", function (e) { markDirty(e.target); });
   document.addEventListener("change", function (e) { markDirty(e.target); });
   document.addEventListener("submit", function (e) { dirtyForms.delete(e.target); dirtyForms.clear(); });
   window.addEventListener("beforeunload", function (e) {
     if (dirtyForms.size) { e.preventDefault(); e.returnValue = ""; }
+  });
+
+  // ---------- 拖曳調整順序（table[data-sortable]：拖曳每列的 ⠿） ----------
+
+  // 用 pointer 事件（滑鼠、觸控、觸控筆都可以），不用 HTML5 drag & drop：表格列在部分瀏覽器拖不動
+  var dragRow = null;
+  document.addEventListener("pointerdown", function (e) {
+    var h = e.target.closest && e.target.closest("table[data-sortable] .drag-handle");
+    if (!h || e.button > 0) return;
+    e.preventDefault();
+    dragRow = h.closest("tr");
+    dragRow.classList.add("dragging");
+    document.body.classList.add("sorting");
+  });
+  document.addEventListener("pointermove", function (e) {
+    if (!dragRow) return;
+    e.preventDefault();
+    var body = dragRow.parentNode;
+    Array.prototype.some.call(body.children, function (tr) {
+      if (tr === dragRow) return false;
+      var box = tr.getBoundingClientRect();
+      if (e.clientY < box.top || e.clientY > box.bottom) return false;
+      body.insertBefore(dragRow, e.clientY > box.top + box.height / 2 ? tr.nextSibling : tr);
+      return true;
+    });
+  });
+  function endDrag() {
+    if (!dragRow) return;
+    var tr = dragRow;
+    dragRow = null;
+    tr.classList.remove("dragging");
+    document.body.classList.remove("sorting");
+    markDirty(tr);
+    renumberRows(tr.closest("table"));
+  }
+  document.addEventListener("pointerup", endDrag);
+  document.addEventListener("pointercancel", endDrag);
+
+  // ---------- 自動儲存（form[data-autosave]）----------
+  // 1. 每分鐘：有修改就在背景送出（伺服器回 JSON 與新的 CSRF token，頁面開再久也不會過期）。
+  // 2. 每次輸入：內容另存一份在這台電腦的瀏覽器（localStorage）。登入逾時、網路中斷、
+  //    送出時 token 過期時，回到這一頁可以「還原」。成功存到伺服器後刪除。
+
+  var AUTOSAVE_MS = 60000;
+
+  function setCsrf(token) {
+    if (!token) return;
+    csrfToken = token;
+    var meta = document.querySelector('meta[name="csrf-token"]');
+    if (meta) meta.content = token;
+    document.querySelectorAll('input[name="csrf_token"]').forEach(function (i) { i.value = token; });
+  }
+
+  function storage() {
+    try { var k = "__t"; localStorage.setItem(k, k); localStorage.removeItem(k); return localStorage; }
+    catch (e) { return null; }
+  }
+
+  function serialize(form) {
+    var out = [];
+    Array.prototype.forEach.call(form.elements, function (el) {
+      if (!el.name || el.name === "csrf_token" || el.type === "file" || el.disabled || el.closest("template")) return;
+      if (el.type === "radio" || el.type === "checkbox") { if (el.checked) out.push([el.name, el.value, 1]); }
+      else out.push([el.name, el.value]);
+    });
+    return out;
+  }
+
+  function rowOf(form, prefix, i) {
+    var el = form.querySelector('[name^="' + prefix + "-" + i + '-"]');
+    return el ? el.closest(".record, tr") : null;
+  }
+
+  function restore(form, fields) {
+    // 新增過的記錄 / 列先建立，刪除過的移除，再依暫存的順序排列
+    var wanted = {};
+    fields.forEach(function (f) {
+      var m = /^([a-z]+)-(\d+)-/.exec(f[0]);
+      if (!m) return;
+      (wanted[m[1]] = wanted[m[1]] || []);
+      if (wanted[m[1]].indexOf(+m[2]) < 0) wanted[m[1]].push(+m[2]);
+    });
+    Object.keys(wanted).forEach(function (prefix) {
+      var tpl = form.querySelector('template[data-record-template="' + prefix + '"], template[data-row-template="' + prefix + '"]');
+      var box = form.querySelector('.record-container[data-prefix="' + prefix + '"]') ||
+        (form.querySelector('[data-row-container="' + prefix + '"]') || {}).tBodies;
+      if (box && box.length !== undefined) box = box[0];
+      if (!tpl || !box) return;
+      var table = box.closest("table");
+      if (table) box.dataset.next = Math.max(+(box.dataset.next || 0), +(table.dataset.next || 0));
+      wanted[prefix].forEach(function (i) { if (!rowOf(form, prefix, i)) cloneTemplate(tpl, box, i); });
+      Array.prototype.slice.call(box.children).forEach(function (row) {
+        var el = row.querySelector("[name]"), m = el && /^([a-z]+)-(\d+)-/.exec(el.name);
+        if (m && wanted[prefix].indexOf(+m[2]) < 0) row.remove();
+      });
+      wanted[prefix].forEach(function (i) { var r = rowOf(form, prefix, i); if (r) box.appendChild(r); });
+      var tbl = box.closest("table");
+      if (tbl) { tbl.dataset.next = box.dataset.next; renumberRows(tbl); }
+      var hint = box.parentElement.querySelector(".empty-hint");
+      if (hint) hint.hidden = box.children.length > 0;
+    });
+    Array.prototype.forEach.call(form.elements, function (el) {
+      if (el.type === "radio" || el.type === "checkbox") if (el.name) el.checked = false;
+    });
+    fields.forEach(function (f) {
+      var els = form.querySelectorAll('[name="' + f[0].replace(/"/g, '\\"') + '"]');
+      els.forEach(function (el) {
+        if (el.type === "radio" || el.type === "checkbox") { if (el.value === f[1]) el.checked = true; }
+        else el.value = f[1];
+      });
+    });
+    markDirty(form.querySelector("[name]") || form);
+    form.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function setupAutosave(form) {
+    var store = storage();
+    var key = "dr-draft:" + location.pathname;
+    var status = form.querySelector("[data-autosave-status]");
+    var version = 0, savedVersion = 0, busy = null, timer = null, localTimer = null;
+
+    function show(text, cls) {
+      if (!status) return;
+      status.textContent = text;
+      status.className = "autosave-status hint " + (cls || "");
+    }
+
+    function keepLocal() {
+      if (!store || !dirtyForms.has(form)) return;  // 沒有未儲存的修改就不暫存
+      try {
+        store.setItem(key, JSON.stringify({ t: Date.now(), base: form.dataset.updated || "", fields: serialize(form) }));
+      } catch (e) { /* 空間不足時略過 */ }
+    }
+    function dropLocal() { if (store) store.removeItem(key); }
+
+    function post(retry) {
+      var fd = new FormData(form);
+      fd.set("csrf_token", csrfToken);
+      return fetch(form.getAttribute("action") || location.href, {
+        method: "POST", body: fd, credentials: "same-origin",
+        headers: { "X-Autosave": "1", "X-CSRFToken": csrfToken, "Accept": "application/json" },
+      }).then(function (resp) {
+        var json = (resp.headers.get("Content-Type") || "").indexOf("application/json") >= 0;
+        if (!json) throw new Error(resp.redirected || resp.status === 401 ? "login" : "HTTP " + resp.status);
+        return resp.json().then(function (data) {
+          if (data.csrf) setCsrf(data.csrf);
+          if (data.error === "csrf" && !retry) {
+            return fetch("/csrf-token", { credentials: "same-origin", headers: { "Accept": "application/json" } })
+              .then(function (r) { if (r.status === 401) throw new Error("login"); return r.json(); })
+              .then(function (d) { setCsrf(d.csrf); return post(true); });
+          }
+          if (!data.ok) throw new Error(data.error === "csrf" ? "login" : (data.error || "HTTP " + resp.status));
+          return data;
+        });
+      });
+    }
+
+    function save() {
+      if (busy) return busy;
+      if (!dirtyForms.has(form) || savedVersion === version) return Promise.resolve(null);
+      var v = version;
+      show("自動儲存中…");
+      busy = post(false).then(function (data) {
+        savedVersion = v;
+        if (data.updated) form.dataset.updated = data.updated;  // 自己存的不算「別人更新過」
+        if (version === v) { dirtyForms.delete(form); clearTimeout(localTimer); dropLocal(); }
+        show("已自動儲存 " + data.saved_at, "ok-text");
+        return data;
+      }).catch(function (err) {
+        keepLocal();
+        show(err.message === "login"
+          ? "登入已逾時，內容暫存在這台電腦；請在新分頁重新登入，這頁會繼續自動儲存"
+          : "自動儲存失敗（" + err.message + "），內容暫存在這台電腦，稍後再試", "fail-text");
+        throw err;
+      }).finally(function () { busy = null; });
+      return busy;
+    }
+    form.autosave = function () { return save().catch(function () { return null; }); };
+
+    form.addEventListener("dirty", function () {
+      version++;
+      clearTimeout(localTimer);
+      localTimer = setTimeout(keepLocal, 1500);
+      if (!timer) show("有未儲存的修改，1 分鐘內自動儲存");
+    });
+    timer = setInterval(function () { save().catch(function () {}); }, AUTOSAVE_MS);
+    form.addEventListener("submit", function () { keepLocal(); clearInterval(timer); });
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "hidden") { keepLocal(); save().catch(function () {}); }
+    });
+
+    // 進入頁面：剛按儲存成功 → 刪除暫存；還有暫存 → 提示還原
+    if (!store) return;
+    var raw = store.getItem(key), draft = null;
+    try { draft = raw && JSON.parse(raw); } catch (e) { draft = null; }
+    if (!draft) return;
+    if (document.querySelector(".flash.success")) { dropLocal(); return; }
+    var bar = document.createElement("div");
+    bar.className = "flash warn autosave-restore";
+    var when = new Date(draft.t);
+    var newer = draft.base && form.dataset.updated && form.dataset.updated > draft.base;
+    bar.innerHTML = "這一頁有尚未儲存到系統的內容（暫存於 " + when.toLocaleString() + "）" +
+      (newer ? "；之後系統上的內容有人更新過，還原會覆蓋那些更新" : "") + "。 ";
+    var ok = document.createElement("button");
+    ok.type = "button"; ok.textContent = "還原";
+    var no = document.createElement("button");
+    no.type = "button"; no.className = "secondary"; no.textContent = "捨棄";
+    ok.addEventListener("click", function () {
+      restore(form, draft.fields || []);
+      bar.remove();
+      show("已還原暫存的內容，1 分鐘內自動儲存（或按儲存）");
+    });
+    no.addEventListener("click", function () { if (confirm("捨棄暫存的內容？")) { dropLocal(); bar.remove(); } });
+    bar.appendChild(ok); bar.appendChild(document.createTextNode(" ")); bar.appendChild(no);
+    form.parentNode.insertBefore(bar, form);
+  }
+  document.querySelectorAll("form[data-autosave]").forEach(setupAutosave);
+
+  // 「送出審核」前先把未儲存的修改存起來，避免送出的是舊內容
+  document.querySelectorAll('form[action$="/submit"]').forEach(function (f) {
+    f.addEventListener("submit", function (e) {
+      var pending = Array.prototype.filter.call(document.querySelectorAll("form[data-autosave]"), function (x) {
+        return dirtyForms.has(x) && x.autosave;
+      });
+      if (e.defaultPrevented || !pending.length || f.dataset.flushed) return;  // 確認視窗按了取消
+      e.preventDefault();
+      Promise.all(pending.map(function (x) { return x.autosave(); })).then(function (res) {
+        if (res.some(function (r) { return !r; })) {
+          alert("未儲存的修改存不進去（見頁面下方的訊息），請先處理後再送審。");
+          return;
+        }
+        dirtyForms.clear();
+        f.dataset.flushed = "1";
+        f.submit();
+      });
+    });
   });
 
   // ---------- 檢查表進度 ----------
@@ -250,6 +510,77 @@
       Promise.all(entries.map(function (en) { return walkEntry(en, "", out); })).then(function () {
         out.sort(function (a, b) { return a.path < b.path ? -1 : 1; });
         batchUpload(zone, out);
+      });
+    });
+  });
+
+  // ---------- 匯入歷史日報：逐檔送出，結果逐列顯示 ----------
+
+  document.querySelectorAll("[data-import-upload]").forEach(function (zone) {
+    var table = document.querySelector("[data-import-results]"), tbody = table.tBodies[0];
+    var bar = zone.querySelector("progress"), log = zone.querySelector(".import-log");
+    var LABEL = { imported: "已匯入", would_import: "可以匯入", skipped: "略過", error: "錯誤" };
+    function cell(tr, text, cls) {
+      var td = document.createElement("td"); td.textContent = text == null ? "" : String(text);
+      if (cls) td.className = cls; tr.appendChild(td); return td;
+    }
+    function addRow(r) {
+      var tr = document.createElement("tr");
+      cell(tr, r.file);
+      cell(tr, LABEL[r.status] || r.status, r.status === "error" ? "fail-text" : (r.status === "skipped" ? "warn" : "ok-text"));
+      var d = cell(tr, "");
+      if (r.report_id) { var a = document.createElement("a"); a.href = "/reports/" + r.report_id; a.textContent = r.date; d.appendChild(a); }
+      else d.textContent = r.date || "";
+      cell(tr, r.doc_no); cell(tr, r.author); cell(tr, r.alarms);
+      var c = r.counts || {}, parts = [];
+      Object.keys(c).forEach(function (k) { parts.push(k + " " + c[k].matched + "/" + c[k].rows); });
+      cell(tr, parts.join("、"));
+      var info = cell(tr, r.message || "");
+      if (r.warnings && r.warnings.length) {
+        var ul = document.createElement("ul");
+        r.warnings.forEach(function (w) { var li = document.createElement("li"); li.textContent = w; ul.appendChild(li); });
+        info.appendChild(ul);
+      }
+      tbody.appendChild(tr);
+    }
+    function run(files) {
+      files = files.filter(function (f) { return /\.xls[xm]$/i.test(f.name); });
+      if (!files.length) { alert("沒有 .xlsx / .xlsm 檔案"); return; }
+      files.sort(function (x, y) { return (x.webkitRelativePath || x.name) < (y.webkitRelativePath || y.name) ? -1 : 1; });
+      var dry = zone.querySelector("[data-import-dry]").checked;
+      if (!dry && !confirm("正式匯入 " + files.length + " 個檔案？匯入後為已結案日報，不能修改（可由系統管理員刪除後重匯）。")) return;
+      table.hidden = false; tbody.innerHTML = "";
+      bar.hidden = false; bar.max = files.length; bar.value = 0;
+      var n = { imported: 0, would_import: 0, skipped: 0, error: 0 };
+      var chain = Promise.resolve();
+      files.forEach(function (f) {
+        chain = chain.then(function () {
+          var fd = new FormData();
+          fd.append("files", f, f.name);
+          if (dry) fd.append("dry_run", "1");
+          return api(zone.dataset.importUpload, { method: "POST", body: fd })
+            .then(function (data) { (data.results || []).forEach(function (r) { n[r.status] = (n[r.status] || 0) + 1; addRow(r); }); })
+            .catch(function (err) { n.error++; addRow({ file: f.name, status: "error", message: err.message }); })
+            .then(function () {
+              bar.value += 1;
+              log.textContent = (dry ? "檢查 " : "匯入 ") + bar.value + " / " + files.length + "：" +
+                (dry ? "可以匯入 " + n.would_import : "已匯入 " + n.imported) + "、略過 " + n.skipped + "、錯誤 " + n.error;
+            });
+        });
+      });
+    }
+    zone.querySelectorAll("[data-import-files]").forEach(function (input) {
+      input.addEventListener("change", function () { var fs = Array.prototype.slice.call(input.files); input.value = ""; run(fs); });
+    });
+    ["dragenter", "dragover"].forEach(function (ev) { zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.add("over"); }); });
+    ["dragleave", "drop"].forEach(function (ev) { zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.remove("over"); }); });
+    zone.addEventListener("drop", function (e) {
+      var out = [], entries = Array.prototype.map.call(e.dataTransfer.items || [], function (i) {
+        return i.webkitGetAsEntry ? i.webkitGetAsEntry() : null;
+      }).filter(Boolean);
+      if (!entries.length) { run(Array.prototype.slice.call(e.dataTransfer.files)); return; }
+      Promise.all(entries.map(function (en) { return walkEntry(en, "", out); })).then(function () {
+        run(out.map(function (o) { return o.file; }));
       });
     });
   });

@@ -13,6 +13,7 @@
   {% if editable %}
   <template data-record-template="{{ prefix }}">{{ record_fields(prefix, '__i__', fields, none, true) }}</template>
   {% endif %}
+  {% if caller is defined %}{{ caller() }}{% endif %}
 </section>
 {% endmacro %}
 
@@ -80,7 +81,7 @@
 {# Alarm Summary 表格的一列 #}
 {% macro alarm_row(i, no, row, fields, editable) %}
 <tr>
-  <td class="center">{{ no }}</td>
+  <td class="center nowrap">{% if editable %}<span class="drag-handle" title="拖曳調整順序" aria-hidden="true">⠿</span>{% endif %}<span data-row-no>{{ no }}</span></td>
   {% for f, label in fields %}
   {% set v = (row|attr(f)) if row is not none else ('N' if f == 'false_alarm' else '') %}
   <td>
@@ -97,7 +98,8 @@
     {% endif %}
   </td>
   {% endfor %}
-  {% if editable %}<td><button type="button" class="link danger" data-remove-row>刪除</button></td>{% endif %}
+  {% if editable %}<td class="nowrap"><button type="button" class="link" data-row-move="up" title="往上">▲</button><button type="button" class="link" data-row-move="down" title="往下">▼</button>
+    <button type="button" class="link danger" data-remove-row>刪除</button></td>{% endif %}
 </tr>
 {% endmacro %}
 

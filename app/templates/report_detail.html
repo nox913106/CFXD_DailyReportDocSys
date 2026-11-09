@@ -21,6 +21,8 @@
     {% set fin = report.delivery if report.delivery and report.delivery.pdf_md5 else None %}
     {% if fin %}
     <a class="button" href="{{ url_for('views.final_pdf', report_id=report.id, download=1) }}">下載正式 PDF</a>
+    {% elif report.imported %}
+    <span class="hint">Excel 匯入，沒有正式 PDF</span>
     {% elif report.status == 'closed' %}
     <span class="hint">正式 PDF 產生中</span>
     {% else %}
@@ -31,6 +33,13 @@
 {% if fin %}
 <div class="card no-print">正式 PDF：<strong>{{ fin.pdf_name }}</strong>（{{ '%.1f'|format(fin.pdf_size / 1e6) }} MB）
   <div class="hint">MD5 <code>{{ fin.pdf_md5 }}</code> · SHA-256 <code>{{ fin.pdf_sha256 }}</code></div></div>
+{% endif %}
+{% if report.imported %}{% set m = report.import_info %}
+<div class="card no-print">從過去的 CheckList Excel 匯入：<strong>{{ m.file }}</strong>（{{ m.by }}，{{ (m.at or '')[:16].replace('T', ' ') }}）
+  {% if m.author %}<div class="hint">Excel 的 Recorded By：{{ m.author }}</div>{% endif %}
+  <div class="hint">只有 Excel 裡的內容（Alarm Summary、檢查表勾選與 Note）；封面記錄、照片、截圖與正式 PDF 不在 Excel 中。內容請看「告警」「檢查表」分頁。</div>
+  {% if m.warnings %}<details><summary>匯入警告 {{ m.warnings|length }} 則</summary><ul>{% for w in m.warnings %}<li>{{ w }}</li>{% endfor %}</ul></details>{% endif %}
+</div>
 {% endif %}
 {% if ocr_pending and report.status in ('draft', 'rejected', 'submitted') %}
 <div class="flash no-print">還有 {{ ocr_pending }} 張截圖正在辨識系統時間；辨識完成前不能送審或核准。</div>

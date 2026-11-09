@@ -454,7 +454,7 @@ def delete(report_id):
     report = get_report(report_id)
     d = perm.can_delete(current_user, report)
     if not d:
-        if report.status == "closed" or current_user.role in ("first_line", "viewer"):
+        if (report.status == "closed" and not report.imported) or current_user.role in ("first_line", "viewer"):
             abort(403)
         flash(d.reason, "error")
         return redirect(url_for("views.detail", report_id=report.id))
@@ -464,7 +464,8 @@ def delete(report_id):
     folder = os.path.join(current_app.config["UPLOAD_DIR"], str(report.id))
     db.session.add(AuditLog(action="delete_report", actor_id=current_user.id, target=report.doc_no,
                             detail=f"{report.report_date} {report.status_label}"))
-    teams.status_changed(report, report.status, "delete", current_user)
+    if not report.imported:
+        teams.status_changed(report, report.status, "delete", current_user)
     for log in report.review_logs:
         db.session.delete(log)
     db.session.delete(report)

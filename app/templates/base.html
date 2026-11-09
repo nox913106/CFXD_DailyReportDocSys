@@ -14,7 +14,9 @@
     {% if current_user.is_authenticated %}
       <span class="user">{{ current_user.name }}（{{ current_user.role_label }}{% if current_user.is_admin and not current_user.is_local_admin %}・系統管理員{% endif %}）
         {% if current_user.role != 'guest' %}· <a href="{{ url_for('views.archive') }}">正式文件</a>{% endif %}
-        {% if current_user.role in ('admin', 'file_manager', 'second_line') %}· <a href="{{ url_for('views.delegations') }}">代理設定</a>{% endif %}
+        {% if current_user.role in ('admin', 'file_manager', 'second_line') %}· <a href="{{ url_for('views.delegations') }}">代理設定</a>
+          · <a href="{{ url_for('items.index') }}">檢查項目</a>{% endif %}
+        {% if current_user.role in ('admin', 'file_manager') or current_user.is_admin %}· <a href="{{ url_for('imports.index') }}">匯入歷史日報</a>{% endif %}
         {% if current_user.is_admin %}· <a href="{{ url_for('settings.index') }}">系統設定</a>{% endif %}
         · <a href="{{ url_for('auth.logout') }}">登出</a></span>
     {% endif %}

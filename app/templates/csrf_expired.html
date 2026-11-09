@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}頁面已過期 - CFXD{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>頁面停留太久，這次送出沒有儲存</h2>
+  <p>為了安全，表單的驗證碼在頁面開啟一段時間後會失效（或登入已經失效）。</p>
+  <ol>
+    <li>按瀏覽器的「上一頁」回到編輯頁（或重新開啟該頁）。</li>
+    <li>頁面上方會出現「有尚未儲存的內容」，按「還原」，內容就會回來。</li>
+    <li>再按一次「儲存」。</li>
+  </ol>
+  <p class="hint">編輯頁每分鐘會自動儲存一次，並在你輸入時把內容暫存在這台電腦的瀏覽器，所以通常不會遺失。若需要重新登入，登入後回到同一頁即可還原。</p>
+  <p class="hint">{{ reason }}</p>
+</section>
+{% endblock %}

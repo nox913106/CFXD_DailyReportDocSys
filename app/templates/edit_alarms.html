@@ -1,7 +1,7 @@
 {% extends "report_base.html" %}
 {% import "macros.html" as m %}
 {% block tab %}
-<form method="post" data-dirty-guard>
+<form method="post" data-dirty-guard {% if report.editable %}data-autosave data-updated="{{ report.updated_at.isoformat() if report.updated_at }}"{% endif %}>
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <fieldset {{ 'disabled' if not report.editable }}>
   <section class="card">
@@ -15,7 +15,11 @@
   </section>
   </fieldset>
 
-  {{ m.record_list('truealarm', 'True Alarm Record（真實告警）', true_alarm_fields, report.true_alarms, report.editable) }}
+  {% call m.record_list('truealarm', 'True Alarm Record（真實告警）', true_alarm_fields, report.true_alarms, report.editable) %}
+  <h4>True Alarm Photo（告警照片 / 截圖）</h4>
+  <p class="hint">照片上傳後立即存檔（不用按儲存），文件中放在 True Alarm Record 的照片欄。</p>
+  {{ m.image_zone(report, 'alarm', alarm_images, report.editable) }}
+  {% endcall %}
 
   <section class="card">
     <div class="row-between">
@@ -29,7 +33,8 @@
       {% endif %}
     </div>
     <div class="table-scroll">
-    <table class="grid-table" data-row-container="alarmrow" data-next="{{ report.alarm_rows|length }}">
+    {% if report.editable %}<p class="hint">拖曳 ⠿ 或按 ▲▼ 調整順序，文件中的 No. 依畫面順序重新編號。</p>{% endif %}
+    <table class="grid-table" data-row-container="alarmrow" data-next="{{ report.alarm_rows|length }}" {{ 'data-sortable' if report.editable }}>
       <thead><tr><th>No.</th>{% for f, label in alarm_row_fields %}<th>{{ label }}</th>{% endfor %}{% if report.editable %}<th></th>{% endif %}</tr></thead>
       <tbody>
       {% for row in report.alarm_rows %}{{ m.alarm_row(loop.index0, loop.index, row, alarm_row_fields, report.editable) }}{% endfor %}
@@ -40,15 +45,10 @@
     <datalist id="alarm-categories">{% for c in alarm_categories %}<option value="{{ c }}">{% endfor %}</datalist>
   </section>
 
-  {% if report.editable %}<div class="sticky-save"><button type="submit">儲存</button></div>{% endif %}
+  {% if report.editable %}<div class="sticky-save"><span class="autosave-status hint" data-autosave-status>每分鐘自動儲存</span><button type="submit">儲存</button></div>{% endif %}
 </form>
 <form method="post" id="import-form" action="{{ url_for('editors.import_alarms', report_id=report.id) }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 </form>
-
-<section class="card">
-  <h3>True Alarm Screenshot（告警截圖）</h3>
-  {{ m.image_zone(report, 'alarm', alarm_images, report.editable) }}
-</section>
 {% endblock %}
 
