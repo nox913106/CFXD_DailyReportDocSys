@@ -98,9 +98,15 @@ def can_edit(user, report):
 
 
 def can_delete(user, report):
-    """刪除（釋放文件編號）：系統管理員、檔案管理員；二線管理員需經檔案管理員授權代理。已結案的不能刪除。"""
+    """刪除（釋放文件編號）：系統管理員、檔案管理員；二線管理員需經檔案管理員授權代理。
+    已結案的只有系統管理員能刪除，而且發送不能正在進行。"""
     if report.status == "closed" and not report.imported:
-        return Decision(False, None, "已結案的日報不能刪除。")
+        if not user.is_admin:
+            return Decision(False, None, "已結案的日報只有系統管理員可以刪除。")
+        d = report.delivery
+        if d and d.state in ("queued", "running"):
+            return Decision(False, None, "正式 PDF / 發送正在進行，完成或中止後才能刪除。")
+        return Decision(True, None, "")
     if report.imported:  # Excel 匯入錯了要能刪掉重匯
         return Decision(user.is_admin or user.role in ("admin", "file_manager"), None,
                         "Excel 匯入的日報只有檔案管理員、系統管理員可以刪除。")

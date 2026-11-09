@@ -422,3 +422,51 @@ def test_interrupted_delivery_becomes_retryable(app):
         db.session.commit()
         assert delivery.recover_interrupted(all_running=True) == 1
         assert db.session.get(Delivery, dl.id).state == "error"
+
+
+def test_admin_deletes_closed_report(app, tmp_path):
+    """已結案的日報：只有系統管理員能刪除；發送進行中不行；正式 PDF 移到 _deleted 保留。"""
+    import os
+    from datetime import datetime
+
+    from test_flow import _admin_browser
+
+    from app import db, docno
+    from app.models import AuditLog, Delivery, Report, User
+
+    app.instance_path = str(tmp_path / "instance")
+    admin = _admin_browser(app)
+    fm = _browser(app, "fm", "file_manager")
+    with app.app_context():
+        u = User.query.filter_by(username="fm").one()
+        d = dt.date(2026, 11, 6)
+        r = Report(report_date=d, doc_no=docno.doc_no(d), contractor_doc_no=docno.contractor_doc_no(d),
+                   author_id=u.id, status="closed")
+        db.session.add(r)
+        db.session.flush()
+        rel = "final_pdf/2026/11/x.pdf"
+        full = os.path.join(app.instance_path, rel)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        open(full, "wb").write(b"%PDF-1.4")
+        dl = Delivery(report=r, state="running", closed_by_id=u.id, run_after=datetime.now(), pdf_path=rel,
+                      pdf_name="x.pdf", pdf_size=8, pdf_md5="abc123", pdf_sha256="f" * 64)
+        db.session.add(dl)
+        db.session.commit()
+        rid, doc, did = r.id, r.doc_no, dl.id
+    assert fm.c.post(f"/reports/{rid}/delete", data={"csrf_token": fm.tok, "confirm_doc_no": doc}).status_code == 403
+    assert "刪除日報" not in fm.get(f"/reports/{rid}")
+    html = admin.get(f"/reports/{rid}")
+    assert "刪除日報" not in html  # 發送進行中
+    with app.app_context():
+        db.session.get(Delivery, did).state = "error"
+        db.session.commit()
+    html = admin.get(f"/reports/{rid}")
+    assert "刪除日報" in html and "已結案" in html and "_deleted" in html
+    html = admin.post(f"/reports/{rid}/delete", {"confirm_doc_no": doc})
+    assert "已刪除" in html
+    with app.app_context():
+        assert db.session.get(Report, rid) is None
+        log = AuditLog.query.filter_by(action="delete_report").one()
+        assert "_deleted" in log.detail and "abc123" in log.detail
+        assert not os.path.exists(full)
+        assert os.listdir(os.path.join(app.instance_path, "final_pdf", "_deleted"))

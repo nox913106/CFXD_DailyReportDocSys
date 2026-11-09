@@ -448,13 +448,29 @@ def _log(report, action, principal=None, comment=""):
                              on_behalf_of_id=principal.id if principal else None, comment=comment))
 
 
+def _set_aside_final_pdf(report):
+    """刪除已結案日報時，正式 PDF 不直接刪：移到 instance/final_pdf/_deleted/（保留 MD5 可查證），回傳相對路徑。"""
+    from .delivery import final_path
+
+    d = report.delivery
+    path = final_path(d) if d and d.pdf_path else None
+    if not path or not os.path.isfile(path):
+        return None
+    rel = os.path.join("final_pdf", "_deleted", f"{datetime.now():%Y%m%d-%H%M%S}_{os.path.basename(path)}")
+    dst = os.path.join(current_app.instance_path, rel)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    os.replace(path, dst)
+    return rel + (f"（MD5 {d.pdf_md5}）" if d.pdf_md5 else "")
+
+
 @bp.route("/reports/<int:report_id>/delete", methods=["POST"])
 def delete(report_id):
     """刪除日報（含截圖檔）。刪除後文件編號釋放：同一天可重新建立，編號也可以再用在其他日報。"""
     report = get_report(report_id)
     d = perm.can_delete(current_user, report)
     if not d:
-        if (report.status == "closed" and not report.imported) or current_user.role in ("first_line", "viewer"):
+        if (report.status == "closed" and not report.imported and not current_user.is_admin) \
+                or current_user.role in ("first_line", "viewer"):
             abort(403)
         flash(d.reason, "error")
         return redirect(url_for("views.detail", report_id=report.id))
@@ -462,8 +478,14 @@ def delete(report_id):
         flash("請輸入完整文件編號以確認刪除。", "error")
         return redirect(url_for("views.detail", report_id=report.id))
     folder = os.path.join(current_app.config["UPLOAD_DIR"], str(report.id))
-    db.session.add(AuditLog(action="delete_report", actor_id=current_user.id, target=report.doc_no,
-                            detail=f"{report.report_date} {report.status_label}"))
+    detail = f"{report.report_date} {report.status_label}"
+    final = _set_aside_final_pdf(report)
+    if final:
+        detail += f"；正式 PDF 移到 {final}"
+    dl = report.delivery
+    if dl and (dl.sp_web_url or dl.mail_sent_at):
+        detail += "；SharePoint 檔案與已寄出的 Mail 不受影響" + (f"（{dl.sp_web_url}）" if dl.sp_web_url else "")
+    db.session.add(AuditLog(action="delete_report", actor_id=current_user.id, target=report.doc_no, detail=detail))
     if not report.imported:
         teams.status_changed(report, report.status, "delete", current_user)
     for log in report.review_logs:

@@ -143,6 +143,10 @@
   <form method="post" action="{{ url_for('views.delete', report_id=report.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <p class="hint">刪除會移除整份日報與截圖，文件編號 {{ report.doc_no }} 會釋放，可以再使用（同一天可重新建立）。刪除紀錄留在稽核紀錄。</p>
+    {% if report.status == 'closed' and not report.imported %}
+    <p class="flash error">這是<b>已結案</b>的正式日報（只有系統管理員能刪除）。刪除後不會出現在「正式文件」頁；
+      正式 PDF 移到主機的 <code>instance/final_pdf/_deleted/</code> 保留。已上傳 SharePoint 的檔案與已寄出的日報 Mail 不會收回，需要時請另外處理。</p>
+    {% endif %}
     <label>請輸入文件編號 <code>{{ report.doc_no }}</code> 確認<input name="confirm_doc_no" autocomplete="off"></label>
     <button type="submit" class="danger">刪除日報</button>
   </form>
