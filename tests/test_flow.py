@@ -1714,7 +1714,7 @@ def test_close_and_delivery(app, monkeypatch):
         assert [r["emailAddress"]["address"] for r in msg["toRecipients"]] == ["customer@client.com", "pm@client.com"]
         assert msg["subject"] == "CFXD SLA Project - Daily Report_2026-11-04"
         assert "今日報告檔案：" in msg["body"]["content"]
-        assert "share123" in msg["body"]["content"] and d.pdf_md5 in msg["body"]["content"]
+        assert "share123" in msg["body"]["content"] and d.pdf_md5 not in msg["body"]["content"]
 
     html = carol.get(f"/reports/{rid}")
     assert html.count("☑") == 8 and "尚未上傳截圖" in html and "share123" in html and d.pdf_md5 in html
