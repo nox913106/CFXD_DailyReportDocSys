@@ -252,8 +252,10 @@ def mail_values(d, escape=False):
 
 
 def render_mail(d, c):
-    subject = _Fmt().format(c["mail_subject"] or "", **mail_values(d))
-    body = _Fmt().format(c["mail_body"] or "", **mail_values(d, escape=True))
+    extra = {"tracking_link": c.get("mail_tracking_url") or ""}
+    subject = _Fmt().format(c["mail_subject"] or "", **mail_values(d), **extra)
+    body = _Fmt().format(c["mail_body"] or "", **mail_values(d, escape=True),
+                         **{k: html.escape(v, quote=True) for k, v in extra.items()})
     return subject, body
 
 

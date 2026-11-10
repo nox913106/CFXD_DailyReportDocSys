@@ -1675,7 +1675,8 @@ def test_close_and_delivery(app, monkeypatch):
         for k, v in {"delivery_enabled": True, "graph_tenant_id": "tenant", "graph_client_id": "client",
                      "sp_site_url": "https://contoso.sharepoint.com/sites/CFXD", "sp_folder": "Daily/{yyyy}/{mm}",
                      "mail_sender": "dr@contoso.com", "mail_to": "customer@client.com, pm@client.com",
-                     "mail_cc": "boss@contoso.com"}.items():
+                     "mail_cc": "boss@contoso.com",
+                     "mail_tracking_url": "https://contoso.sharepoint.com/:x:/s/CFXD/track?e=1"}.items():
             sysconf.put(k, v)
         graph.set_secret("s3cret")
         db.session.commit()
@@ -1713,7 +1714,9 @@ def test_close_and_delivery(app, monkeypatch):
         assert path.endswith("/users/dr%40contoso.com/sendMail")
         assert [r["emailAddress"]["address"] for r in msg["toRecipients"]] == ["customer@client.com", "pm@client.com"]
         assert msg["subject"] == "CFXD SLA Project - Daily Report_2026-11-04"
-        assert "今日報告檔案：" in msg["body"]["content"]
+        assert "今日報告檔案：" in msg["body"]["content"] and "font-family:Calibri" in msg["body"]["content"]
+        assert ('今日紀錄及狀態追蹤：<a href="https://contoso.sharepoint.com/:x:/s/CFXD/track?e=1">'
+                "CFXD SLA Project Daily Issue Log and Status Tracking_20261101-1130.xlsx</a>") in msg["body"]["content"]
         assert "share123" in msg["body"]["content"] and d.pdf_md5 not in msg["body"]["content"]
 
     html = carol.get(f"/reports/{rid}")
@@ -2167,6 +2170,13 @@ def test_internal_teams_and_customer_mail_templates(app, monkeypatch):
             "mail_to": "jamie@contoso.com\nak@contoso.com", "mail_cc": "iti@contoso.com",
             "teams_status_change_title": "{old_status}→{status}", "teams_status_change_text": "{actor}",
             "teams_health_title": "健檢 {summary}", "teams_health_text": "{abnormal}", "teams_health_times": "08:30, 17:30"}
+    assert "請填寫今日紀錄及狀態追蹤檔連結" in root.post(
+        "/admin/settings/delivery", {**form, "mail_body": "{tracking_link}"}, status=400)
+    assert "追蹤檔連結應以 https://" in root.post(
+        "/admin/settings/delivery", {**form, "mail_tracking_url": "x"}, status=400)
+    html = root.post("/admin/settings/delivery/preview", {**form, "mail_body": "<a href='{tracking_link}'>t</a>",
+                                                          "mail_tracking_url": "https://sp.example.com/:x:/t?e=1"})
+    assert "https://sp.example.com/:x:/t?e=1" in html
     assert "Teams Workflow 網址應以 https://" in root.post("/admin/settings/delivery", {**form, "teams_webhook": "nope"}, status=400)
     html = root.post("/admin/settings/delivery/preview", form)
     assert "日報 CFXD-SCA-RLY-DPR-000903" in html and "提醒 2026-11-10" in html and "srcdoc=" in html

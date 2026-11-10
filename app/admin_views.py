@@ -542,7 +542,7 @@ def recent_audit(limit=50):
 # ---------------------------------------------------------------- 發送與通知（對外：SharePoint + 正式 Mail；內部：Teams）
 
 DELIVERY_FORM = ("graph_tenant_id", "graph_client_id", "sp_site_url", "sp_library", "sp_folder", "sp_link_scope",
-                 "mail_sender", "mail_to", "mail_cc", "mail_subject", "mail_body", "reminder_time", "deadline_time")
+                 "mail_sender", "mail_to", "mail_cc", "mail_tracking_url", "mail_subject", "mail_body", "reminder_time", "deadline_time")
 LINK_SCOPES = {"organization": "公司內部（需登入公司帳號）", "anonymous": "任何有連結的人",
                "none": "不建立分享連結（沿用文件庫權限，只給檔案網址）"}
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -600,6 +600,10 @@ def _check_delivery(c):
         return "寄件信箱只能填一個"
     if c["sp_site_url"] and not re.match(r"^https://[^/\s]+(/\S*)?$", c["sp_site_url"]):
         return "SharePoint 網站網址格式應為 https://公司.sharepoint.com/sites/網站名稱"
+    if c["mail_tracking_url"] and not re.match(r"^https://[^/\s]+/\S+$", c["mail_tracking_url"]):
+        return "追蹤檔連結應以 https:// 開頭（在 SharePoint 對檔案按「複製連結」取得）"
+    if "{tracking_link}" in c["mail_body"] and not c["mail_tracking_url"]:
+        return "內容模版用了 {tracking_link}，請填寫今日紀錄及狀態追蹤檔連結（或從模版拿掉那一行）"
     url = request.form.get("teams_webhook", "").strip()
     if url and not re.match(r"^https://[^/\s]+/\S+$", url):
         return "Teams Workflow 網址應以 https:// 開頭（在 Teams 建立 Workflow 後複製的完整網址）"
@@ -692,8 +696,9 @@ def _render_report_mail(c):
 
     import html as _html
 
-    subject = _Fmt().format(c["mail_subject"] or "", **MAIL_SAMPLE)
-    body = _Fmt().format(c["mail_body"] or "", **{k: _html.escape(str(v)) for k, v in MAIL_SAMPLE.items()})
+    values = {**MAIL_SAMPLE, "tracking_link": c.get("mail_tracking_url") or ""}
+    subject = _Fmt().format(c["mail_subject"] or "", **values)
+    body = _Fmt().format(c["mail_body"] or "", **{k: _html.escape(str(v)) for k, v in values.items()})
     return subject, body
 
 

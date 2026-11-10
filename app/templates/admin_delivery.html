@@ -70,10 +70,11 @@
       <label>寄件信箱<input name="mail_sender" value="{{ c.mail_sender }}" placeholder="dailyreport@company.com"></label>
       <label class="wide">收件人（多個用逗號或換行分隔）<textarea name="mail_to" rows="2">{{ c.mail_to }}</textarea></label>
       <label class="wide">副本<textarea name="mail_cc" rows="2">{{ c.mail_cc }}</textarea></label>
+      <label class="wide">今日紀錄及狀態追蹤檔連結（SharePoint 上固定的那個 xlsx，模版用 {tracking_link}）<input name="mail_tracking_url" value="{{ c.mail_tracking_url }}" placeholder="https://company.sharepoint.com/:x:/s/…"></label>
       <label class="wide">主旨模版<input name="mail_subject" value="{{ c.mail_subject }}"></label>
-      <label class="wide">內容模版（HTML）<textarea name="mail_body" rows="7" spellcheck="false">{{ c.mail_body }}</textarea></label>
+      <label class="wide">內容模版（HTML）<textarea name="mail_body" rows="9" spellcheck="false">{{ c.mail_body }}</textarea></label>
     </div>
-    <p class="hint">可代入：{doc_no} 文件編號、{contractor_doc_no}、{date} 日期、{revision} 版次、{filename} 檔名、{link} SharePoint 連結、
+    <p class="hint">可代入：{doc_no} 文件編號、{contractor_doc_no}、{date} 日期、{revision} 版次、{filename} 檔名、{link} SharePoint 連結、{tracking_link} 追蹤檔連結、
       {md5}、{sha256}、{approver} 核准人、{yyyymmdd}（例 20261110）、{month_range}（當月區間，例 20261101-1130，
       可用於月度追蹤表檔名）。收件人與副本都是內部人員信箱。</p>
     <div class="actions">

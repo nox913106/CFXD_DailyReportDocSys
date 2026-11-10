@@ -50,8 +50,14 @@ DEFAULTS = {
     "mail_to": "",
     "mail_cc": "",
     "mail_subject": "CFXD SLA Project - Daily Report_{date}",
-    "mail_body": ("今日報告檔案：<a href=\"{link}\">{filename}</a><br><br><br>"
-                  "<i>Best regards,</i><br>"),
+    # 月度追蹤表：SharePoint 上固定同一個檔案，連結存在設定裡（不寫進程式），模版用 {tracking_link}
+    "mail_tracking_url": "",
+    # 字型、段距都寫在 inline style：Graph 寄出的信沒有 Outlook 預設樣式，不寫會變成新細明體 / Times New Roman
+    "mail_body": ('<div style="font-family:Calibri,\'Microsoft JhengHei\',Arial,sans-serif;font-size:12pt;color:#000">\n'
+                  '<p style="margin:0 0 24pt">今日報告檔案：<a href="{link}">{filename}</a></p>\n'
+                  '<p style="margin:0 0 24pt">今日紀錄及狀態追蹤：<a href="{tracking_link}">'
+                  'CFXD SLA Project Daily Issue Log and Status Tracking_{month_range}.xlsx</a></p>\n'
+                  '<p style="margin:0"><i>Best regards,</i></p>\n</div>'),
     # 每日提醒：期限前還沒完成發送，寄信給二線人員
     "reminder_enabled": True,
     "reminder_time": "12:30",

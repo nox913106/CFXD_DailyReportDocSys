@@ -37,7 +37,7 @@ def _login_base():
 
 def config():
     keys = ("graph_tenant_id", "graph_client_id", "sp_site_url", "sp_library", "sp_folder", "sp_link_scope",
-            "sp_link_expire_days", "mail_sender", "mail_to", "mail_cc", "mail_subject", "mail_body")
+            "sp_link_expire_days", "mail_sender", "mail_to", "mail_cc", "mail_tracking_url", "mail_subject", "mail_body")
     c = sysconf.many(keys)
     c["client_secret"] = secret()
     return c
