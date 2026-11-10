@@ -1546,6 +1546,7 @@ class FakeGraph:
 
         g = self
         self.uploads, self.mails, self.links, self.fail = {}, [], [], set()
+        self.tracking = {"CFXD SLA Project Daily Issue Log and Status Tracking_20261101-1130.xlsx"}  # SharePoint 上已有的追蹤檔
 
         class H(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):
@@ -1578,6 +1579,8 @@ class FakeGraph:
                         g.fail.discard("link")
                         return self._send(403, {"error": {"message": "Sharing is disabled for this site"}})
                     g.links.append(json.loads(body))
+                    if "/items/track-" in p:
+                        return self._send(200, {"link": {"webUrl": "https://contoso.sharepoint.com/:x:/s/CFXD/" + p.split("/items/")[1].split("/")[0]}})
                     return self._send(200, {"link": {"webUrl": "https://contoso.sharepoint.com/:b:/s/CFXD/share123"}})
                 if p.endswith("/sendMail"):
                     if "mail" in g.fail:
@@ -1593,6 +1596,12 @@ class FakeGraph:
                     return self._send(200, {"id": "site1"})
                 if p == "/v1.0/sites/site1/drive":
                     return self._send(200, {"id": "drive1", "name": "Documents"})
+                if p.startswith("/v1.0/drives/drive1/root/search(q="):
+                    import urllib.parse
+                    q = urllib.parse.unquote(p.split("q='", 1)[1].rsplit("')", 1)[0])
+                    hits = [{"id": "track-" + n[-14:-5], "name": n, "webUrl": "https://x/" + n, "file": {}}
+                            for n in g.tracking if q.lower() in n.lower()]
+                    return self._send(200, {"value": hits + [{"id": "f", "name": q, "folder": {}}]})
                 self._send(404, {"error": {"message": "no route " + p}})
 
             def do_PUT(self):
@@ -1675,8 +1684,7 @@ def test_close_and_delivery(app, monkeypatch):
         for k, v in {"delivery_enabled": True, "graph_tenant_id": "tenant", "graph_client_id": "client",
                      "sp_site_url": "https://contoso.sharepoint.com/sites/CFXD", "sp_folder": "Daily/{yyyy}/{mm}",
                      "mail_sender": "dr@contoso.com", "mail_to": "customer@client.com, pm@client.com",
-                     "mail_cc": "boss@contoso.com",
-                     "mail_tracking_url": "https://contoso.sharepoint.com/:x:/s/CFXD/track?e=1"}.items():
+                     "mail_cc": "boss@contoso.com"}.items():
             sysconf.put(k, v)
         graph.set_secret("s3cret")
         db.session.commit()
@@ -1691,7 +1699,8 @@ def test_close_and_delivery(app, monkeypatch):
         assert d.pdf_md5 == hashlib.md5(pdf_bytes).hexdigest() and calls == [False]
         assert bytes(fake.uploads[fake.last_path]) == pdf_bytes
         assert "/root:/Daily/2026/11/CFXD-SCA-RLY-DPR-000897_0_IFI_2026-11-04_CFXD_SLA_Daily_Work_Report.pdf:" in fake.last_path
-        assert fake.links == [{"type": "view", "scope": "organization"}]
+        # 日報 PDF 的連結，加上寄信前找到的當月追蹤檔連結（寄信失敗，已查找一次）
+        assert fake.links == [{"type": "view", "scope": "organization"}] * 2
 
     # 中止時首頁與日報頁都看得到；一線不能重試，二線可以，從寄信那一步繼續
     assert "發送中止" in carol.get("/") and "mailbox unavailable" in carol.get(f"/reports/{rid}")
@@ -1715,7 +1724,7 @@ def test_close_and_delivery(app, monkeypatch):
         assert [r["emailAddress"]["address"] for r in msg["toRecipients"]] == ["customer@client.com", "pm@client.com"]
         assert msg["subject"] == "CFXD SLA Project - Daily Report_2026-11-04"
         assert "今日報告檔案：" in msg["body"]["content"] and "font-family:Calibri" in msg["body"]["content"]
-        assert ('今日紀錄及狀態追蹤：<a href="https://contoso.sharepoint.com/:x:/s/CFXD/track?e=1">'
+        assert ('今日紀錄及狀態追蹤：<a href="https://contoso.sharepoint.com/:x:/s/CFXD/track-1101-1130">'
                 "CFXD SLA Project Daily Issue Log and Status Tracking_20261101-1130.xlsx</a>") in msg["body"]["content"]
         assert "share123" in msg["body"]["content"] and d.pdf_md5 not in msg["body"]["content"]
 
@@ -1733,6 +1742,21 @@ def test_close_and_delivery(app, monkeypatch):
     for url in (f"/reports/{rid}", f"/reports/{rid}/pdf", f"/reports/{rid}/basic", "/delegations", "/admin/users"):
         assert vic.c.get(url).status_code == 403, url
     vic.post("/reports/new", {"report_date": "2026-11-09"}, status=403)
+
+    # 新月份的追蹤檔還沒建立：寄信那一步中止，說明找不到哪個檔案
+    with app.app_context():
+        from datetime import date
+
+        import pytest
+
+        from app import graph
+
+        with pytest.raises(graph.GraphError, match="找不到本月追蹤檔「CFXD SLA Project Daily Issue Log and Status Tracking_20261201-1231.xlsx」"):
+            graph.tracking_file(graph.config(), date(2026, 12, 3))
+        sysconf.put("tracking_folder", "Track/{yyyy}")
+        db.session.commit()
+        with pytest.raises(graph.GraphError, match="在「Documents/Track/2026」找不到本月追蹤檔"):
+            graph.tracking_file(graph.config(), date(2026, 12, 3))
     fake.close()
 
 
@@ -2170,13 +2194,13 @@ def test_internal_teams_and_customer_mail_templates(app, monkeypatch):
             "mail_to": "jamie@contoso.com\nak@contoso.com", "mail_cc": "iti@contoso.com",
             "teams_status_change_title": "{old_status}→{status}", "teams_status_change_text": "{actor}",
             "teams_health_title": "健檢 {summary}", "teams_health_text": "{abnormal}", "teams_health_times": "08:30, 17:30"}
-    assert "請填寫今日紀錄及狀態追蹤檔連結" in root.post(
+    assert "請填寫追蹤檔檔名" in root.post(
         "/admin/settings/delivery", {**form, "mail_body": "{tracking_link}"}, status=400)
-    assert "追蹤檔連結應以 https://" in root.post(
-        "/admin/settings/delivery", {**form, "mail_tracking_url": "x"}, status=400)
-    html = root.post("/admin/settings/delivery/preview", {**form, "mail_body": "<a href='{tracking_link}'>t</a>",
-                                                          "mail_tracking_url": "https://sp.example.com/:x:/t?e=1"})
-    assert "https://sp.example.com/:x:/t?e=1" in html
+    assert "追蹤檔所在網站網址格式" in root.post(
+        "/admin/settings/delivery", {**form, "tracking_site_url": "x"}, status=400)
+    html = root.post("/admin/settings/delivery/preview", {**form, "mail_body": "<a href='{tracking_link}'>{tracking_name}</a>",
+                                                          "tracking_name": "Track_{month_range}.xlsx"})
+    assert "Track_20261101-1130.xlsx" in html and "自動查找當月檔案" in html
     assert "Teams Workflow 網址應以 https://" in root.post("/admin/settings/delivery", {**form, "teams_webhook": "nope"}, status=400)
     html = root.post("/admin/settings/delivery/preview", form)
     assert "日報 CFXD-SCA-RLY-DPR-000903" in html and "提醒 2026-11-10" in html and "srcdoc=" in html

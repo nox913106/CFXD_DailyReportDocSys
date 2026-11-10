@@ -6,7 +6,7 @@
 import os
 import re
 import shutil
-from datetime import datetime
+from datetime import date, datetime
 
 from flask import abort, current_app, flash, redirect, render_template, request, send_file, url_for
 from flask_login import current_user
@@ -542,7 +542,8 @@ def recent_audit(limit=50):
 # ---------------------------------------------------------------- 發送與通知（對外：SharePoint + 正式 Mail；內部：Teams）
 
 DELIVERY_FORM = ("graph_tenant_id", "graph_client_id", "sp_site_url", "sp_library", "sp_folder", "sp_link_scope",
-                 "mail_sender", "mail_to", "mail_cc", "mail_tracking_url", "mail_subject", "mail_body", "reminder_time", "deadline_time")
+                 "mail_sender", "mail_to", "mail_cc", "mail_subject", "mail_body", "reminder_time",
+                 "tracking_site_url", "tracking_library", "tracking_folder", "tracking_name", "deadline_time")
 LINK_SCOPES = {"organization": "公司內部（需登入公司帳號）", "anonymous": "任何有連結的人",
                "none": "不建立分享連結（沿用文件庫權限，只給檔案網址）"}
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -600,10 +601,12 @@ def _check_delivery(c):
         return "寄件信箱只能填一個"
     if c["sp_site_url"] and not re.match(r"^https://[^/\s]+(/\S*)?$", c["sp_site_url"]):
         return "SharePoint 網站網址格式應為 https://公司.sharepoint.com/sites/網站名稱"
-    if c["mail_tracking_url"] and not re.match(r"^https://[^/\s]+/\S+$", c["mail_tracking_url"]):
-        return "追蹤檔連結應以 https:// 開頭（在 SharePoint 對檔案按「複製連結」取得）"
-    if "{tracking_link}" in c["mail_body"] and not c["mail_tracking_url"]:
-        return "內容模版用了 {tracking_link}，請填寫今日紀錄及狀態追蹤檔連結（或從模版拿掉那一行）"
+    if c["tracking_site_url"] and not re.match(r"^https://[^/\s]+(/\S*)?$", c["tracking_site_url"]):
+        return "追蹤檔所在網站網址格式應為 https://公司.sharepoint.com/sites/網站名稱（同一個網站可留空白）"
+    if "{tracking_" in c["mail_subject"] + c["mail_body"] and not c["tracking_name"]:
+        return "模版用了 {tracking_link} / {tracking_name}，請填寫追蹤檔檔名（或從模版拿掉那一行）"
+    if "/" in c["tracking_name"] or "\\" in c["tracking_name"]:
+        return "追蹤檔檔名不能包含 / 或 \\，資料夾請填在「追蹤檔資料夾」"
     url = request.form.get("teams_webhook", "").strip()
     if url and not re.match(r"^https://[^/\s]+/\S+$", url):
         return "Teams Workflow 網址應以 https:// 開頭（在 Teams 建立 Workflow 後複製的完整網址）"
@@ -691,12 +694,18 @@ def delivery_test():
     return _delivery_page(c, steps)
 
 
-def _render_report_mail(c):
+def _render_report_mail(c, tracking=None):
+    """範例資料；tracking = (檔名, 連結) 時用實際查到的追蹤檔（測試信），否則用範例。"""
     from .delivery import _Fmt
+    from .graph import _fill
 
     import html as _html
 
-    values = {**MAIL_SAMPLE, "tracking_link": c.get("mail_tracking_url") or ""}
+    name = _fill(c.get("tracking_name") or "", date(2026, 11, 10))
+    values = {**MAIL_SAMPLE, "tracking_name": name,
+              "tracking_link": "https://contoso.sharepoint.com/:x:/s/CFXD/（寄出時依檔名自動查找當月檔案）"}
+    if tracking:
+        values.update(tracking_name=tracking[0], tracking_link=tracking[1])
     subject = _Fmt().format(c["mail_subject"] or "", **values)
     body = _Fmt().format(c["mail_body"] or "", **{k: _html.escape(str(v)) for k, v in values.items()})
     return subject, body
@@ -714,12 +723,21 @@ def delivery_test_mail():
     if miss or not to:
         steps = [(False, "設定", "還沒填：" + "、".join(miss) if miss else "請填寫測試收件人")]
         return _delivery_page(c, steps)
-    subject, body = _render_report_mail(c)
+    from .delivery import uses_tracking
+
+    steps, tracking = [], None
+    if uses_tracking(c):  # 用今天的月份實際到 SharePoint 找追蹤檔，連結是真的
+        try:
+            tracking = graph.tracking_file(gc, datetime.now().date())
+            steps.append((True, "今日紀錄及狀態追蹤", f"找到本月檔案「{tracking[0]}」"))
+        except graph.GraphError as e:
+            return _delivery_page(c, [(False, "今日紀錄及狀態追蹤", str(e))])
+    subject, body = _render_report_mail(c, tracking)
     try:
         graph.send_mail(gc, to, "[測試] " + subject, body)
-        steps = [(True, "寄測試信", f"已由 {gc['mail_sender']} 用日報 Mail 模版（範例資料）寄給 {', '.join(to)}")]
+        steps.append((True, "寄測試信", f"已由 {gc['mail_sender']} 用日報 Mail 模版（範例資料）寄給 {', '.join(to)}"))
     except graph.GraphError as e:
-        steps = [(False, "寄測試信", str(e))]
+        steps.append((False, "寄測試信", str(e)))
     return _delivery_page(c, steps)
 
 

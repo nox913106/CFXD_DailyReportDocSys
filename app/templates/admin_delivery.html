@@ -70,11 +70,22 @@
       <label>寄件信箱<input name="mail_sender" value="{{ c.mail_sender }}" placeholder="dailyreport@company.com"></label>
       <label class="wide">收件人（多個用逗號或換行分隔）<textarea name="mail_to" rows="2">{{ c.mail_to }}</textarea></label>
       <label class="wide">副本<textarea name="mail_cc" rows="2">{{ c.mail_cc }}</textarea></label>
-      <label class="wide">今日紀錄及狀態追蹤檔連結（SharePoint 上固定的那個 xlsx，模版用 {tracking_link}）<input name="mail_tracking_url" value="{{ c.mail_tracking_url }}" placeholder="https://company.sharepoint.com/:x:/s/…"></label>
       <label class="wide">主旨模版<input name="mail_subject" value="{{ c.mail_subject }}"></label>
       <label class="wide">內容模版（HTML）<textarea name="mail_body" rows="9" spellcheck="false">{{ c.mail_body }}</textarea></label>
     </div>
-    <p class="hint">可代入：{doc_no} 文件編號、{contractor_doc_no}、{date} 日期、{revision} 版次、{filename} 檔名、{link} SharePoint 連結、{tracking_link} 追蹤檔連結、
+    <h4>今日紀錄及狀態追蹤（每月一個 xlsx）</h4>
+    <p class="hint">每月在 SharePoint 開一個新檔案。寄信時系統依下面的檔名找日報月份的那一個檔案，建立分享連結，放進模版的
+      {tracking_link}（檔名是 {tracking_name}）。找不到檔案時發送會中止並通知 Teams，建好檔案後按「重試」即可。
+      「寄測試信」會實際找本月的檔案。</p>
+    <div class="form-grid">
+      <label class="wide">檔名<input name="tracking_name" value="{{ c.tracking_name }}" placeholder="… Status Tracking_{month_range}.xlsx"></label>
+      <label class="wide">所在網站（空白 = 與日報同一個網站）<input name="tracking_site_url" value="{{ c.tracking_site_url }}" placeholder="https://company.sharepoint.com/sites/…"></label>
+      <label>文件庫（空白 = 網站預設）<input name="tracking_library" value="{{ c.tracking_library }}"></label>
+      <label>資料夾（空白 = 整個文件庫依檔名搜尋）<input name="tracking_folder" value="{{ c.tracking_folder }}" placeholder="例 Tracking/{yyyy}"></label>
+    </div>
+    <p class="hint">檔名與資料夾可用 {yyyy} {mm} {yyyymm} {month_range}（例 20261101-1130）。
+      應用程式若用 Sites.Selected 權限，追蹤檔所在的網站也要授權。</p>
+    <p class="hint">可代入：{doc_no} 文件編號、{contractor_doc_no}、{date} 日期、{revision} 版次、{filename} 檔名、{link} SharePoint 連結、{tracking_link} / {tracking_name} 本月追蹤檔連結與檔名、
       {md5}、{sha256}、{approver} 核准人、{yyyymmdd}（例 20261110）、{month_range}（當月區間，例 20261101-1130，
       可用於月度追蹤表檔名）。收件人與副本都是內部人員信箱。</p>
     <div class="actions">

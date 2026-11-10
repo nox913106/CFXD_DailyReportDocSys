@@ -8,6 +8,7 @@
 
 import json
 import time
+from datetime import timedelta
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -37,7 +38,8 @@ def _login_base():
 
 def config():
     keys = ("graph_tenant_id", "graph_client_id", "sp_site_url", "sp_library", "sp_folder", "sp_link_scope",
-            "sp_link_expire_days", "mail_sender", "mail_to", "mail_cc", "mail_tracking_url", "mail_subject", "mail_body")
+            "sp_link_expire_days", "mail_sender", "mail_to", "mail_cc", "mail_subject", "mail_body",
+            "tracking_site_url", "tracking_library", "tracking_folder", "tracking_name")
     c = sysconf.many(keys)
     c["client_secret"] = secret()
     return c
@@ -192,6 +194,49 @@ def share_link(c, drive_id, item_id, web_url):
     if not url:
         raise GraphError("建立分享連結失敗：回應沒有連結")
     return url
+
+
+def month_values(d0):
+    nxt = d0.replace(day=28) + timedelta(days=4)
+    month_end = nxt - timedelta(days=nxt.day)  # 當月最後一天
+    return {"yyyy": f"{d0:%Y}", "mm": f"{d0:%m}", "dd": f"{d0:%d}", "yyyymm": f"{d0:%Y%m}",
+            "yyyymmdd": f"{d0:%Y%m%d}", "month_range": f"{d0:%Y%m}01-{month_end:%m%d}"}
+
+
+def _fill(tpl, d0):
+    for k, v in month_values(d0).items():
+        tpl = tpl.replace("{" + k + "}", v)
+    return tpl
+
+
+def tracking_file(c, d0):
+    """當月的今日紀錄及狀態追蹤 xlsx：依檔名到 SharePoint 找，回傳 (檔名, 分享連結)。找不到就 GraphError。"""
+    name = _fill((c.get("tracking_name") or "").strip(), d0)
+    if not name:
+        raise GraphError("沒有設定追蹤檔檔名（系統設定 → 發送與通知）")
+    other = (c.get("tracking_site_url") or "").strip()
+    sc = {**c, "sp_site_url": other or c.get("sp_site_url"),
+          "sp_library": (c.get("tracking_library") or "").strip() or ("" if other else c.get("sp_library") or "")}
+    _, drive_id, drive_name = site_and_drive(sc)
+    folder = _fill((c.get("tracking_folder") or "").strip().strip("/"), d0)
+    where = f"「{drive_name}/{folder}」" if folder else f"文件庫「{drive_name}」"
+    if folder:
+        rel = "/".join(urllib.parse.quote(p) for p in [*filter(None, folder.split("/")), name])
+        try:
+            item = call(c, "GET", f"/drives/{drive_id}/root:/{rel}")
+        except GraphError as e:
+            if "HTTP 404" in str(e):
+                raise GraphError(f"在{where}找不到本月追蹤檔「{name}」，請確認已建立新月份的檔案") from None
+            raise
+    else:
+        q = urllib.parse.quote(name.replace("'", "''"))
+        found = [i for i in call(c, "GET", f"/drives/{drive_id}/root/search(q='{q}')").get("value", [])
+                 if (i.get("name") or "").lower() == name.lower() and "folder" not in i]
+        if not found:
+            raise GraphError(f"在{where}找不到本月追蹤檔「{name}」，請確認已建立新月份的檔案"
+                             "（剛建立的檔案 SharePoint 可能要幾分鐘才搜尋得到；填寫資料夾可直接定位）")
+        item = max(found, key=lambda i: i.get("lastModifiedDateTime") or "")
+    return name, share_link(c, drive_id, item["id"], item.get("webUrl", ""))
 
 
 # ---------------------------------------------------------------- 寄信
