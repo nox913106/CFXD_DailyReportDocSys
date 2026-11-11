@@ -92,7 +92,7 @@
 <section class="card">
   <h3>權限說明</h3>
   <div class="tablewrap">
-  <table class="list perm-matrix">
+  <div class="table-scroll"><table class="list perm-matrix">
     <tr><th>動作</th>{% for key, label in matrix_roles %}<th class="center">{{ label }}</th>{% endfor %}</tr>
     {% for group, rows in matrix %}
     <tr class="group"><td colspan="{{ matrix_roles|length + 1 }}">{{ group }}</td></tr>
@@ -101,20 +101,21 @@
       {% for m in marks %}<td class="center mark-{{ m }}" title="{{ {'y': '可以', 'n': '不可以', 'd': '經授權代理時可以'}[m] }}">{{ {'y': '✔', 'n': '✘', 'd': '✔*'}[m] }}</td>{% endfor %}</tr>
     {% endfor %}
     {% endfor %}
-  </table>
+  </table></div>
   </div>
   <ul class="hint">{% for n in matrix_notes %}<li>{{ n }}</li>{% endfor %}</ul>
 </section>
 
 <section class="card">
   <h3>稽核紀錄（最近 50 筆）</h3>
-  <table class="list">
+  <div class="table-scroll"><table class="list audit">
+    <colgroup><col class="c-time"><col class="c-act"><col class="c-who"><col class="c-target"><col></colgroup>
     <tr><th>時間</th><th>動作</th><th>操作者</th><th>對象</th><th>內容</th></tr>
     {% for l in logs %}
     <tr><td>{{ l.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
       <td>{{ audit_labels.get(l.action, l.action) }}</td>
       <td>{{ l.actor.name if l.actor else '指令' }}</td><td>{{ l.target }}</td><td>{{ l.detail }}</td></tr>
     {% else %}<tr><td colspan="5" class="hint">尚無紀錄。</td></tr>{% endfor %}
-  </table>
+  </table></div>
 </section>
 {% endblock %}

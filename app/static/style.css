@@ -261,3 +261,11 @@ iframe.mail-preview { width: 100%; height: 220px; border: 1px solid #d0d7de; bor
 body.sorting { cursor: grabbing; user-select: none; }
 tr.dragging { opacity: .5; background: #ddf4ff; }
 .records h4 { margin: 18px 0 4px; }
+/* 稽核紀錄：固定欄寬，長檔名 / 路徑在欄內換行，不撐破卡片 */
+table.audit { table-layout: fixed; width: 100%; min-width: 640px; }
+table.audit .c-time { width: 9.5em; }
+table.audit .c-act { width: 7.5em; }
+table.audit .c-who { width: 8em; }
+table.audit .c-target { width: 15em; }
+table.audit td { overflow-wrap: anywhere; vertical-align: top; }
+table.audit td:first-child, table.audit td:nth-child(2) { white-space: nowrap; overflow-wrap: normal; }
