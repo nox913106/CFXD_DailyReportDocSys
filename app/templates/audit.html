@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}稽核紀錄 - CFXD{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>
+{% include "_admin_nav.html" %}
+<section class="card">
+  <h3>稽核紀錄查詢</h3>
+  <p class="hint">以天為單位查詢（起訖日期都包含，最多 366 天），可再依動作、操作者、對象、內容篩選。
+    稽核紀錄不會隨日報刪除，也不能在畫面上修改或刪除。匯出 CSV 本身也會記錄一筆。</p>
+  <form method="get" action="{{ url_for('views.audit') }}" class="audit-filter">
+    <div class="form-grid">
+      <label>起日<input type="date" name="date_from" value="{{ f.date_from.isoformat() }}" required></label>
+      <label>迄日<input type="date" name="date_to" value="{{ f.date_to.isoformat() }}" required></label>
+      <label>動作
+        <select name="action">
+          <option value="">（全部）</option>
+          {% for code, label in actions|dictsort(by='value') %}
+          <option value="{{ code }}" {{ 'selected' if f.action == code }}>{{ label }}</option>
+          {% endfor %}
+        </select></label>
+      <label>操作者
+        <select name="actor">
+          <option value="">（全部）</option>
+          {% for u in actors %}
+          <option value="{{ u.id }}" {{ 'selected' if f.actor == u.id|string }}>{{ u.name }}（{{ u.username }}）</option>
+          {% endfor %}
+          <option value="{{ cmd }}" {{ 'selected' if f.actor == cmd }}>指令（主機上執行）</option>
+        </select></label>
+      <label>對象（包含）<input name="target" value="{{ f.target }}" placeholder="文件編號、帳號…"></label>
+      <label>內容（包含）<input name="q" value="{{ f.q }}" placeholder="關鍵字"></label>
+    </div>
+    <div class="actions">
+      <button type="submit">查詢</button>
+      <a class="button secondary" href="{{ url_for('views.audit_csv', **request.args.to_dict()) }}">匯出 CSV</a>
+      <a href="{{ url_for('views.audit') }}">清除條件</a>
+      <span class="hint">快速區間：
+        {% for label, d0, d1 in quick %}
+        <a href="{{ url_for('views.audit', date_from=d0.isoformat(), date_to=d1.isoformat(), action=f.action, actor=f.actor, target=f.target, q=f.q) }}">{{ label }}</a>{{ ' · ' if not loop.last }}
+        {% endfor %}</span>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <div class="row-between">
+    <h3>{{ f.date_from }}{% if f.date_to != f.date_from %} ～ {{ f.date_to }}{% endif %}：共 {{ total }} 筆</h3>
+    {% if pages > 1 %}<span class="hint">第 {{ page }} / {{ pages }} 頁（每頁 {{ logs|length }} 筆）</span>{% endif %}
+  </div>
+  {% if per_day|length > 1 %}
+  <p class="hint">每天筆數：{% for d, n in per_day %}<a href="{{ url_for('views.audit', date_from=d.isoformat(), date_to=d.isoformat(), action=f.action, actor=f.actor, target=f.target, q=f.q) }}">{{ d.strftime('%m-%d') }}（{{ n }}）</a>{{ '、' if not loop.last }}{% endfor %}</p>
+  {% endif %}
+  <div class="table-scroll"><table class="list audit">
+    <colgroup><col class="c-time"><col class="c-act"><col class="c-who"><col class="c-target"><col></colgroup>
+    <tr><th>時間</th><th>動作</th><th>操作者</th><th>對象</th><th>內容</th></tr>
+    {% set ns = namespace(day=None) %}
+    {% for l in logs %}
+    {% if l.created_at.date() != ns.day %}{% set ns.day = l.created_at.date() %}
+    <tr class="group"><td colspan="5">{{ ns.day }}（{{ ['一','二','三','四','五','六','日'][ns.day.weekday()] }}）</td></tr>
+    {% endif %}
+    <tr><td>{{ l.created_at.strftime('%H:%M:%S') }}</td>
+      <td>{{ audit_labels.get(l.action, l.action) }}</td>
+      <td>{{ l.actor.name if l.actor else '指令' }}</td><td>{{ l.target }}</td><td>{{ l.detail }}</td></tr>
+    {% else %}<tr><td colspan="5" class="hint">這個條件沒有稽核紀錄。</td></tr>{% endfor %}
+  </table></div>
+  {% if pages > 1 %}
+  <p class="actions">
+    {% if page > 1 %}<a class="button secondary" href="{{ url_for('views.audit', page=page - 1, date_from=f.date_from.isoformat(), date_to=f.date_to.isoformat(), action=f.action, actor=f.actor, target=f.target, q=f.q) }}">← 較新</a>{% endif %}
+    {% if page < pages %}<a class="button secondary" href="{{ url_for('views.audit', page=page + 1, date_from=f.date_from.isoformat(), date_to=f.date_to.isoformat(), action=f.action, actor=f.actor, target=f.target, q=f.q) }}">較舊 →</a>{% endif %}
+  </p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -537,9 +537,123 @@ def users():
     all_users = User.query.order_by(User.role, User.display_name, User.username).all()
     all_users.sort(key=lambda u: u.role != "guest")  # 等待開通的訪客排最前面
     return render_template("users.html", tab="users", users=all_users, roles=ASSIGNABLE_ROLES, role_labels=ROLE_LABELS,
-                           logs=adm.recent_audit(), audit_labels=adm.AUDIT_LABELS, admin_roles=ADMIN_ELIGIBLE_ROLES,
+                           admin_roles=ADMIN_ELIGIBLE_ROLES,
                            local_accounts=adm.local_accounts(), min_pw=adm.MIN_PASSWORD,
                            matrix=perm.PERMISSION_MATRIX, matrix_roles=perm.MATRIX_ROLES, matrix_notes=perm.MATRIX_NOTES)
+
+
+# ---------------------------------------------------------------- 稽核紀錄查詢（系統管理員）
+
+AUDIT_PAGE = 200
+AUDIT_CMD = "__cmd__"  # 操作者篩選：沒有登入帳號（主機上執行的指令）
+
+
+def _audit_filters():
+    """從網址參數取得篩選條件，回傳 (條件 dict, 錯誤訊息)。日期預設今天；區間最多 366 天。"""
+    a = request.args
+    today = date.today()
+    err = None
+
+    def day(key, default):
+        v = (a.get(key) or "").strip()
+        if not v:
+            return default
+        try:
+            return date.fromisoformat(v)
+        except ValueError:
+            nonlocal err
+            err = f"日期格式不正確：{v}（應為 YYYY-MM-DD）"
+            return default
+
+    f = {"date_from": day("date_from", today), "date_to": day("date_to", today),
+         "action": (a.get("action") or "").strip(), "actor": (a.get("actor") or "").strip(),
+         "target": (a.get("target") or "").strip(), "q": (a.get("q") or "").strip()}
+    if f["date_from"] > f["date_to"]:
+        f["date_from"], f["date_to"] = f["date_to"], f["date_from"]
+    if (f["date_to"] - f["date_from"]).days > 366:
+        err = "查詢區間最多 366 天，已改為結束日往前 366 天。"
+        f["date_from"] = f["date_to"] - timedelta(days=366)
+    return f, err
+
+
+def _audit_query(f):
+    q = AuditLog.query.filter(AuditLog.created_at >= datetime.combine(f["date_from"], datetime.min.time()),
+                              AuditLog.created_at < datetime.combine(f["date_to"] + timedelta(days=1), datetime.min.time()))
+    if f["action"]:
+        q = q.filter(AuditLog.action == f["action"])
+    if f["actor"] == AUDIT_CMD:
+        q = q.filter(AuditLog.actor_id.is_(None))
+    elif f["actor"].isdigit():
+        q = q.filter(AuditLog.actor_id == int(f["actor"]))
+    if f["target"]:
+        q = q.filter(AuditLog.target.ilike(f"%{_like(f['target'])}%", escape="\\"))
+    if f["q"]:
+        q = q.filter(AuditLog.detail.ilike(f"%{_like(f['q'])}%", escape="\\"))
+    return q.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+
+
+def _like(s):
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+@bp.route("/admin/audit")
+def audit():
+    """稽核紀錄查詢：以天為單位（起訖日期），可依動作、操作者、對象、內容篩選；可匯出 CSV。"""
+    if not perm.can_manage_users(current_user):
+        abort(403)
+    from . import admin_views as adm
+
+    f, err = _audit_filters()
+    if err:
+        flash(err, "error")
+    q = _audit_query(f)
+    total = q.count()
+    page = max(1, request.args.get("page", 1, type=int))
+    pages = max(1, (total + AUDIT_PAGE - 1) // AUDIT_PAGE)
+    page = min(page, pages)
+    logs = q.offset((page - 1) * AUDIT_PAGE).limit(AUDIT_PAGE).all()
+    # 每天筆數（整個查詢結果，不只這一頁）
+    per_day = {}
+    for (ts,) in q.with_entities(AuditLog.created_at):
+        per_day[ts.date()] = per_day.get(ts.date(), 0) + 1
+    actions = dict(adm.AUDIT_LABELS)
+    for (a,) in db.session.query(AuditLog.action).distinct():
+        actions.setdefault(a, a)
+    actor_ids = [i for (i,) in db.session.query(AuditLog.actor_id).distinct() if i]
+    actors = sorted(User.query.filter(User.id.in_(actor_ids)).all(), key=lambda u: u.name.casefold()) if actor_ids else []
+    today = date.today()
+    quick = [("今天", today, today), ("昨天", today - timedelta(days=1), today - timedelta(days=1)),
+             ("近 7 天", today - timedelta(days=6), today), ("近 30 天", today - timedelta(days=29), today),
+             ("本月", today.replace(day=1), today)]
+    return render_template("audit.html", tab="audit", f=f, logs=logs, total=total, page=page, pages=pages,
+                           per_day=sorted(per_day.items(), reverse=True), actions=actions, actors=actors,
+                           cmd=AUDIT_CMD, quick=quick, audit_labels=adm.AUDIT_LABELS)
+
+
+@bp.route("/admin/audit.csv")
+def audit_csv():
+    """目前篩選條件的全部結果（不分頁），UTF-8 BOM，Excel 可直接開啟。"""
+    import csv
+    import io
+
+    if not perm.can_manage_users(current_user):
+        abort(403)
+    from . import admin_views as adm
+
+    f, _ = _audit_filters()
+    buf = io.StringIO()
+    buf.write("\ufeff")
+    w = csv.writer(buf)
+    w.writerow(["時間", "動作", "動作代碼", "操作者", "操作者帳號", "對象", "內容"])
+    for l in _audit_query(f):
+        w.writerow([l.created_at.strftime("%Y-%m-%d %H:%M:%S"), adm.AUDIT_LABELS.get(l.action, l.action), l.action,
+                    l.actor.name if l.actor else "指令", l.actor.username if l.actor else "", l.target, l.detail])
+    name = f"audit_{f['date_from']:%Y%m%d}-{f['date_to']:%Y%m%d}.csv"
+    db.session.add(AuditLog(action="audit_export", actor_id=current_user.id, target=name,
+                            detail=", ".join(f"{k}={v}" for k, v in f.items() if v)))
+    db.session.commit()
+    return Response(buf.getvalue(), mimetype="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 def _set_sys_admin():

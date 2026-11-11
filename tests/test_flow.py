@@ -540,7 +540,40 @@ def test_local_admin(app):
     b.post("/admin/users", {"user_id": str(eid), "role": "admin"}, status=400)  # 系統管理員只能用指令建立
     with app.app_context():
         assert db.session.get(User, eid).role == "file_manager"
-    assert "變更角色" in b.get("/admin/users")
+    # 稽核紀錄：獨立頁面，以天為單位查詢，可依動作、操作者、對象、內容篩選，可匯出 CSV
+    from datetime import date as _date, datetime as _dt, timedelta as _td
+
+    with app.app_context():
+        from app.models import AuditLog
+
+        sid = User.query.filter_by(username="sysadmin").one().id
+        db.session.add(AuditLog(action="delete_report", actor_id=sid, target="CFXD-SCA-RLY-DPR-000777",
+                                detail="昨天的刪除 final_pdf/_deleted/x.pdf", created_at=_dt.now() - _td(days=1)))
+        db.session.add(AuditLog(action="set_role", actor_id=None, target="zed", detail="指令建立",
+                                created_at=_dt.now() - _td(days=40)))
+        db.session.commit()
+    assert "稽核紀錄（最近 50 筆）" not in b.get("/admin/users")
+    other.get("/admin/audit", status=403)
+    today, yday = _date.today(), _date.today() - _td(days=1)
+    html = b.get("/admin/audit")  # 預設今天
+    assert "erin" in html and "變更角色" in html and "000777" not in html
+    html = b.get(f"/admin/audit?date_from={yday}&date_to={today}")
+    assert "000777" in html and "erin" in html and "共 " in html
+    html = b.get(f"/admin/audit?date_from={yday}&date_to={today}&action=delete_report")
+    assert "000777" in html and "erin" not in html.split("共 ")[1]
+    html = b.get(f"/admin/audit?date_from={yday}&date_to={today}&target=dpr-000777")
+    assert "000777" in html
+    html = b.get(f"/admin/audit?date_from={yday}&date_to={today}&q=final_pdf")
+    assert "000777" in html and "erin" not in html.split("共 ")[1]
+    html = b.get(f"/admin/audit?date_from={today - _td(days=60)}&date_to={today}&actor=__cmd__")
+    assert "zed" in html and "000777" not in html
+    html = b.get(f"/admin/audit?date_from={today - _td(days=60)}&date_to={today}&actor={sid}")
+    assert "zed" not in html.split("共 ")[1] and "000777" in html
+    assert "日期格式不正確" in b.get("/admin/audit?date_from=2026-13-01")
+    r = b.c.get(f"/admin/audit.csv?date_from={yday}&date_to={today}&action=delete_report")
+    text = r.get_data(as_text=True)
+    assert r.status_code == 200 and text.startswith("\ufeff時間,動作") and "000777" in text and "erin" not in text
+    assert "匯出稽核紀錄" in b.get("/admin/audit?action=audit_export")
 
     # 系統管理員可刪除任何未結案的日報
     rid = report_id_from(other.post("/reports/new", {"report_date": "2026-11-12"}))

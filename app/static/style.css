@@ -269,3 +269,5 @@ table.audit .c-who { width: 8em; }
 table.audit .c-target { width: 15em; }
 table.audit td { overflow-wrap: anywhere; vertical-align: top; }
 table.audit td:first-child, table.audit td:nth-child(2) { white-space: nowrap; overflow-wrap: normal; }
+table.audit tr.group td { background: #eef2f5; font-weight: 600; white-space: nowrap; }
+.audit-filter .actions { flex-wrap: wrap; align-items: center; }
