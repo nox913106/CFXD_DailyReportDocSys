@@ -100,13 +100,19 @@ def render_pdf(report, preview=False):
     cv = _Canvas(buf, pagesize=PAGE)
     cv.watermark = PREVIEW_MARK if preview else None
     cv.setTitle(f"{report.doc_no} CFXD SLA Daily Work Report")
-    cv.setAuthor(report.author.name if report.author else "")
+    cv.setAuthor(report.author_name)
     logo = os.path.join(ASSETS, "logo_word.png")
 
     CoverDoc(cover_data(report), logo).render(cv)
-    book = fill_workbook(report)
-    render_sheets(book, SHEETS, cv, PAGE)
-    ScreenshotDoc(screenshot_sections(report), logo).render(cv)
+    if report.imported:
+        # Excel 匯入的過去日報：CheckList 直接畫原始 Excel（儲存格值與版面都不經過系統範本，內容與原檔完全相同）
+        book = original_workbook(report)
+        render_sheets(book, [s for s in SHEETS if s in book.wb.sheetnames], cv, PAGE)
+    else:
+        book = fill_workbook(report)
+        render_sheets(book, SHEETS, cv, PAGE)
+    if not (report.imported and not report.images):  # 匯入的沒有截圖，不印空白的截圖章節
+        ScreenshotDoc(screenshot_sections(report), logo).render(cv)
     cv.save()
     return buf.getvalue()
 
@@ -116,7 +122,7 @@ def render_pdf(report, preview=False):
 
 def cover_data(report):
     d = report.report_date
-    author = report.author.name if report.author else ""
+    author = report.author_name
     purpose = report.issue_purpose or "IFI - Issue for Information"
     status, _, changes = purpose.partition(" - ")
     month_start = d.replace(day=1)
@@ -139,7 +145,7 @@ def cover_data(report):
             "author": author, "approval": report.approver_name or "",
         }],
         "month_label": d.strftime("%B %Y"),
-        "reports": [(r.report_date.isoformat(), r.author.name if r.author else "", r.doc_no) for r in month_reports],
+        "reports": [(r.report_date.isoformat(), r.author_name, r.doc_no) for r in month_reports],
         "inspection_summary": report.inspection_summary or "",
         "first_line_officer": report.first_line_officer or "",
         "second_line_support": report.second_line_support or "",
@@ -163,9 +169,21 @@ def _row(obj):
 # ---------------------------------------------------------------- CheckList
 
 
+class OriginalMissing(TemplateMissing):
+    pass
+
+
+def original_workbook(report):
+    """匯入時保存的原始 Excel，用 Excel 存檔時的值（不重算公式）。"""
+    path = report.original_xlsx
+    if not path:
+        raise OriginalMissing("這份日報匯入時沒有保存原始 Excel（舊版匯入），無法產生 PDF。請刪除後重新匯入。")
+    return Workbook(path, recalc=False)
+
+
 def fill_workbook(report):
     book = Workbook(template_path(), recalc=True)
-    author = report.author.name if report.author else ""
+    author = report.author_name
     t = _parse_time(report.inspection_time)
     d = dt.datetime.combine(report.report_date, dt.time())
 

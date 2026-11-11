@@ -21,8 +21,11 @@
     {% set fin = report.delivery if report.delivery and report.delivery.pdf_md5 else None %}
     {% if fin %}
     <a class="button" href="{{ url_for('views.final_pdf', report_id=report.id, download=1) }}">下載正式 PDF</a>
+    {% elif report.imported and report.original_xlsx %}
+    <a class="button secondary" href="{{ url_for('views.pdf', report_id=report.id) }}" target="_blank">開啟預覽</a>
+    <span class="hint">正式 PDF 產生中</span>
     {% elif report.imported %}
-    <span class="hint">Excel 匯入，沒有正式 PDF</span>
+    <span class="hint">舊版匯入沒有保存原始 Excel，無法產生 PDF</span>
     {% elif report.status == 'closed' %}
     <span class="hint">正式 PDF 產生中</span>
     {% else %}
@@ -36,8 +39,13 @@
 {% endif %}
 {% if report.imported %}{% set m = report.import_info %}
 <div class="card no-print">從過去的 CheckList Excel 匯入：<strong>{{ m.file }}</strong>（{{ m.by }}，{{ (m.at or '')[:16].replace('T', ' ') }}）
-  {% if m.author %}<div class="hint">Excel 的 Recorded By：{{ m.author }}</div>{% endif %}
-  <div class="hint">只有 Excel 裡的內容（Alarm Summary、檢查表勾選與 Note）；封面記錄、照片、截圖與正式 PDF 不在 Excel 中。內容請看「告警」「檢查表」分頁。</div>
+  {% if report.original_xlsx %}
+  · <a href="{{ url_for('views.original_xlsx', report_id=report.id) }}">下載原始 Excel</a>
+  <div class="hint">原始 Excel 原檔保存，SHA-256 <code>{{ m.sha256 }}</code>。PDF 的 CheckList 部分直接由原始 Excel 畫出，內容與原檔完全相同；
+    撰寫人為 Excel 的 Recorded By「{{ m.author }}」。Excel 裡沒有的封面記錄、照片、截圖、核准人不會有。</div>
+  {% else %}
+  <div class="flash error">這份是舊版匯入，沒有保存原始 Excel，無法保證內容與原檔相同，也不能產生 PDF。請刪除後重新匯入。</div>
+  {% endif %}
   {% if m.warnings %}<details><summary>匯入警告 {{ m.warnings|length }} 則</summary><ul>{% for w in m.warnings %}<li>{{ w }}</li>{% endfor %}</ul></details>{% endif %}
 </div>
 {% endif %}
@@ -172,8 +180,10 @@
 {% endif %}
 
 {% if fin %}
-<p class="hint no-print">以下為正式 PDF（結案後產生，與上傳 SharePoint、寄出的日報 Mail 附的是同一份檔案）。</p>
+<p class="hint no-print">{% if report.imported %}以下為正式 PDF（封面 + 原始 Excel 的 CheckList，匯入後產生一次並凍結）。{% else %}以下為正式 PDF（結案後產生，與上傳 SharePoint、寄出的日報 Mail 附的是同一份檔案）。{% endif %}</p>
 <iframe class="pdf-view" src="{{ url_for('views.final_pdf', report_id=report.id) }}" title="{{ report.doc_no }} PDF"></iframe>
+{% elif report.imported and report.original_xlsx %}
+<p class="hint no-print">正式 PDF（封面 + 原始 Excel 的 CheckList）由維護服務產生中，完成後會顯示在這裡；這段時間可以按上方「開啟預覽」先看（有 PREVIEW 浮水印）。</p>
 {% elif report.status != 'closed' %}
 <p class="hint no-print">以下為預覽（每頁有 PREVIEW 浮水印，內容即時產生，首次約需 20 秒）。正式 PDF 只在結案後產生。</p>
 <iframe class="pdf-view" src="{{ url_for('views.pdf', report_id=report.id) }}" title="{{ report.doc_no }} 預覽"></iframe>

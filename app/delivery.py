@@ -149,7 +149,7 @@ def run(d):
         db.session.commit()
     d.state, d.finished_at = "done", datetime.now()
     db.session.commit()
-    if enabled:
+    if enabled and not d.report.imported:
         _notify(d, "delivery_done")
     return True
 
@@ -297,11 +297,22 @@ def timeline(report):
     r = report
     if r.imported:
         m = r.import_info
-        return [("done", "從 Excel 匯入（已結案）", f"{m.get('file', '')}，{m.get('by', '')} {(m.get('at') or '')[:16].replace('T', ' ')}"),
-                ("skipped", "送審 / 審核 / 正式 PDF / 發送", "過去的日報在系統外完成，匯入時不重做")]
+        t = [("done", "從 Excel 匯入（已結案）", f"{m.get('file', '')}，{m.get('by', '')} {(m.get('at') or '')[:16].replace('T', ' ')}"),
+             ("skipped", "送審 / 審核", "過去的日報在系統外完成，匯入時不重做")]
+        d = r.delivery
+        if not r.original_xlsx:
+            t.append(("error", "正式 PDF", "舊版匯入沒有保存原始 Excel，無法產生；請刪除後重新匯入"))
+        elif d and d.pdf_md5:
+            t.append(("done", "正式 PDF（封面 + 原始 Excel）", f"{d.pdf_name}，MD5 {d.pdf_md5}"))
+        elif d and d.state == "error":
+            t.append(("error", "正式 PDF（封面 + 原始 Excel）", d.step_map()["pdf"].get("message", "")))
+        else:
+            t.append(("running", "正式 PDF（封面 + 原始 Excel）", "維護服務產生中"))
+        t.append(("skipped", "上傳 SharePoint / 寄送日報 Mail", "過去的日報不發送"))
+        return t
     shots = [i for i in r.images if i.kind == "screenshot"]
     pend = ocr_pending(r)
-    t = [("done", "建立日報", f"{r.author.name if r.author else ''}，{r.created_at:%Y-%m-%d %H:%M}")]
+    t = [("done", "建立日報", f"{r.author_name}，{r.created_at:%Y-%m-%d %H:%M}")]
     if not shots:
         t.append(("pending", "截圖辨識完成", "尚未上傳截圖"))
     elif pend:

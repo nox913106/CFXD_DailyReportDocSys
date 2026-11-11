@@ -571,7 +571,7 @@ def pdf(report_id):
     report = get_report(report_id)
     if report.delivery and report.delivery.pdf_md5:
         return final_pdf(report_id)
-    if report.status == "closed":  # 結案後只提供正式 PDF（產生中）
+    if report.status == "closed" and not report.imported:  # 結案後只提供正式 PDF（產生中）；匯入的可先看預覽
         return Response("正式 PDF 產生中，請稍後再試。", status=409, mimetype="text/plain; charset=utf-8")
     try:
         data = build_pdf(report)
@@ -678,6 +678,20 @@ def final_pdf(report_id):
         abort(404)
     return send_file(path, mimetype="application/pdf", as_attachment=bool(request.args.get("download")),
                      download_name=d.pdf_name, max_age=0, etag=d.pdf_md5)
+
+
+@bp.route("/reports/<int:report_id>/original.xlsx")
+def original_xlsx(report_id):
+    """Excel 匯入的日報：匯入時保存的原始檔案（逐位元相同，SHA-256 與匯入紀錄一致）。"""
+    from flask import send_file
+
+    report = get_report(report_id)
+    path = report.original_xlsx
+    if not path:
+        abort(404)
+    m = report.import_info
+    return send_file(path, as_attachment=True, download_name=m.get("file") or os.path.basename(path), max_age=0,
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @bp.route("/archive")

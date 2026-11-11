@@ -132,7 +132,7 @@ def render(report, chk=None, stage="manual", review=None, now=None):
     info = [["文件編號", report.doc_no, base.doc_no if base else "—"],
             ["日期", report.report_date, base.report_date if base else "—"],
             ["版次", report.revision, base.revision if base else "—"],
-            ["撰寫人", report.author.name if report.author else "", base.author.name if base and base.author else "—"],
+            ["撰寫人", report.author_name, base.author_name if base else "—"],
             ["告警項數", len(report.alarm_rows), len(base.alarm_rows) if base else "—"],
             ["New / Known / False Alarm", f"{report.alarm_new or 0} / {report.alarm_known or 0} / {report.alarm_false or 0}",
              f"{base.alarm_new or 0} / {base.alarm_known or 0} / {base.alarm_false or 0}" if base else "—"]]

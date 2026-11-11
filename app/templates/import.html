@@ -8,8 +8,9 @@
   <ul class="hint">
     <li>一個檔案 = 一天；日期取 Alarm Summary 的 Inspection Date，讀不到時用檔名中的日期。該日期已經有日報就略過，不會覆蓋。</li>
     <li>匯入：Inspection Time、Revision、Recorded By、文件編號、Alarm Summary、四張檢查表的勾選與 Note。New / Known Alarm 依前一份正式日報計算。</li>
-    <li>Excel 裡沒有的封面記錄（值班 / 問題 / 現場 / 告警記錄）、照片、截圖、核准人與正式 PDF 不會有。</li>
-    <li>檢查表依每列的文字對應系統的檢查項目，舊版範本多出或少的項目會列在警告中。</li>
+    <li>內容不做任何修改：原始 Excel 原檔保存，PDF 的 CheckList 直接由原始 Excel 畫出，撰寫人用 Recorded By 原文。匯入後自動產生正式 PDF（不上傳、不寄信）。</li>
+    <li>Excel 裡沒有的封面記錄（值班 / 問題 / 現場 / 告警記錄）、照片、截圖、核准人不會有。</li>
+    <li>跨日比對用的資料：檢查表依每列的文字對應系統的檢查項目，舊版範本多出或少的項目會列在警告中（PDF 一律照原始 Excel，不受影響）。</li>
     <li>建議先勾「只檢查不匯入」跑一次，確認沒有錯誤再正式匯入。量很大（例如整年）時，也可以在主機上執行
       <code>flask --app wsgi import-xlsx &lt;資料夾&gt; --user &lt;帳號&gt; [--dry-run]</code>（可直接讀 NAS 掛載的資料夾）。</li>
   </ul>

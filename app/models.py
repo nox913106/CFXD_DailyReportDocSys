@@ -210,6 +210,24 @@ class Report(db.Model):
             return {}
 
     @property
+    def author_name(self):
+        """顯示用撰寫人：Excel 匯入的用 Excel 上的 Recorded By 原文（不一定是系統帳號）。"""
+        if self.imported and self.import_info.get("author"):
+            return self.import_info["author"]
+        return self.author.name if self.author else ""
+
+    @property
+    def original_xlsx(self):
+        """Excel 匯入時保存的原始檔案（完整路徑）；舊版匯入沒有保存時為 None。"""
+        import os
+
+        from flask import current_app
+
+        rel = self.import_info.get("xlsx") if self.imported else None
+        path = os.path.join(current_app.instance_path, rel) if rel else None
+        return path if path and os.path.isfile(path) else None
+
+    @property
     def status_label(self):
         if self.imported and self.status == "closed":
             return "已結案（Excel 匯入）"

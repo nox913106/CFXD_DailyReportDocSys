@@ -243,8 +243,10 @@ class Workbook:
         if not data:
             return {}
         root = ET.fromstring(data)
+        # Target 可能是相對路徑（Excel）或以 / 開頭的套件絕對路徑（openpyxl、LibreOffice 等存的檔案）
         return {
-            r.get("Id"): normpath(join(dirname(part), r.get("Target")))
+            r.get("Id"): (r.get("Target").lstrip("/") if r.get("Target", "").startswith("/")
+                          else normpath(join(dirname(part), r.get("Target"))))
             for r in root.findall("rel:Relationship", NS)
         }
 

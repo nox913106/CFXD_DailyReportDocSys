@@ -11,7 +11,7 @@
     <tr><th>日期</th><th>文件編號</th><th>撰寫人</th><th>核准人</th><th>檢查結果</th><th>送審時間</th><th></th></tr>
     {% for r in pending %}
     <tr>
-      <td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td><td>{{ r.author.name }}</td>
+      <td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td><td>{{ r.author_name }}</td>
       <td>{{ r.approver_name or '（未指定）' }}{% if r.approver_id and r.approver_id != current_user.id %} <span class="badge submitted">代簽</span>{% endif %}</td>
       {% set c = pending_checks[r.id] %}
       <td>{% if c['錯誤'] %}<span class="sev sev-err">錯誤 {{ c['錯誤'] }}</span>{% endif %}
@@ -44,7 +44,7 @@
   <table class="list">
     <tr><th>日期</th><th>文件編號</th><th>撰寫人</th><th>核准</th><th></th></tr>
     {% for r in to_close %}
-    <tr><td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td><td>{{ r.author.name }}</td>
+    <tr><td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td><td>{{ r.author_name }}</td>
       <td>{{ r.reviewed_by.name if r.reviewed_by }}{{ r.reviewed_at.strftime(' %m-%d %H:%M') if r.reviewed_at }}</td>
       <td><a href="{{ url_for('views.detail', report_id=r.id) }}">確認並結案</a></td></tr>
     {% endfor %}
@@ -75,7 +75,7 @@
     <tr><th>日期</th><th>文件編號</th><th>撰寫人</th><th>狀態</th><th>最後更新</th><th></th></tr>
     {% for r in reports %}
     <tr>
-      <td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td><td>{{ r.author.name }}</td>
+      <td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td><td>{{ r.author_name }}</td>
       <td><span class="badge {{ r.status }}">{{ r.status_label }}</span></td>
       <td>{{ r.updated_at.strftime('%m-%d %H:%M') if r.updated_at }}{% if r.updated_by %} {{ r.updated_by.name }}{% endif %}</td>
       <td>

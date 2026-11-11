@@ -350,7 +350,35 @@ def test_import_history_xlsx(app):
         assert "Nobody Here" in b.import_info["author"]
         bid = b.id
     html = fm.get(f"/reports/{bid}")
-    assert "從過去的 CheckList Excel 匯入" in html and "Excel 匯入，沒有正式 PDF" in html
+    assert "從過去的 CheckList Excel 匯入" in html and "下載原始 Excel" in html and "正式 PDF 產生中" in html
+    assert "撰寫人為 Excel 的 Recorded By「Nobody Here」" in html and "不是系統帳號" not in html  # 撰寫人照 Excel 原文，不換成匯入者
+    # 原始 Excel 逐位元保存
+    r = fm.c.get(f"/reports/{bid}/original.xlsx")
+    assert r.status_code == 200 and r.data == x2
+    # 正式 PDF：維護服務產生（封面 + 原始 Excel），不上傳、不寄信、不通知發送完成
+    from app import delivery
+    from app.models import Delivery
+
+    with app.app_context():
+        dl = Delivery.query.filter_by(report_id=bid).one()
+        assert dl.state == "queued" and [dl.step_map()[k]["status"] for k in ("upload", "link", "mail")] == ["skipped"] * 3
+    preview = fm.c.get(f"/reports/{bid}/pdf")
+    assert preview.status_code == 200 and preview.data.startswith(b"%PDF")
+    with app.app_context():
+        assert delivery.tick()
+        dl = Delivery.query.filter_by(report_id=bid).one()
+        assert dl.state == "done" and dl.pdf_md5, dl.step_map()
+        import pypdf
+
+        text = "".join(pg.extract_text() for pg in pypdf.PdfReader(io.BytesIO(open(delivery.final_path(dl), "rb").read())).pages)
+        assert "UTM-01" in text and "Syslog" in text and "Nobody Here" in text
+        from app.models import TeamsMessage
+
+        assert TeamsMessage.query.filter_by(event="delivery_done").count() == 0
+    html = fm.get(f"/reports/{bid}")
+    assert "下載正式 PDF" in html and "封面 + 原始 Excel" in html
+    assert fm.c.get(f"/reports/{bid}/final.pdf").status_code == 200
+    assert r2["doc_no"] in fm.get("/archive")
     # 匯入的日報是新日報的比對基準與複製來源
     html = alice.post("/reports/new", {"report_date": "2026-10-03"})
     nid = report_id_from(html)

@@ -3,9 +3,12 @@
 用途：跨日比對基準、告警歷程（365 天）、檢查結果.md / RAG 的歷史資料。
 
 - 一個檔案 = 一天。日期取 Alarm Summary 的 Inspection Date（I2），讀不到時用檔名中的日期。
-- 匯入的內容：Inspection Time、Revision、Recorded By、文件編號（Document ID）、Alarm Summary 每一列、
-  四張檢查表每一項的 Normal / Warning / Failed 與 Note。
-- Excel 裡沒有的（封面的值班 / 問題 / 現場 / 告警記錄、照片、截圖、核准人、正式 PDF）不會有。
+- 內容不做任何修改：原始 Excel 逐位元保存（SHA-256 可查證），PDF 的 CheckList 部分直接用原始 Excel
+  的儲存格值與版面畫出，不經過系統範本；撰寫人顯示 Excel 上的 Recorded By 原文。
+- 另外解析進資料庫（跨日比對、告警歷程、檢查結果用）：Inspection Time、Revision、Recorded By、文件編號、
+  Alarm Summary 每一列、四張檢查表每一項的 Normal / Warning / Failed 與 Note；文字原樣保存，不去空白、不截斷。
+- 匯入後由維護服務產生正式 PDF（封面 + 原始 Excel 的 CheckList），出現在「正式文件」頁；不上傳、不寄信。
+- Excel 裡沒有的（封面的值班 / 問題 / 現場 / 告警記錄、照片、截圖、核准人）不會有。
 - 檢查表依每列的文字對應到系統的檢查項目（checklist_template），舊版範本多出或少的項目列在警告中。
 - 該日期已經有日報 → 略過（不覆蓋）；同一個檔案再匯入一次也會因此略過。
 - New / Known / False Alarm：False = 標 Y 的列數；New = 前一份正式日報沒有的告警；Known = 其餘。
@@ -15,15 +18,20 @@ import datetime as dt
 import hashlib
 import io
 import json
+import os
 import re
 from dataclasses import dataclass, field
+
+from flask import current_app
 
 from . import db, docno
 from .checklist_template import CHECK_COLS, align, item_key, sheet_rows
 from .models import (
     OFFICIAL_STATUSES,
     AlarmSummaryRow,
+    DELIVERY_STEPS,
     AuditLog,
+    Delivery,
     ChecklistItem,
     ChecklistResult,
     Report,
@@ -34,6 +42,7 @@ from .models import (
 REQUIRED_SHEETS = ["Alarm Summary"] + [v[0] for v in CHECK_COLS.values()]
 ALARM_FIRST_ROW = 7
 DOC_RE = re.compile(r"CFXD-SCA-RLY-DPR-\d{6}")
+CONTRACTOR_RE = re.compile(r"RT\d{6}-CFXD SLA-RP-\d{6}")
 DATE_RES = [re.compile(r"(20\d\d)[-._](\d\d)[-._](\d\d)"), re.compile(r"(20\d\d)(\d\d)(\d\d)")]
 MAX_BYTES = 30 * 1024 * 1024
 
@@ -51,6 +60,8 @@ class Parsed:
     revision: int = 0
     author: str = ""
     doc_no: str = ""
+    contractor_doc_no: str = ""
+    data: bytes = b""
     alarms: list = field(default_factory=list)  # [dict]
     results: dict = field(default_factory=dict)  # item_id -> (N/W/F/None, note)
     counts: dict = field(default_factory=dict)  # sheet -> {"rows", "matched", "N", "W", "F", "blank"}
@@ -87,7 +98,7 @@ def _time(v):
         minutes = round(v * 24 * 60)
         return dt.time(minutes // 60 % 24, minutes % 60).strftime("%I:%M %p")
     if isinstance(v, str) and v.strip():
-        return v.strip()[:16]
+        return v  # 原文
     return "10:00 AM"
 
 
@@ -100,7 +111,7 @@ def _text(v):
         return f"{v:g}"
     if isinstance(v, (dt.datetime, dt.date)):
         return v.isoformat()[:10]
-    return str(v).strip()
+    return str(v)  # 原文，不去空白
 
 
 def parse(filename, data):
@@ -119,7 +130,7 @@ def parse(filename, data):
     if missing:
         raise ImportError_("缺少工作表：" + "、".join(missing) + "（不是 CheckList 日報）")
 
-    p = Parsed(filename=filename, sha256=hashlib.sha256(data).hexdigest())
+    p = Parsed(filename=filename, sha256=hashlib.sha256(data).hexdigest(), data=data)
     ws = wb["Alarm Summary"]
     p.report_date = _date(ws["I2"].value) or _date_from_text(filename)
     if not p.report_date:
@@ -132,22 +143,27 @@ def parse(filename, data):
         p.revision = max(0, int(float(ws["I4"].value or 0)))
     except (TypeError, ValueError):
         p.revision = 0
-    p.author = _text(ws["I5"].value)[:128]
+    p.author = _text(ws["I5"].value)
     for sheet in wb.worksheets:
         for row in sheet.iter_rows(max_row=8):
             for c in row:
-                if isinstance(c.value, str) and (m := DOC_RE.search(c.value)):
-                    p.doc_no = p.doc_no or m[0]
-    p.doc_no = p.doc_no or docno.doc_no(p.report_date)
+                if isinstance(c.value, str):
+                    if m := DOC_RE.search(c.value):
+                        p.doc_no = p.doc_no or m[0]
+                    if m := CONTRACTOR_RE.search(c.value):
+                        p.contractor_doc_no = p.contractor_doc_no or m[0]
+    if not p.doc_no:
+        p.doc_no = docno.doc_no(p.report_date)
+        p.warnings.append(f"Excel 裡沒有文件編號，依日期推算為 {p.doc_no}")
 
     for r in range(ALARM_FIRST_ROW, ws.max_row + 1):
         vals = {c: _text(ws[f"{c}{r}"].value) for c in "CDEFGHI"}
-        if not any(vals[c] for c in "CDEFG"):
+        if not any(vals[c].strip() for c in "CDEFG"):
             continue
         p.alarms.append({
-            "category": vals["C"][:64], "item": vals["D"][:32], "device_name": vals["E"][:128],
+            "category": vals["C"], "item": vals["D"], "device_name": vals["E"],
             "description": vals["F"], "reason": vals["G"],
-            "false_alarm": "Y" if vals["H"].upper().startswith("Y") else "N", "note": vals["I"],
+            "false_alarm": "Y" if vals["H"].strip().upper().startswith("Y") else "N", "note": vals["I"],
         })
 
     items_all = ChecklistItem.query.order_by(ChecklistItem.sheet, ChecklistItem.order, ChecklistItem.id).all()
@@ -218,7 +234,7 @@ def _counts(report_date, alarms, exclude_id=None):
 def _match_author(name):
     if not name:
         return None
-    low = name.casefold()
+    low = name.strip().casefold()
     for u in User.query.filter(User.role != "admin"):
         if low in {(u.display_name or "").casefold(), (u.username or "").casefold()}:
             return u
@@ -249,17 +265,23 @@ def import_one(filename, data, user, dry_run=False):
         out.update(status="would_import", message="檢查通過，可以匯入")
         return out
 
+    # 撰寫人顯示 Excel 的 Recorded By 原文（Report.author_name）；author_id 只是資料庫需要的關聯
     author = _match_author(p.author)
-    if p.author and not author:
-        p.warnings.append(f"Recorded By「{p.author}」不是系統帳號，撰寫人記為匯入者 {user.name}（原名保留在匯入資訊）")
     now = dt.datetime.now()
+    rel = os.path.join("imported_xlsx", f"{p.report_date:%Y}", f"{p.sha256}.xlsx")
+    full = os.path.join(current_app.instance_path, rel)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full + ".part", "wb") as fh:
+        fh.write(p.data)
+    os.replace(full + ".part", full)
     new, known, false = _counts(p.report_date, p.alarms)
     report = Report(
-        report_date=p.report_date, doc_no=p.doc_no, contractor_doc_no=docno.contractor_doc_no(p.report_date),
+        report_date=p.report_date, doc_no=p.doc_no,
+        contractor_doc_no=p.contractor_doc_no or docno.contractor_doc_no(p.report_date),
         revision=p.revision, inspection_time=p.inspection_time, author_id=(author or user).id,
         first_line_officer=p.author, status="closed", updated_by_id=user.id,
         alarm_new=new, alarm_known=known, alarm_false=false,
-        import_meta=json.dumps({"file": filename, "sha256": p.sha256, "author": p.author, "warnings": p.warnings,
+        import_meta=json.dumps({"file": filename, "sha256": p.sha256, "xlsx": rel, "author": p.author, "warnings": p.warnings,
                                 "counts": p.counts, "at": now.isoformat(timespec="seconds"), "by": user.name},
                                ensure_ascii=False),
     )
@@ -273,6 +295,11 @@ def import_one(filename, data, user, dry_run=False):
     for iid in ids:
         res, note = p.results.get(iid, (None, ""))
         db.session.add(ChecklistResult(report_id=report.id, item_id=iid, result=res, note=note))
+    # 正式 PDF 由維護服務產生（與結案後的流程相同，只是不上傳、不寄信）
+    skip = {k: {"status": "skipped", "message": "Excel 匯入的過去日報不發送", "at": now.isoformat(timespec="seconds")}
+            for k, _ in DELIVERY_STEPS if k != "pdf"}
+    db.session.add(Delivery(report_id=report.id, state="queued", closed_at=now, closed_by_id=user.id, run_after=now,
+                            steps=json.dumps(skip, ensure_ascii=False)))
     db.session.add(ReviewLog(report_id=report.id, action="import", actor_id=user.id,
                              comment=f"從 {filename} 匯入（SHA-256 {p.sha256[:12]}…）"
                                      + (f"；{len(p.warnings)} 則警告" if p.warnings else "")))

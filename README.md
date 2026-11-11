@@ -279,9 +279,15 @@ ChatGPT Plus、Claude Pro 這類個人訂閱不提供 API，不能接入。
 - 可一次選多個檔案、整個資料夾或拖曳；逐檔處理並逐列顯示結果。建議先勾「只檢查不匯入」。量大時在主機上執行：
   `sudo -u dailyreport /opt/dailyreport/.venv/bin/flask --app wsgi import-xlsx <資料夾> --user <帳號> [--dry-run]`（含子資料夾，可直接讀 NAS）。
 - 日期取 Alarm Summary 的 Inspection Date（I2），讀不到用檔名中的日期；該日期已有日報就略過，不覆蓋。
-- 匯入 Inspection Time、Revision、Recorded By（是系統帳號就設為撰寫人）、文件編號、Alarm Summary、四張檢查表的勾選與 Note；
-  New / Known / False Alarm 依前一份正式日報計算（匯入順序不照日期也會重算）。
-- Excel 裡沒有封面記錄、照片、截圖、核准人與正式 PDF，所以匯入的日報沒有這些，也不出現在「正式文件」頁。
+- **內容不做任何修改**：原始 Excel 逐位元保存在 `instance/imported_xlsx/`（日報頁可下載，SHA-256 與匯入紀錄一致）。
+  預覽與正式 PDF 的 CheckList 部分直接由原始 Excel 的儲存格值與版面畫出（不經過系統範本、不重算公式），
+  撰寫人顯示 Excel 上的 Recorded By 原文（不必是系統帳號）。
+- 匯入後由維護服務產生正式 PDF（封面 + 原始 Excel 的 CheckList，產生一次並凍結 MD5 / SHA-256），出現在「正式文件」頁；
+  不上傳 SharePoint、不寄信。大量匯入時依序產生，每份約 20–60 秒。
+- 另外解析進資料庫供跨日比對、告警歷程使用：Inspection Time、Revision、Recorded By、文件編號、Alarm Summary、
+  四張檢查表的勾選與 Note（文字原樣，不去空白、不截斷）；New / Known / False Alarm 依前一份正式日報計算。
+- Excel 裡沒有封面記錄、照片、截圖、核准人，所以匯入的日報沒有這些。
+- 這個版本之前匯入的日報沒有保存原始 Excel，無法產生 PDF，日報頁會提示：請刪除後重新匯入。
 - 舊版範本多出或少的項目、沒勾選的項目、同時勾兩個結果都列在警告中（日報頁也看得到）。只支援 .xlsx / .xlsm，舊版 .xls 請先另存。
 - 匯錯時檔案管理員可刪除該日報（輸入文件編號確認）後重匯。
 
