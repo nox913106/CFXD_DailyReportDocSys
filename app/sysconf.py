@@ -34,6 +34,9 @@ DEFAULTS = {
     "backup_dir": "",  # 空白 = DEFAULT_BACKUP_DIR
     "backup_include_env": True,
     # 健康檢查
+    # 稽核紀錄保存天數（180–366）：維護服務每天清除超過的紀錄
+    "audit_retention_days": 366,
+    "audit_purge_last": "",
     "health_enabled": True,
     "health_interval_hours": 6,
     # 結案後自動發送（Microsoft Graph）

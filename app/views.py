@@ -621,13 +621,40 @@ def audit():
         actions.setdefault(a, a)
     actor_ids = [i for (i,) in db.session.query(AuditLog.actor_id).distinct() if i]
     actors = sorted(User.query.filter(User.id.in_(actor_ids)).all(), key=lambda u: u.name.casefold()) if actor_ids else []
+    from .maint import AUDIT_MAX_DAYS, AUDIT_MIN_DAYS, audit_retention_days
+
+    keep = audit_retention_days()
     today = date.today()
     quick = [("今天", today, today), ("昨天", today - timedelta(days=1), today - timedelta(days=1)),
              ("近 7 天", today - timedelta(days=6), today), ("近 30 天", today - timedelta(days=29), today),
              ("本月", today.replace(day=1), today)]
     return render_template("audit.html", tab="audit", f=f, logs=logs, total=total, page=page, pages=pages,
                            per_day=sorted(per_day.items(), reverse=True), actions=actions, actors=actors,
-                           cmd=AUDIT_CMD, quick=quick, audit_labels=adm.AUDIT_LABELS)
+                           cmd=AUDIT_CMD, quick=quick, audit_labels=adm.AUDIT_LABELS, keep=keep,
+                           keep_min=AUDIT_MIN_DAYS, keep_max=AUDIT_MAX_DAYS, earliest=today - timedelta(days=keep))
+
+
+@bp.route("/admin/audit/retention", methods=["POST"])
+def audit_retention():
+    """稽核紀錄保存天數：180–366。縮短時，超過的紀錄由維護服務在今天內清除。"""
+    from . import sysconf
+    from .maint import AUDIT_MAX_DAYS, AUDIT_MIN_DAYS, audit_retention_days
+
+    if not perm.can_manage_users(current_user):
+        abort(403)
+    n = request.form.get("days", type=int)
+    if n is None or not AUDIT_MIN_DAYS <= n <= AUDIT_MAX_DAYS:
+        flash(f"保存天數必須在 {AUDIT_MIN_DAYS}–{AUDIT_MAX_DAYS} 天之間。", "error")
+        return redirect(url_for("views.audit"))
+    old = audit_retention_days()
+    if n != old:
+        sysconf.put("audit_retention_days", n)
+        sysconf.put("audit_purge_last", "")  # 讓維護服務下一輪就套用
+        db.session.add(AuditLog(action="audit_retention", actor_id=current_user.id, target=f"{n} 天",
+                                detail=f"稽核紀錄保存天數 {old} → {n} 天"))
+        db.session.commit()
+        flash(f"稽核紀錄保存天數已改為 {n} 天。" + ("超過的紀錄會在維護服務下一輪清除。" if n < old else ""), "success")
+    return redirect(url_for("views.audit"))
 
 
 @bp.route("/admin/audit.csv")

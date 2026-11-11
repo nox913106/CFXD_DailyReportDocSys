@@ -149,6 +149,19 @@ def create_app():
     from .doctor import LEVEL_LABELS
 
     app.jinja_env.globals["LEVEL_LABELS"] = LEVEL_LABELS
+    app.jinja_env.globals["COPYRIGHT_YEAR"] = 2026
+
+    @app.context_processor
+    def _app_version():
+        """頁末顯示的程式版本（第一次需要時讀 .git，之後沿用；升級後服務會重啟）。"""
+        if "APP_VERSION" not in app.config:
+            from .backup import version
+
+            try:
+                app.config["APP_VERSION"] = (version() or "")[:7] or "dev"
+            except Exception:  # noqa: BLE001
+                app.config["APP_VERSION"] = "dev"
+        return {"APP_VERSION": app.config["APP_VERSION"]}
 
     @app.context_processor
     def _admin_alert():

@@ -34,6 +34,9 @@
     {% endwith %}
     {% block content %}{% endblock %}
   </main>
+  <footer class="site-footer no-print">
+    CFXD SLA 日報系統 · 版本 <code>{{ APP_VERSION }}</code> · © {{ COPYRIGHT_YEAR }} RallyTech 版權所有
+  </footer>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

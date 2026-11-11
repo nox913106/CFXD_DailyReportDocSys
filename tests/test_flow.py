@@ -574,6 +574,24 @@ def test_local_admin(app):
     text = r.get_data(as_text=True)
     assert r.status_code == 200 and text.startswith("\ufeff時間,動作") and "000777" in text and "erin" not in text
     assert "匯出稽核紀錄" in b.get("/admin/audit?action=audit_export")
+    # 保存天數 180–366；維護服務每天清除超過的紀錄並記一筆
+    assert "保存天數必須在 180–366" in b.post("/admin/audit/retention", {"days": "90"})
+    assert "保存天數必須在 180–366" in b.post("/admin/audit/retention", {"days": "400"})
+    with app.app_context():
+        from app import maint
+
+        db.session.add(AuditLog(action="set_role", actor_id=sid, target="ancient", detail="old",
+                                created_at=_dt.now() - _td(days=200)))
+        db.session.commit()
+        assert maint.purge_audit() == 0  # 預設 366 天，200 天前的保留
+    assert "保存天數已改為 180 天" in b.post("/admin/audit/retention", {"days": "180"})
+    with app.app_context():
+        assert maint.purge_audit() == 1 and maint.purge_audit() == 0  # 一天一次
+        assert not AuditLog.query.filter_by(target="ancient").count()
+        assert AuditLog.query.filter_by(action="audit_purge").count() == 1
+        assert AuditLog.query.filter_by(action="audit_retention").count() == 1
+    html = b.get("/admin/audit")
+    assert 'value="180"' in html and "© 2026 RallyTech 版權所有" in html and "版本 <code>" in html
 
     # 系統管理員可刪除任何未結案的日報
     rid = report_id_from(other.post("/reports/new", {"report_date": "2026-11-12"}))

@@ -4,6 +4,16 @@
 <p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>
 {% include "_admin_nav.html" %}
 <section class="card">
+  <h3>保存期限</h3>
+  <form method="post" action="{{ url_for('views.audit_retention') }}" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    稽核紀錄保存 <input type="number" name="days" value="{{ keep }}" min="{{ keep_min }}" max="{{ keep_max }}" required style="width:6em"> 天
+    <button type="submit" class="secondary">儲存</button>
+    <span class="hint">至少 {{ keep_min }} 天、最多 {{ keep_max }} 天。維護服務每天清除超過期限的紀錄（清除本身也會記一筆），
+      目前最早可查到 {{ earliest }}。需要更久請定期「匯出 CSV」或靠備份保存。</span>
+  </form>
+</section>
+<section class="card">
   <h3>稽核紀錄查詢</h3>
   <p class="hint">以天為單位查詢（起訖日期都包含，最多 366 天），可再依動作、操作者、對象、內容篩選。
     稽核紀錄不會隨日報刪除，也不能在畫面上修改或刪除。匯出 CSV 本身也會記錄一筆。</p>

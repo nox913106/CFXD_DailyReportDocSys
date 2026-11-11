@@ -140,6 +140,41 @@ def _run_job(job):
     return ok
 
 
+AUDIT_MIN_DAYS, AUDIT_MAX_DAYS = 180, 366
+
+
+def audit_retention_days():
+    try:
+        n = int(sysconf.get("audit_retention_days") or AUDIT_MAX_DAYS)
+    except (TypeError, ValueError):
+        n = AUDIT_MAX_DAYS
+    return min(AUDIT_MAX_DAYS, max(AUDIT_MIN_DAYS, n))
+
+
+def purge_audit(now=None):
+    """每天一次：刪除超過保存天數（180–366）的稽核紀錄，並記一筆清除紀錄。回傳刪除筆數。"""
+    from datetime import timedelta
+
+    from .models import AuditLog
+
+    now = now or datetime.now()
+    if sysconf.get("audit_purge_last") == now.date().isoformat():
+        return 0
+    days = audit_retention_days()
+    cutoff = datetime.combine(now.date() - timedelta(days=days), datetime.min.time())
+    old = AuditLog.query.filter(AuditLog.created_at < cutoff)
+    n = old.count()
+    if n:
+        oldest = old.order_by(AuditLog.created_at).first().created_at
+        old.delete(synchronize_session=False)
+        db.session.add(AuditLog(action="audit_purge", actor_id=None, target=f"{days} 天",
+                                detail=f"清除 {cutoff:%Y-%m-%d} 以前的稽核紀錄 {n} 筆（最舊 {oldest:%Y-%m-%d}）"))
+        log.warning("清除過期稽核紀錄 %d 筆（保存 %d 天）", n, days)
+    sysconf.put("audit_purge_last", now.date().isoformat())
+    db.session.commit()
+    return n
+
+
 def tick(now=None):
     """一輪：排程備份 → 排隊中的工作 → 健康檢查。回傳是否做了事。"""
     from .models import MaintJob
@@ -169,6 +204,11 @@ def tick(now=None):
             did = True
     except Exception:
         log.exception("發送流程 / 每日提醒錯誤")
+        db.session.rollback()
+    try:
+        did = purge_audit(now) or did
+    except Exception:
+        log.exception("清除過期稽核紀錄失敗")
         db.session.rollback()
     if health_due(now):
         try:
