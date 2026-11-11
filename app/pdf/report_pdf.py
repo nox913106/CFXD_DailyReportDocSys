@@ -11,7 +11,8 @@ import os
 from flask import current_app
 from reportlab.pdfgen import canvas
 
-from ..models import Report, ScreenshotSection
+from .. import db
+from ..models import OFFICIAL_STATUSES, Report, ScreenshotSection
 from . import fonts
 from .cover import CoverDoc
 from .screenshot import ScreenshotDoc
@@ -50,9 +51,18 @@ def _image_path(report, img):
     return os.path.join(current_app.config["UPLOAD_DIR"], str(report.id), img.filename)
 
 
+def month_reports_of(report):
+    """封面 Reports Control：當月 1 日到這一天的正式日報（已核准、已結案，含 Excel 匯入），加上這一份本身。"""
+    d = report.report_date
+    q = Report.query.filter(Report.report_date >= d.replace(day=1), Report.report_date <= d,
+                            db.or_(Report.status.in_(OFFICIAL_STATUSES), Report.id == report.id))
+    return q.order_by(Report.report_date).all()
+
+
 def cache_key(report):
     imgs = ",".join(f"{i.id}:{i.order}:{i.section_id}" for i in report.images)
-    raw = f"{report.id}|{report.updated_at}|{report.status}|{report.approver_name}|{imgs}|preview-v2"
+    month = ",".join(f"{r.id}:{r.doc_no}:{r.author_name}" for r in month_reports_of(report))  # 補匯入前幾天時預覽要更新
+    raw = f"{report.id}|{report.updated_at}|{report.status}|{report.approver_name}|{imgs}|{month}|{report.alarm_new}|{report.alarm_known}|preview-v3"
     return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
 
@@ -119,7 +129,7 @@ def official_stamp(report, now=None):
             "sha256": content_fingerprint(report)}
 
 
-def _faded_logo(alpha=0.22):
+def _faded_logo(alpha=0.13):
     from PIL import Image
     from reportlab.lib.utils import ImageReader
 
@@ -149,13 +159,13 @@ class _Canvas(canvas.Canvas):
             st["_forms"] = set()
         cjk = st["_cjk"]
         lines = [  # (文字, 字型, 字級, 透明度, 紅字)
-            ((COMPANY_ZH + "  " if cjk else "") + COMPANY_EN, cjk or "Helvetica-Bold", 8, 0.26, False),
-            ((CLASSIFICATION_ZH + "  " if cjk else "") + CLASSIFICATION_EN, cjk or "Helvetica-Bold", 8, 0.32, True),
-            (st["filename"], "Helvetica", 5.2, 0.28, False),
-            ("Generated " + st["generated"], "Helvetica", 5.2, 0.28, False),
-            ("Content SHA-256 " + st["sha256"], "Helvetica", 5.2, 0.28, False),
+            ((COMPANY_ZH + "  " if cjk else "") + COMPANY_EN, cjk or "Helvetica-Bold", 8, 0.16, False),
+            ((CLASSIFICATION_ZH + "  " if cjk else "") + CLASSIFICATION_EN, cjk or "Helvetica-Bold", 8, 0.20, True),
+            (st["filename"], "Helvetica", 5.2, 0.17, False),
+            ("Generated " + st["generated"], "Helvetica", 5.2, 0.17, False),
+            ("Content SHA-256 " + st["sha256"], "Helvetica", 5.2, 0.17, False),
         ]
-        dx, dy = 250, 118
+        dx, dy = 340, 175
         diag = (w * w + h * h) ** 0.5
         ny, nx = int(diag / dy / 2) + 2, int(diag / dx / 2) + 2
         spots = [(i * dx + (dx / 2 if j % 2 else 0), j * dy) for j in range(-ny, ny + 1) for i in range(-nx, nx + 1)]
@@ -187,10 +197,10 @@ class _Canvas(canvas.Canvas):
         self.setFillColorRGB(0.12, 0.30, 0.55)
         self.translate(w / 2, h / 2)
         self.rotate(52 if h > w else 30)
-        self.setFillAlpha(0.13)
+        self.setFillAlpha(0.08)
         self.setFont("Helvetica-Bold", 30 if h > w else 40)
         self.drawCentredString(0, 18, title)
-        self.setFillAlpha(0.30)
+        self.setFillAlpha(0.18)
         size = 7.5 if h > w else 9
         self.setFont("Helvetica", size)
         for i, line in enumerate(notes):
@@ -277,11 +287,7 @@ def cover_data(report):
     purpose = report.issue_purpose or "IFI - Issue for Information"
     status, _, changes = purpose.partition(" - ")
     month_start = d.replace(day=1)
-    month_reports = (
-        Report.query.filter(Report.report_date >= month_start, Report.report_date <= d)
-        .order_by(Report.report_date)
-        .all()
-    )
+    month_reports = month_reports_of(report)
     images = sorted(report.images, key=lambda i: (i.order, i.id))
     return {
         "doc_no": report.doc_no,

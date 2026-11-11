@@ -544,3 +544,45 @@ def test_official_watermark_and_fingerprint(app):
             t = pg.extract_text()
             assert "CONFIDENTIAL - INTERNAL USE ONLY" in t and st["sha256"] in t and st["filename"] in t
             assert t.count("CONFIDENTIAL") > 10  # 平鋪整頁
+
+
+def test_import_earlier_day_regenerates_later_pdf(app):
+    """先匯入 11/11 並產生正式 PDF，之後補匯入 11/10：11/11 的 Reports Control 要包含 11/10，所以重新產生。"""
+    import os
+
+    import pypdf
+
+    from app import delivery
+    from app.models import Delivery, Report
+
+    items = _items(app)
+    fm = _browser(app, "fm", "file_manager")
+
+    def up(day, author):
+        x = build_checklist_xlsx(items, day, author=author)
+        r = fm.c.post("/import/upload", data={"csrf_token": fm.tok, "files": (io.BytesIO(x), f"CheckList_{day}.xlsx")},
+                      content_type="multipart/form-data", headers={"X-CSRFToken": fm.tok})
+        return r.json["results"][0]
+
+    assert up(dt.date(2026, 11, 11), "Simon Lin")["status"] == "imported"
+    with app.app_context():
+        delivery.tick()
+        d11 = Report.query.filter_by(report_date=dt.date(2026, 11, 11)).one().delivery
+        old_path, old_md5 = delivery.final_path(d11), d11.pdf_md5
+        assert d11.state == "done" and os.path.isfile(old_path)
+    r = up(dt.date(2026, 11, 10), "Willy Liang")
+    assert r["status"] == "imported" and any("2026-11-11" in w and "重新產生" in w for w in r["warnings"])
+    with app.app_context():
+        d11 = Report.query.filter_by(report_date=dt.date(2026, 11, 11)).one().delivery
+        assert d11.state == "queued" and d11.pdf_md5 is None and not os.path.isfile(old_path)
+        delivery.tick()
+        d11 = db_get(Delivery, d11.id)
+        assert d11.state == "done" and d11.pdf_md5 != old_md5
+        cover = pypdf.PdfReader(delivery.final_path(d11)).pages[4].extract_text()  # 1 Reports Control
+        assert "2026-11-10" in cover and "Willy Liang" in cover and "2026-11-11" in cover
+
+
+def db_get(model, pk):
+    from app import db
+
+    return db.session.get(model, pk)

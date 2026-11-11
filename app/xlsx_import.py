@@ -306,8 +306,11 @@ def import_one(filename, data, user, dry_run=False):
     db.session.add(AuditLog(action="import_report", actor_id=user.id, target=p.doc_no,
                             detail=f"{p.report_date} 從 {filename} 匯入"))
     db.session.flush()
-    _recount_next(p.report_date)
+    nxt = _recount_next(p.report_date)
+    regen = _regenerate_later(p.report_date, nxt, user, filename)
     db.session.commit()
+    if regen:
+        p.warnings.append(f"已排入重新產生正式 PDF（Reports Control 與告警統計要包含這一天）：{'、'.join(regen)}")
     out.update(status="imported", report_id=report.id, warnings=p.warnings,
                message=f"已匯入：告警 {len(p.alarms)} 筆（New {new} / Known {known} / False {false}）")
     return out
@@ -321,3 +324,38 @@ def _recount_next(day):
         alarms = [{c: getattr(r, c) for c in ("category", "item", "device_name", "description", "false_alarm")}
                   for r in nxt.alarm_rows]
         nxt.alarm_new, nxt.alarm_known, nxt.alarm_false = _counts(nxt.report_date, alarms, exclude_id=nxt.id)
+        return nxt
+    return None
+
+
+def _regenerate_later(day, nxt, user, filename):
+    """匯入順序不一定照日期。封面的 Reports Control 列出當月到該日的日報，下一份的 New / Known 也以這份為基準，
+    所以同月份較晚日期、以及下一份的「Excel 匯入」日報，已產生的正式 PDF 要重新產生（舊檔移到 final_pdf/_superseded/）。
+    系統建立的日報不動：它的正式 PDF 已經上傳、寄出。回傳重新產生的日期。"""
+    from .delivery import final_path
+
+    later = (Report.query.filter(Report.report_date > day, Report.import_meta.isnot(None),
+                                 db.extract("year", Report.report_date) == day.year,
+                                 db.extract("month", Report.report_date) == day.month).all())
+    if nxt is not None and nxt.imported and nxt not in later:
+        later.append(nxt)
+    done = []
+    for r in later:
+        d = r.delivery
+        if not d or not d.pdf_md5:
+            continue  # 還沒產生：產生時就會用最新資料
+        path = final_path(d)
+        if path and os.path.isfile(path):
+            rel = os.path.join("final_pdf", "_superseded", f"{dt.datetime.now():%Y%m%d-%H%M%S}_{os.path.basename(path)}")
+            dst = os.path.join(current_app.instance_path, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            os.replace(path, dst)
+        old = d.pdf_md5
+        d.pdf_path = d.pdf_name = d.pdf_md5 = d.pdf_sha256 = None
+        d.pdf_size = None
+        d.set_step("pdf", "pending", "等待重新產生")
+        d.state, d.finished_at = "queued", None
+        db.session.add(ReviewLog(report_id=r.id, action="import", actor_id=user.id,
+                                 comment=f"匯入 {day}（{filename}）後重新產生正式 PDF；舊檔 MD5 {old} 移到 final_pdf/_superseded/"))
+        done.append(r.report_date.isoformat())
+    return done
