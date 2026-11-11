@@ -47,6 +47,23 @@ def db_file():
     return path if os.path.isabs(path) else os.path.join(current_app.instance_path, path)
 
 
+def semver():
+    """語意化版本（程式目錄的 VERSION 檔，例如 1.0.0）；讀不到時為空字串。"""
+    try:
+        with open(os.path.join(app_dir(), "VERSION")) as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def display_version():
+    """畫面顯示用：v1.0.0（commit 前 7 碼）。"""
+    v, c = semver(), (version() or "")[:7]
+    if v:
+        return f"v{v}" + (f"（{c}）" if c else "")
+    return c or "dev"
+
+
 def version():
     """讀 .git 取得目前 commit（不呼叫 git：程式目錄屬於 root，git 會拒絕其他使用者）。"""
     git = os.path.join(app_dir(), ".git")
@@ -153,7 +170,7 @@ def create(trigger="manual", user=None, prune=True):
                 from .models import Report
 
                 meta = {"trigger": trigger, "by": user.username if user else "", "created_at": datetime.now().isoformat(),
-                        "version": version(), "reports": Report.query.count()}
+                        "version": version(), "app_version": semver(), "reports": Report.query.count()}
                 with open(os.path.join(dest, "meta.json"), "w") as fh:
                     json.dump(meta, fh, ensure_ascii=False)
                 files = sorted(f for f in os.listdir(dest) if f != "SHA256SUMS")

@@ -155,13 +155,15 @@ def create_app():
     def _app_version():
         """頁末顯示的程式版本（第一次需要時讀 .git，之後沿用；升級後服務會重啟）。"""
         if "APP_VERSION" not in app.config:
-            from .backup import version
+            from .backup import semver, version
 
             try:
-                app.config["APP_VERSION"] = (version() or "")[:7] or "dev"
+                v, c = semver(), (version() or "")[:7]
             except Exception:  # noqa: BLE001
-                app.config["APP_VERSION"] = "dev"
-        return {"APP_VERSION": app.config["APP_VERSION"]}
+                v, c = "", ""
+            app.config["APP_VERSION"] = f"v{v}" if v else (c or "dev")
+            app.config["APP_COMMIT"] = c
+        return {"APP_VERSION": app.config["APP_VERSION"], "APP_COMMIT": app.config["APP_COMMIT"]}
 
     @app.context_processor
     def _admin_alert():

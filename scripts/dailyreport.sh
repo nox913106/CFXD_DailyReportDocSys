@@ -526,13 +526,15 @@ cmd_upgrade() {
   cmd_backup --quiet
   step "更新程式碼"
   git config --global --add safe.directory "$DIR" 2>/dev/null || true
-  local before after
+  local before after vb va
   before="$(git -C "$DIR" rev-parse --short HEAD)"
+  vb="$(cat "$DIR/VERSION" 2>/dev/null || echo "?")"
   git -C "$DIR" fetch -q origin "$BRANCH"
   git -C "$DIR" merge -q --ff-only "origin/$BRANCH" \
     || { warn "有本機修改，改為與 origin/$BRANCH 一致"; git -C "$DIR" reset -q --hard "origin/$BRANCH"; }
   after="$(git -C "$DIR" rev-parse --short HEAD)"
-  info "$before → $after"
+  va="$(cat "$DIR/VERSION" 2>/dev/null || echo "?")"
+  info "v$vb（$before）→ v$va（$after）"
   # 交給新版腳本完成後續步驟（新版可能有新的相依套件或設定）
   exec bash "$DIR/scripts/dailyreport.sh" _post_upgrade
 }
@@ -550,7 +552,7 @@ cmd_post_upgrade() {
   setup_systemd
   rm -rf "${INSTANCE:?}/pdf_cache/"*
   wait_healthy
-  echo "${G}${B}升級完成${N}"
+  echo "${G}${B}升級完成${N}：v$(cat "$DIR/VERSION" 2>/dev/null || echo "?")（$(git -C "$DIR" rev-parse --short HEAD 2>/dev/null)）"
   cmd_doctor || true
 }
 

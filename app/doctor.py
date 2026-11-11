@@ -332,11 +332,11 @@ def _system_checks(out):
                            "ls-remote", "origin", "refs/heads/main"], timeout=15)
         latest = remote.split()[0] if rc == 0 and remote else ""
         if not latest:
-            _item(out, g, "程式版本", "ok", f"{ver[:7]}（無法連線檢查新版）")
+            _item(out, g, "程式版本", "ok", f"{backup.display_version()}，無法連線檢查新版")
         elif latest == ver:
-            _item(out, g, "程式版本", "ok", f"{ver[:7]}（最新）")
+            _item(out, g, "程式版本", "ok", f"{backup.display_version()}，最新")
         else:
-            _item(out, g, "程式版本", "warn", f"{ver[:7]}，GitHub 上有新版 {latest[:7]}",
+            _item(out, g, "程式版本", "warn", f"{backup.display_version()}，GitHub 上有新版 {latest[:7]}",
                   f"在主機執行：curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash -s -- upgrade")
 
     g = "服務"

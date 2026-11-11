@@ -43,7 +43,7 @@ def index():
     for it in (last or {}).get("items", []):
         groups.setdefault(it["group"], []).append(it)
     infra = {"資料庫": db.engine.url.database, "驗證模式": current_app.config["AUTH_MODE"],
-             "截圖資料夾": current_app.config["UPLOAD_DIR"], "程式版本": (bk.version() or "")[:7],
+             "截圖資料夾": current_app.config["UPLOAD_DIR"], "程式版本": bk.display_version(),
              "反向代理": "是" if os.environ.get("BEHIND_PROXY") == "1" else "否",
              "Cookie 只經 HTTPS": "是" if current_app.config["SESSION_COOKIE_SECURE"] else "否"}
     from .doctor import abnormal_items

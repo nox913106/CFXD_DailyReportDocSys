@@ -591,7 +591,7 @@ def test_local_admin(app):
         assert AuditLog.query.filter_by(action="audit_purge").count() == 1
         assert AuditLog.query.filter_by(action="audit_retention").count() == 1
     html = b.get("/admin/audit")
-    assert 'value="180"' in html and "© 2026 RallyTech 版權所有" in html and "版本 <code>" in html
+    assert 'value="180"' in html and "© 2026 RallyTech 版權所有" in html and ">v1.0.0</span>" in html
 
     # 系統管理員可刪除任何未結案的日報
     rid = report_id_from(other.post("/reports/new", {"report_date": "2026-11-12"}))
