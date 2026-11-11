@@ -833,13 +833,19 @@ def _wrap(text, rl_font, size, avail):
     return lines
 
 
-def render_sheets(book, sheet_names, canvas, page_size):
-    """把多個工作表依序畫到 canvas，回傳頁數。"""
+def render_sheets(book, sheet_names, canvas, page_size, outline=None):
+    """把多個工作表依序畫到 canvas，回傳頁數。outline = PDF 書籤的上層標題（每個工作表一個子書籤）。"""
     pw, ph = page_size
     n = 0
-    for name in sheet_names:
+    for k, name in enumerate(sheet_names):
         sh = book.sheet(name)
         painter = SheetPainter(book, sh, canvas, pw, ph)
+        if outline:
+            if k == 0:  # 上層與第一個子書籤要用不同的名稱，否則會被當成同一個
+                canvas.bookmarkPage("sheets")
+                canvas.addOutlineEntry(outline, "sheets", level=0)
+            canvas.bookmarkPage(f"sheet{k}")
+            canvas.addOutlineEntry(name, f"sheet{k}", level=1)
         for rows in painter.pages():
             painter.draw_page(rows)
             canvas.showPage()

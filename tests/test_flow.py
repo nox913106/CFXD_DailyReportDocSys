@@ -1648,7 +1648,7 @@ def test_close_and_delivery(app, monkeypatch):
     pdf_bytes = b"%PDF-1.7 final " + b"x" * (graph.CHUNK + 1234)  # 超過一個分段
     calls = []
 
-    def fake_render(report, preview=False):
+    def fake_render(report, preview=False, stamp=None):
         calls.append(preview)
         return pdf_bytes
 

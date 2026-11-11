@@ -189,6 +189,8 @@ class CoverDoc:
         anchor = end_x - DOT_EM[bold] * size
         dot_leader(cv, x, min(num_end - nw, end_x + 0.5), top, size, bold, anchor)
         text(cv, num, num_end - nw, top, size, bold)
+        if num:  # 目錄可點：連到該頁
+            link(cv, f"cov{num}", 54.0, top, num_end, size)
 
     def _contents(self):
         p = self.new_page()
@@ -462,12 +464,28 @@ class CoverDoc:
         self.layout()
         self.layout()  # 第二次：目錄頁碼已知
         total = len(self.pages)
+        names = [("Contents", 2), ("List of Tables", self.toc.get("lot")), ("Revision Control", self.toc.get("rev")),
+                 (f"1 Reports Control ({self.d['month_label']})", self.toc.get("s1")),
+                 ("2 Inspection Record", self.toc.get("s2")),
+                 ("3 On-site Record / System Update Record", self.toc.get("s3")),
+                 ("4 Daily Alarm Inspection (True Alarm)", self.toc.get("s4"))]
         for i, p in enumerate(self.pages, 1):
+            cv.bookmarkPage(f"cov{i}")
+            if i == 1:
+                cv.addOutlineEntry("Daily Work Report", "cov1", level=0)
+            for title, page in names:
+                if page == i:
+                    cv.addOutlineEntry(title, f"cov{i}", level=1)
             self._header_footer(cv, i, total, p.kind == "cover")
             for op in p.ops:
                 op(cv, i, total)
             cv.showPage()
         return total
+
+
+def link(cv, dest, x0, top, x1, size):
+    """目錄的一行做成連結（top 是文字頂端，與 text() 相同的座標）。"""
+    cv.linkRect("", dest, (x0, PAGE_H - top - size * 1.25, x1, PAGE_H - top + 1), relative=0, thickness=0)
 
 
 def _draw_images(cv, paths, x, top, w, h):

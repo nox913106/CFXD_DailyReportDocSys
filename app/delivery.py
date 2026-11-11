@@ -171,7 +171,7 @@ def _notify(d, event, **extra):
 
 def _step_pdf(d):
     """正式 PDF 只產生一次：重試時檔案已存在而且檢查碼相符就沿用。"""
-    from .pdf.report_pdf import pdf_filename, render_pdf
+    from .pdf.report_pdf import pdf_filename, render_official
 
     path = final_path(d)
     if path and os.path.isfile(path) and d.pdf_md5 and _md5(path) == d.pdf_md5:
@@ -181,14 +181,15 @@ def _step_pdf(d):
     rel = os.path.join("final_pdf", f"{r.report_date:%Y}", f"{r.report_date:%m}", name)
     full = os.path.join(current_app.instance_path, rel)
     os.makedirs(os.path.dirname(full), exist_ok=True)
-    data = render_pdf(r, preview=False)
+    data, stamp = render_official(r)
     tmp = full + ".part"
     with open(tmp, "wb") as fh:
         fh.write(data)
     os.replace(tmp, full)
     d.pdf_path, d.pdf_name, d.pdf_size = rel, name, len(data)
     d.pdf_md5, d.pdf_sha256 = hashlib.md5(data).hexdigest(), hashlib.sha256(data).hexdigest()
-    return f"{name}（{len(data) / 1e6:.1f} MB），MD5 {d.pdf_md5}"
+    mark = f"；浮水印時間 {stamp['generated']}，內容 SHA-256 {stamp['sha256']}" if stamp else ""
+    return f"{name}（{len(data) / 1e6:.1f} MB），MD5 {d.pdf_md5}{mark}"
 
 
 def _md5(path):

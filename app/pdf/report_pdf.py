@@ -5,6 +5,7 @@ import copy
 import datetime as dt
 import hashlib
 import io
+import json
 import os
 
 from flask import current_app
@@ -58,12 +59,149 @@ def cache_key(report):
 PREVIEW_MARK = "PREVIEW - NOT THE FINAL DOCUMENT"
 
 
+IMPORTED_MARK = "IMPORTED FROM ORIGINAL EXCEL"
+
+
+def imported_mark_lines(report, today=None):
+    """Excel 匯入日報的浮水印（正式 PDF 與預覽都有）：說明這份 PDF 是由原始 Excel 重新產生。"""
+    m = report.import_info
+    issued = (today or dt.date.today()).isoformat()
+    return (IMPORTED_MARK,
+            f"Re-issued {issued} by CFXD Daily Report System - not the originally issued PDF",
+            f"Source: {m.get('file', '')}",
+            f"SHA-256 {m.get('sha256', '')}")
+
+
+COMPANY_ZH = "雷力科技股份有限公司"
+COMPANY_EN = "Rally Technology Co., Ltd."
+CLASSIFICATION_ZH = "機密，僅限內部使用"
+CLASSIFICATION_EN = "CONFIDENTIAL - INTERNAL USE ONLY"
+
+
+def content_fingerprint(report):
+    """正式 PDF 內容的 SHA-256：日報所有欄位、各記錄表、告警列、檢查結果、每張圖片檔案的位元組與範本檔。
+    PDF 檔案本身的 SHA-256 無法寫進自己（寫入就會改變），所以浮水印印的是這個內容雜湊；
+    正式 PDF 檔案的 MD5 / SHA-256 另外記錄在系統（正式文件頁）。同樣的內容永遠得到同樣的值。"""
+
+    def rows(objs, skip=("id", "report_id")):
+        return [{c.name: getattr(o, c.name) for c in o.__table__.columns if c.name not in skip} for o in objs]
+
+    def file_sha(path):
+        h = hashlib.sha256()
+        try:
+            with open(path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+        except OSError:
+            return None
+        return h.hexdigest()
+
+    images = sorted(report.images, key=lambda i: (i.order, i.id))
+    data = {
+        "report": rows([report], skip=("updated_at", "updated_by_id"))[0],
+        "issues": rows(report.issues), "onsite": rows(report.onsite_records),
+        "updates": rows(report.system_updates), "true_alarms": rows(report.true_alarms),
+        "alarm_rows": rows(report.alarm_rows),
+        "results": sorted(rows(report.results), key=lambda r: r["item_id"]),
+        "images": [{"kind": i.kind, "section_id": i.section_id, "order": i.order,
+                    "sha256": file_sha(_image_path(report, i))} for i in images],
+        "template": file_sha(current_app.config.get("PDF_TEMPLATE_XLSX") or "") if not report.imported else None,
+    }
+    raw = json.dumps(data, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def official_stamp(report, now=None):
+    """系統建立日報的正式 PDF 浮水印內容。"""
+    now = (now or dt.datetime.now()).astimezone()
+    off = now.strftime("%z")
+    return {"filename": pdf_filename(report), "generated": now.strftime("%Y-%m-%d %H:%M:%S") + f" UTC{off[:3]}:{off[3:]}",
+            "sha256": content_fingerprint(report)}
+
+
+def _faded_logo(alpha=0.22):
+    from PIL import Image
+    from reportlab.lib.utils import ImageReader
+
+    im = Image.open(os.path.join(ASSETS, "logo_word.png")).convert("RGBA")
+    a = im.getchannel("A").point(lambda v: int(v * alpha))
+    im.putalpha(a)
+    return ImageReader(im)
+
+
 class _Canvas(canvas.Canvas):
-    """預覽版每一頁加上浮水印；正式 PDF（結案後產生）不加。"""
+    """浮水印：預覽版每頁 PREVIEW；Excel 匯入的日報（正式與預覽）每頁「由原始 Excel 重新產生」；
+    系統建立日報的正式 PDF 每頁平鋪公司 logo、名稱、機密等級、檔名、產出時間、內容 SHA-256（stamp）。"""
 
     watermark = None
+    imported = None  # (主標, 說明…)
+    stamp = None  # official_stamp()：系統建立日報的正式 PDF，整頁平鋪公司 logo、名稱、機密等級、檔名、時間、雜湊
+
+    def _tiled_mark(self):
+        """整頁平鋪（旋轉 30°）：logo 圖樣只畫一次做成 Form XObject 每頁引用（圖片本身帶透明度）；
+        文字每頁直接畫（半透明，Form 裡不能用透明度設定）。"""
+        w, h = self._pagesize
+        st = self.stamp
+        if "_logo" not in st:
+            st["_logo"] = _faded_logo()
+            cjk = fonts.cjk()
+            st["_cjk"] = cjk if fonts.has_glyphs(cjk, COMPANY_ZH + CLASSIFICATION_ZH) else None
+            st["_forms"] = set()
+        cjk = st["_cjk"]
+        lines = [  # (文字, 字型, 字級, 透明度, 紅字)
+            ((COMPANY_ZH + "  " if cjk else "") + COMPANY_EN, cjk or "Helvetica-Bold", 8, 0.26, False),
+            ((CLASSIFICATION_ZH + "  " if cjk else "") + CLASSIFICATION_EN, cjk or "Helvetica-Bold", 8, 0.32, True),
+            (st["filename"], "Helvetica", 5.2, 0.28, False),
+            ("Generated " + st["generated"], "Helvetica", 5.2, 0.28, False),
+            ("Content SHA-256 " + st["sha256"], "Helvetica", 5.2, 0.28, False),
+        ]
+        dx, dy = 250, 118
+        diag = (w * w + h * h) ** 0.5
+        ny, nx = int(diag / dy / 2) + 2, int(diag / dx / 2) + 2
+        spots = [(i * dx + (dx / 2 if j % 2 else 0), j * dy) for j in range(-ny, ny + 1) for i in range(-nx, nx + 1)]
+        name = f"wmlogo_{int(w)}x{int(h)}"
+        if name not in st["_forms"]:
+            self.beginForm(name, lowerx=0, lowery=0, upperx=w, uppery=h)
+            self.translate(w / 2, h / 2)
+            self.rotate(30)
+            for x, y in spots:
+                self.drawImage(st["_logo"], x - 40, y + 20, 80, 24, mask="auto")
+            self.endForm()
+            st["_forms"].add(name)
+        self.doForm(name)
+        self.saveState()
+        self.translate(w / 2, h / 2)
+        self.rotate(30)
+        for k, (txt, font, size, alpha, red) in enumerate(lines):
+            self.setFillColorRGB(*((0.55, 0.08, 0.08) if red else (0.25, 0.25, 0.25)))
+            self.setFillAlpha(alpha)
+            self.setFont(font, size)
+            for x, y in spots:
+                self.drawCentredString(x, y + 8 - k * 9.2 + (0 if k < 2 else 2), txt)
+        self.restoreState()
+
+    def _imported_mark(self):
+        w, h = self._pagesize
+        title, *notes = self.imported
+        self.saveState()
+        self.setFillColorRGB(0.12, 0.30, 0.55)
+        self.translate(w / 2, h / 2)
+        self.rotate(52 if h > w else 30)
+        self.setFillAlpha(0.13)
+        self.setFont("Helvetica-Bold", 30 if h > w else 40)
+        self.drawCentredString(0, 18, title)
+        self.setFillAlpha(0.30)
+        size = 7.5 if h > w else 9
+        self.setFont("Helvetica", size)
+        for i, line in enumerate(notes):
+            self.drawCentredString(0, -2 - i * (size + 3), line)
+        self.restoreState()
 
     def showPage(self):
+        if self.stamp:
+            self._tiled_mark()
+        if self.imported:
+            self._imported_mark()
         if self.watermark:
             w, h = self._pagesize
             self.saveState()
@@ -94,11 +232,24 @@ def build_pdf(report):
     return data
 
 
-def render_pdf(report, preview=False):
+def render_official(report):
+    """正式 PDF：回傳 (bytes, stamp)。系統建立的日報整頁平鋪浮水印；Excel 匯入的用匯入浮水印（stamp 為 None）。"""
+    fonts.configure(current_app.config.get("FONT_DIR"))
+    stamp = None if report.imported else official_stamp(report)
+    data = render_pdf(report, preview=False, stamp=stamp)
+    return data, ({k: v for k, v in stamp.items() if not k.startswith("_")} if stamp else None)
+
+
+def render_pdf(report, preview=False, stamp=None):
     fonts.configure(current_app.config.get("FONT_DIR"))
     buf = io.BytesIO()
     cv = _Canvas(buf, pagesize=PAGE)
     cv.watermark = PREVIEW_MARK if preview else None
+    cv.imported = imported_mark_lines(report) if report.imported else None
+    cv.stamp = stamp
+    if stamp:
+        cv.setSubject(f"{CLASSIFICATION_EN}; generated {stamp['generated']}; content SHA-256 {stamp['sha256']}")
+    cv.showOutline()
     cv.setTitle(f"{report.doc_no} CFXD SLA Daily Work Report")
     cv.setAuthor(report.author_name)
     logo = os.path.join(ASSETS, "logo_word.png")
@@ -107,10 +258,10 @@ def render_pdf(report, preview=False):
     if report.imported:
         # Excel 匯入的過去日報：CheckList 直接畫原始 Excel（儲存格值與版面都不經過系統範本，內容與原檔完全相同）
         book = original_workbook(report)
-        render_sheets(book, [s for s in SHEETS if s in book.wb.sheetnames], cv, PAGE)
+        render_sheets(book, [s for s in SHEETS if s in book.wb.sheetnames], cv, PAGE, outline="CheckList")
     else:
         book = fill_workbook(report)
-        render_sheets(book, SHEETS, cv, PAGE)
+        render_sheets(book, SHEETS, cv, PAGE, outline="CheckList")
     if not (report.imported and not report.images):  # 匯入的沒有截圖，不印空白的截圖章節
         ScreenshotDoc(screenshot_sections(report), logo).render(cv)
     cv.save()

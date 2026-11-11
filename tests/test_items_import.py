@@ -372,6 +372,11 @@ def test_import_history_xlsx(app):
 
         text = "".join(pg.extract_text() for pg in pypdf.PdfReader(io.BytesIO(open(delivery.final_path(dl), "rb").read())).pages)
         assert "UTM-01" in text and "Syslog" in text and "Nobody Here" in text
+        assert "IMPORTED FROM ORIGINAL EXCEL" in text and "CONFIDENTIAL" not in text  # 匯入的用匯入浮水印
+        rd = pypdf.PdfReader(delivery.final_path(dl))
+        tops = [o.title for o in rd.outline if not isinstance(o, list)]
+        assert tops == ["Daily Work Report", "CheckList"]  # PDF 書籤（沒有截圖章節）
+        assert rd.pages[1].get("/Annots")  # 封面目錄可點
         from app.models import TeamsMessage
 
         assert TeamsMessage.query.filter_by(event="delivery_done").count() == 0
@@ -498,3 +503,44 @@ def test_admin_deletes_closed_report(app, tmp_path):
         assert "_deleted" in log.detail and "abc123" in log.detail
         assert not os.path.exists(full)
         assert os.listdir(os.path.join(app.instance_path, "final_pdf", "_deleted"))
+
+
+def test_official_watermark_and_fingerprint(app):
+    """系統建立日報的正式 PDF：整頁平鋪公司、機密等級、檔名、時間、內容 SHA-256；內容雜湊固定，內容一改就變。"""
+    import pypdf
+
+    from app import db, docno
+    from app.models import Report, User
+    from app.pdf import fonts
+    from app.pdf.report_pdf import _Canvas, content_fingerprint, official_stamp
+
+    with app.app_context():
+        u = User(username="w1", display_name="W One", role="first_line")
+        db.session.add(u)
+        db.session.flush()
+        d = dt.date(2026, 11, 3)
+        r = Report(report_date=d, doc_no=docno.doc_no(d), contractor_doc_no=docno.contractor_doc_no(d),
+                   author_id=u.id, updated_by_id=u.id, status="closed")
+        db.session.add(r)
+        db.session.commit()
+        h1 = content_fingerprint(r)
+        assert h1 == content_fingerprint(r) and len(h1) == 64
+        r.inspection_summary = "changed"
+        db.session.commit()
+        assert content_fingerprint(r) != h1
+        st = official_stamp(r)
+        assert st["filename"].startswith(r.doc_no) and st["sha256"] == content_fingerprint(r)
+        fonts.configure(app.config.get("FONT_DIR"))
+        buf = io.BytesIO()
+        cv = _Canvas(buf, pagesize=(595.32, 841.92))
+        cv.stamp = dict(st)
+        cv.drawString(72, 700, "page one")
+        cv.showPage()
+        cv.drawString(72, 700, "page two")
+        cv.showPage()
+        cv.save()
+        rd = pypdf.PdfReader(io.BytesIO(buf.getvalue()))
+        for pg in rd.pages:
+            t = pg.extract_text()
+            assert "CONFIDENTIAL - INTERNAL USE ONLY" in t and st["sha256"] in t and st["filename"] in t
+            assert t.count("CONFIDENTIAL") > 10  # 平鋪整頁

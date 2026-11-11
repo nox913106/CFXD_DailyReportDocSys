@@ -167,6 +167,10 @@ class ScreenshotDoc:
         nw = fonts.width(num, F(bold), size)
         dot_leader(cv, end, num_right - nw, top, size, bold, anchor)
         text(cv, num, num_right - nw, top, size, bold)
+        if num:
+            from .cover import link
+
+            link(cv, f"ss_{code}", 54.0, top, num_right, size)
 
     def render(self, cv):
         toc = self._layout_toc()
@@ -174,7 +178,9 @@ class ScreenshotDoc:
         body = self._layout_body(body_first)  # 先算頁碼
         total = 1 + len(toc) + len(body)
 
-        # 封面
+        # 封面（PDF 書籤：Screenshot → Contents → 各章節）
+        cv.bookmarkPage("ss_cover")
+        cv.addOutlineEntry("Screenshot", "ss_cover", level=0)
         self._header(cv, title_page=True)
         title = "CFXD SLA Daily Report _Screenshot"
         w = fonts.width(title, F(), 27.96)
@@ -184,14 +190,23 @@ class ScreenshotDoc:
         for i, entries in enumerate(toc):
             self._header(cv)
             if i == 0:
+                cv.bookmarkPage("ss_toc")
+                cv.addOutlineEntry("Contents", "ss_toc", level=1)
                 text(cv, "Contents", 54.0, 77.93, 15.96, True)
             for e in entries:
                 self._draw_toc_line(cv, *e)
             cv.showPage()
 
+        prev_level = 0
         for ops in body:
             self._header(cv)
             for op in ops:
+                if op[0] in ("h1", "h2"):
+                    _, code, title, top = op
+                    cv.bookmarkPage(f"ss_{code}", fit="XYZ", left=0, top=PAGE_H - top + 30)
+                    lvl = min(1 if op[0] == "h1" else 2, prev_level + 1)
+                    cv.addOutlineEntry(f"{code} {title.replace(chr(0x200b), '').strip()}", f"ss_{code}", level=lvl)
+                    prev_level = lvl
                 if op[0] == "h1":
                     _, code, title, top = op
                     end = 54.0 + text(cv, code, 54.0, top, 18, True, HEAD_COLOR)
