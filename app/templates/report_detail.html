@@ -134,7 +134,8 @@
 {% if can.cancel_close %}
 <form method="post" action="{{ url_for('views.cancel_close', report_id=report.id) }}" class="card no-print">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <h3>取消結案（檔案管理員，發送開始前）</h3>
+  <h3>取消結案（檔案管理員；發送開始前，或發送中止且尚未上傳、寄出）</h3>
+  <p class="hint">取消後回到「已核准（待結案）」；要換核准人或修改內容，請再「退回修正」重新送審。</p>
   <label>原因<input name="reason" required></label>
   <button type="submit" class="danger">取消結案</button>
 </form>

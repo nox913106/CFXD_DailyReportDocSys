@@ -2072,20 +2072,26 @@ def test_permission_matrix_matches_code(app):
             return r
 
         draft, submitted, approved = rep("draft"), rep("submitted"), rep("approved")
+        assigned = rep("submitted")
+        assigned.approver_id = fm.id
         locked, failed = rep("closed", delivery_state="scheduled"), rep("closed", delivery_state="error")
 
         def check(label, u):
             own = rep("submitted", author=u) if label == "審核自己撰寫或送審的日報" else None
+            if own is not None:
+                own.approver_id = fm.id if u.is_admin and u.role != "file_manager" else None
             return {
                 "新增、編輯（草稿 / 退回）、送審": lambda: bool(perm.can_create(u) and perm.can_edit(u, draft) and perm.can_submit(u, draft)),
                 "截圖上傳（含批次上傳）": lambda: bool(perm.can_edit(u, draft)),
                 "線上預覽 PDF": lambda: u.role not in ("viewer", "guest"),
                 "指派撰寫人、核准人": lambda: bool(perm.can_assign(u, draft)),
                 "覆寫文件編號": lambda: bool(perm.can_override_doc_no(u, draft)),
-                "審核：核准 / 退回": lambda: bool(perm.can_review(u, submitted)),
+                # 非檔案管理員的系統管理員：文件上的核准人要能確定是哪位檔案管理員（這裡有多位，所以指定）
+                "審核：核准 / 退回": lambda: bool(perm.can_review(
+                    u, assigned if u.is_admin and u.role != "file_manager" else submitted)),
                 "審核自己撰寫或送審的日報": lambda: bool(perm.can_review(u, own)),
                 "結案、結案前退回修正": lambda: bool(perm.can_close(u, approved) and perm.can_return(u, approved)),
-                "取消結案（發送開始前）": lambda: bool(perm.can_cancel_close(u, locked)),
+                "取消結案（發送開始前，或發送中止且尚未上傳、寄出）": lambda: bool(perm.can_cancel_close(u, locked)),
                 "發送中止時重試": lambda: bool(perm.can_retry_delivery(u, failed)),
                 "刪除日報（未結案；刪除後文件編號可再使用）": lambda: bool(perm.can_delete(u, draft)),
                 "刪除已結案的正式文件（可複選；需再輸入本人帳號密碼）": lambda: bool(perm.can_delete(u, failed)),
@@ -2355,3 +2361,76 @@ def test_status_change_and_health_push_to_teams(app, monkeypatch):
     assert "需要處理的項目" in html and "sev-alert" in html and "91.0%" in html
     assert "需要處理的項目（" in root.get("/") or "告警 磁碟" in root.get("/")
 
+
+
+def test_sysadmin_second_line_approval_shows_file_manager(app):
+    """二線管理員被指派系統管理員權限、日報沒指定核准人時核准：文件 Approval 仍是檔案管理員；
+    檔案管理員不只一位又沒指定時要先指定。發送中止且尚未上傳、寄出時，檔案管理員可取消結案。"""
+    from app import db
+    from datetime import datetime
+
+    from app.models import Delivery, Report, User
+
+    alice = Browser(app)
+    alice.login("alice")
+    rid = submitted_report(app, alice, "2026-11-07")
+    max_ = Browser(app)
+    max_.login("maxf")
+    boss = Browser(app)
+    boss.login("boss")
+    set_role(app, "maxf", "second_line")
+    boss_id = set_role(app, "boss", "file_manager")
+    with app.app_context():
+        u = User.query.filter_by(username="maxf").one()
+        u.sys_admin = True
+        r = db.session.get(Report, rid)
+        r.approver_id, r.approver_name = None, ""
+        db.session.commit()
+    finish_ocr(app, rid)
+    max_.get(f"/reports/{rid}")
+    html = max_.post(f"/reports/{rid}/review", {"action": "approve"})
+    assert "代 boss 簽核" in html
+    with app.app_context():
+        r = db.session.get(Report, rid)
+        assert r.approver_id == boss_id and r.approver_name == "boss"
+
+    # 兩位檔案管理員、沒指定核准人 -> 先指定
+    rid2 = submitted_report(app, alice, "2026-11-08")
+    finish_ocr(app, rid2)
+    b2 = Browser(app)
+    b2.login("boss2")
+    set_role(app, "boss2", "file_manager")
+    with app.app_context():
+        r = db.session.get(Report, rid2)
+        r.approver_id, r.approver_name = None, ""
+        db.session.commit()
+    max_.get(f"/reports/{rid2}")
+    max_.post(f"/reports/{rid2}/review", {"action": "approve"}, status=403)
+
+    # 結案後發送中止（產生 PDF 失敗）：檔案管理員可取消結案；已上傳就不行
+    with app.app_context():
+        r = db.session.get(Report, rid)
+        r.status = "closed"
+        d = Delivery(report_id=rid, state="error", run_after=datetime.now())
+        db.session.add(d)
+        db.session.flush()
+        d.set_step("pdf", "error", "TTC file: postscript outlines are not supported")
+        db.session.commit()
+    html = boss.get(f"/reports/{rid}")
+    assert "取消結案" in html
+    assert "已取消結案" in boss.post(f"/reports/{rid}/close/cancel", {"reason": "核准人顯示錯誤"})
+    with app.app_context():
+        r = db.session.get(Report, rid)
+        assert r.status == "approved" and r.delivery is None
+        r.status = "closed"
+        d = Delivery(report_id=rid, state="error", run_after=datetime.now())
+        db.session.add(d)
+        db.session.flush()
+        d.set_step("pdf", "done", "")
+        d.set_step("upload", "done", "")
+        d.set_step("mail", "error", "x")
+        db.session.commit()
+    assert "close/cancel" not in boss.get(f"/reports/{rid}")
+    boss.post(f"/reports/{rid}/close/cancel", {"reason": "x"})
+    with app.app_context():
+        assert db.session.get(Report, rid).status == "closed"

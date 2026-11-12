@@ -57,6 +57,9 @@ def close(report, user):
 
 
 def cancel(report, user, reason):
+    path = final_path(report.delivery)
+    if path and os.path.isfile(path):
+        os.remove(path)  # 還沒送出的正式 PDF：取消結案後內容可能再改，作廢
     db.session.delete(report.delivery)
     report.delivery = None
     report.status = "approved"

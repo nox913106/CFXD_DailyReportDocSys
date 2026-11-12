@@ -8,9 +8,10 @@
   檢視者     viewer        只能下載已結案日報的正式 PDF
 
 流程：草稿 → 送審 → 核准（待結案，線上預覽確認排版）→ 結案（鎖檔，1 分鐘後產生正式 PDF、上傳 SharePoint、寄出日報 Mail）。
-二線以上可以結案、在結案前退回修正、在發送失敗時重試；結案後只有檔案管理員能在發送開始前取消結案。
+二線以上可以結案、在結案前退回修正、在發送失敗時重試；結案後只有檔案管理員能取消結案：
+發送開始前（鎖檔的 1 分鐘內），或發送中止而且還沒上傳 SharePoint、還沒寄出時。
 
-代理（二線代檔案管理員）時，文件上的 Approval / Document Approved 仍顯示檔案管理員本人。
+代理（二線代檔案管理員）或系統管理員代為核准時，文件上的 Approval / Document Approved 一律顯示檔案管理員本人。
 """
 
 from dataclasses import dataclass
@@ -59,12 +60,28 @@ def _principal_for(user, report, assigned_only):
     return None
 
 
+def _document_signer(user, report):
+    """非檔案管理員代為操作時，文件 Approval 欄要顯示的檔案管理員；決定不了回傳 None。"""
+    if report.approver and report.approver.role == "file_manager":
+        return report.approver
+    principals = active_principals(user)
+    if principals:
+        return db.session.get(User, sorted(principals)[0])
+    only = approvers()
+    return only[0] if len(only) == 1 else None
+
+
 def _manager_action(user, report, assigned_only, what):
     """檔案管理員類動作（審核 / 退件 / 指派 / 刪除 / 覆寫文件編號）。
     assigned_only=True：指定了核准人時，只有該核准人或其代理人可以做（審核、退件）。"""
     if user.is_admin:
-        # 系統管理員可做任何事；文件上的簽核者仍是指定的核准人
-        principal = report.approver if report.approver_id and report.approver_id != user.id else None
+        # 系統管理員可做任何事，但文件上的簽核者一定是檔案管理員：
+        # 指定的核准人 → （本人是檔案管理員時）本人 → 授權代理的檔案管理員 → 唯一的檔案管理員；都沒有時要先指定核准人
+        if user.role == "file_manager":
+            return Decision(True, report.approver if report.approver_id not in (None, user.id) else None)
+        principal = _document_signer(user, report)
+        if principal is None and assigned_only:
+            return Decision(False, None, "文件上的核准人必須是檔案管理員：請先在「指派」選定核准人。")
         return Decision(True, principal)
     if user.role == "file_manager":
         if assigned_only and report.approver_id not in (None, user.id):
@@ -170,7 +187,13 @@ def can_cancel_close(user, report):
     d = report.delivery
     if report.status != "closed" or not d:
         return Decision(False, None, "此日報尚未結案。")
-    if d.state != "scheduled":
+    if report.imported:
+        return Decision(False, None, "Excel 匯入的日報不能取消結案。")
+    if d.state == "error":
+        steps = d.step_map()
+        if any(steps[k]["status"] == "done" for k in ("upload", "link", "mail")):
+            return Decision(False, None, "已經上傳 SharePoint 或寄出，不能取消結案。")
+    elif d.state != "scheduled":
         return Decision(False, None, "發送流程已經開始，不能取消結案。")
     return Decision(user.is_admin or user.role in ("admin", "file_manager"), None, "結案後只有檔案管理員可以取消。")
 
@@ -228,7 +251,7 @@ PERMISSION_MATRIX = (
         ("審核：核准 / 退回", "yydnnn"),
         ("審核自己撰寫或送審的日報", "ynnnnn"),
         ("結案、結案前退回修正", "yyynnn"),
-        ("取消結案（發送開始前）", "yynnnn"),
+        ("取消結案（發送開始前，或發送中止且尚未上傳、寄出）", "yynnnn"),
         ("發送中止時重試", "yyynnn"),
         ("刪除日報（未結案；刪除後文件編號可再使用）", "yydnnn"),
         ("刪除已結案的正式文件（可複選；需再輸入本人帳號密碼）", "yynnnn"),
