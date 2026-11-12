@@ -291,3 +291,19 @@ code.wrap { overflow-wrap: anywhere; word-break: break-all; }
 .pdf-progress { border: 1px solid #d8e2e8; border-radius: 6px; padding: 10px 12px; background: #f8fbfc; }
 .pdf-progress progress { width: 100%; height: 10px; margin: 6px 0; }
 .pdf-errors { margin: 4px 0 0; padding-left: 18px; }
+/* 匯入結果表：標題與短欄位不換行（結果、日期、文件編號、Recorded By、告警、正式 PDF），長內容在檔案 / 檢查表 / 說明欄內換行 */
+.import-results th { white-space: nowrap; }
+.import-results td:nth-child(2), .import-results td:nth-child(3), .import-results td:nth-child(4),
+.import-results td:nth-child(5), .import-results td:nth-child(6), .import-results td:nth-child(8) { white-space: nowrap; }
+.import-results td:nth-child(6) { text-align: right; }
+.import-results .c-file { min-width: 13em; }
+.import-results .c-sheets { min-width: 11em; }
+.import-results .c-info { min-width: 18em; }
+.import-results td { overflow-wrap: anywhere; }
+.import-results td ul { margin: 4px 0 0; padding-left: 18px; }
+@media (max-width: 1280px) {
+  .import-results td:nth-child(4), .import-results td:nth-child(5) { white-space: normal; }
+  .import-results .c-file { min-width: 10em; }
+  .import-results .c-sheets { min-width: 8em; }
+  .import-results .c-info { min-width: 16em; }
+}
