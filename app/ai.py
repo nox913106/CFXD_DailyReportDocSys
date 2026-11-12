@@ -4,7 +4,7 @@
   依優先順序嘗試，失敗或本期額度 / 預算用完就換下一個。
 - 由背景服務 `flask --app wsgi ai-worker` 處理，網頁不會等 AI 回應。
 - AI 的依據只有檢查結果.md：本次的檢查結果，加上 retrieve_context() 找到的過去檢查結果.md（RAG）。
-  retrieve_context() 目前用資料庫條件挑選（同一份日報先前被退回的版本、最近被退回的其他日報），
+  retrieve_context() 目前用資料庫條件挑選（前 N 份正式日報的檢查結果判斷異常連續性、同一份日報先前被退回的版本），
   日後改成向量檢索只要替換這個函式。
 """
 
@@ -36,34 +36,54 @@ def _clip(md, limit):
 
 
 def retrieve_context(snap, limit=None):
-    """RAG：挑選與本次審核相關的過去檢查結果.md，回傳 [(標題, markdown)]。"""
-    from .models import CheckReport, Report
+    """RAG：回傳 (days, rejected)。
+    days = 前 N 份正式日報（日期較早、已核准 / 已結案）各自最新的檢查結果.md，新到舊，用來判斷異常的連續性；
+    rejected = 同一份日報先前被退回時的檢查結果（最多 2 份），用來看這次是否已修正。
+    每項為 (標題, 日期或 None, markdown)。沒有檢查結果的日報（例如 Excel 匯入）略過。"""
+    from .models import OFFICIAL_STATUSES, CheckReport, Report
 
     limit = prov.get_setting("ai_context_reports") if limit is None else limit
     if limit <= 0:
-        return []
-    out = []
-    # 1. 同一份日報先前被退回的版本：這次是否已修正
+        return [], []
+    days = []
+    prev = (Report.query.filter(Report.report_date < snap.report.report_date, Report.status.in_(OFFICIAL_STATUSES))
+            .order_by(Report.report_date.desc()).limit(limit * 3).all())
+    for r in prev:
+        s = CheckReport.query.filter_by(report_id=r.id).order_by(CheckReport.id.desc()).first()
+        if s:
+            days.append((f"{r.doc_no}（{r.report_date}）的檢查結果", r.report_date, s.markdown))
+        if len(days) >= limit:
+            break
     same = (CheckReport.query.filter(CheckReport.report_id == snap.report_id, CheckReport.stage == "reject",
                                      CheckReport.id < snap.id).order_by(CheckReport.id.desc()).limit(2).all())
-    out += [(f"本日報 {s.report.doc_no} 先前被退回時的檢查結果（{s.created_at:%Y-%m-%d %H:%M}）", s) for s in same]
-    # 2. 最近 60 天其他日報被退回的檢查結果：哪些問題常被退回
-    since = snap.report.report_date - timedelta(days=60)
-    others = (CheckReport.query.join(Report, Report.id == CheckReport.report_id)
-              .filter(CheckReport.stage == "reject", CheckReport.report_id != snap.report_id,
-                      Report.report_date >= since, Report.report_date < snap.report.report_date)
-              .order_by(Report.report_date.desc(), CheckReport.id.desc()).limit(limit).all())
-    out += [(f"{s.report.doc_no}（{s.report.report_date}）被退回時的檢查結果", s) for s in others]
-    return [(title, s.markdown) for title, s in out[:limit]]
+    rejected = [(f"本日報 {s.report.doc_no} 先前被退回時的檢查結果（{s.created_at:%Y-%m-%d %H:%M}）", None, s.markdown)
+                for s in same]
+    return days, rejected
+
+
+def continuity_rule(n_days, limit):
+    """連續性判斷規則（放在使用者訊息裡，系統提示詞改過也一樣有效）。"""
+    if n_days >= limit:
+        tail = f"若在這 {n_days} 份全部都出現，一律寫「異常持續 >{limit} 天」，不必再往前推算。"
+    else:
+        tail = (f"過去只有 {n_days} 份正式日報的檢查結果；若全部都出現，寫「至少持續 {n_days + 1} 天（之前沒有資料）」。")
+    return ("判斷異常連續性的規則：對今天檢查結果中的每個異常（錯誤、警告、告警），依日期由近到遠逐份比對下面的參考，"
+            "找出從今天往前連續出現的天數（含今天），寫成「異常持續 N 天」；中斷就停止計算。" + tail)
 
 
 def build_messages(snap):
     max_chars = prov.get_setting("ai_max_chars")
+    limit = prov.get_setting("ai_context_reports")
     parts = [f"以下是 {snap.report.doc_no}（{snap.report.report_date}）的檢查結果.md：\n\n{_clip(snap.markdown, max_chars)}"]
-    ctx = retrieve_context(snap)
-    if ctx:
-        parts.append("參考：過去的檢查結果（只用來比較，不是本次的檢查結果）")
-        for title, md in ctx:
+    days, rejected = retrieve_context(snap)
+    if days:
+        parts.append(f"參考：前 {len(days)} 份正式日報的檢查結果（新到舊，只用來判斷異常的連續性，不是本次的檢查結果）\n\n"
+                     + continuity_rule(len(days), limit))
+        for title, _, md in days:
+            parts.append(f"### {title}\n\n{_clip(md, max_chars // 3)}")
+    if rejected:
+        parts.append("參考：本日報先前被退回時的檢查結果（用來確認退回的問題這次是否已修正）")
+        for title, _, md in rejected:
             parts.append(f"### {title}\n\n{_clip(md, max_chars // 3)}")
     system = prov.get_setting("ai_system_prompt") or SYSTEM_PROMPT
     return [{"role": "system", "content": system}, {"role": "user", "content": "\n\n".join(parts)}]

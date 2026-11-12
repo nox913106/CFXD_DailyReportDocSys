@@ -97,7 +97,7 @@ def general():
         "ai_enabled": f.get("ai_enabled") == "1",
         "ai_auto_on_submit": f.get("ai_auto_on_submit") == "1",
         "ai_allow_external": f.get("ai_allow_external") == "1",
-        "ai_context_reports": _int("ai_context_reports", 0, 10, 3),
+        "ai_context_reports": _int("ai_context_reports", 0, 10, 7),
         "ai_max_chars": _int("ai_max_chars", 2000, 400000, 24000),
         "ai_timeout": _int("ai_timeout", 10, 900, 180),
         "ai_max_output_tokens": _int("ai_max_output_tokens", 256, 128000, 16000),

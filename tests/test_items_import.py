@@ -586,3 +586,43 @@ def db_get(model, pk):
     from app import db
 
     return db.session.get(model, pk)
+
+
+def test_ai_context_previous_days_continuity(app):
+    """AI 參考前 N 份（預設 7）正式日報的檢查結果判斷異常連續性；N 份全部都出現就回答「異常持續 >N 天」。"""
+    from app import ai, db, docno
+    from app.models import CheckReport, Report, User
+
+    with app.app_context():
+        u = User(username="ctx", display_name="Ctx", role="first_line")
+        db.session.add(u)
+        db.session.flush()
+
+        def rep(day, status, md=None):
+            r = Report(report_date=day, doc_no=docno.doc_no(day), contractor_doc_no=docno.contractor_doc_no(day),
+                       author_id=u.id, updated_by_id=u.id, status=status)
+            db.session.add(r)
+            db.session.flush()
+            if md:
+                db.session.add(CheckReport(report_id=r.id, stage="approve", markdown=md))
+            return r
+
+        base = dt.date(2026, 11, 20)
+        for k in range(1, 11):  # 11/10–11/19：10 份正式日報
+            rep(base - dt.timedelta(days=k), "closed", f"# day {k} ALARM-X")
+        rep(base - dt.timedelta(days=11), "draft", "# draft only")  # 草稿不算
+        today = rep(base, "submitted")
+        snap = CheckReport(report_id=today.id, stage="submit", markdown="# today ALARM-X")
+        db.session.add(snap)
+        db.session.commit()
+
+        assert ai.prov.get_setting("ai_context_reports") == 7
+        days, rejected = ai.retrieve_context(snap)
+        assert [d for _, d, _ in days] == [base - dt.timedelta(days=k) for k in range(1, 8)] and rejected == []
+        user = ai.build_messages(snap)[1]["content"]
+        assert "前 7 份正式日報" in user and "異常持續 >7 天" in user
+        assert user.index("day 1 ALARM") < user.index("day 7 ALARM") and "day 8" not in user and "draft only" not in user
+        # 過去資料不足 7 份
+        days, _ = ai.retrieve_context(snap, limit=20)
+        assert len(days) == 10
+        assert "至少持續 4 天" in ai.continuity_rule(3, 7)

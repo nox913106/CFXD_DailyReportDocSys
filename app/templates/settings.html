@@ -27,7 +27,7 @@
       </div>
     </div>
     <div class="form-grid">
-      <label>參考的過去檢查結果份數（RAG，0 = 不參考）<input name="ai_context_reports" type="number" min="0" max="10" value="{{ s.ai_context_reports }}"></label>
+      <label>參考前幾份正式日報的檢查結果（判斷異常連續性，超過就回答「異常持續 >N 天」；0 = 不參考）<input name="ai_context_reports" type="number" min="0" max="10" value="{{ s.ai_context_reports }}"></label>
       <label>本次檢查結果送給 AI 的最大字數<input name="ai_max_chars" type="number" min="2000" value="{{ s.ai_max_chars }}"></label>
       <label>單次呼叫逾時（秒）<input name="ai_timeout" type="number" min="10" max="900" value="{{ s.ai_timeout }}"></label>
       <label>輸出 token 上限（含推理模型的思考）<input name="ai_max_output_tokens" type="number" min="256" max="128000" value="{{ s.ai_max_output_tokens }}"></label>
