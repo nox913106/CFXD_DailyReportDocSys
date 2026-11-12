@@ -233,10 +233,22 @@ def run(system=False):
     pending = ReportImage.query.filter_by(ocr_status="pending").count()
     stuck = ReportImage.query.filter(ReportImage.ocr_status == "running",
                                      ReportImage.ocr_started_at < now - timedelta(minutes=10)).count()
-    old = ReportImage.query.filter(ReportImage.ocr_status == "pending", ReportImage.created_at < now - timedelta(hours=1)).count()
-    status = "fail" if stuck or old else ("warn" if pending > 200 else "ok")
-    _item(out, g, "截圖 OCR 佇列", status, f"等待 {pending} 張、卡住 {stuck} 張、等超過 1 小時 {old} 張",
-          "" if status == "ok" else "sudo systemctl restart dailyreport-ocr；sudo journalctl -u dailyreport-ocr -n 50")
+    old = ReportImage.query.filter(ReportImage.ocr_status == "pending", ReportImage.created_at < now - timedelta(minutes=15)).count()
+    never = ReportImage.query.filter(ReportImage.kind.in_(("screenshot", "staged")), ReportImage.ocr_status.is_(None)).count()
+    hb = sysconf.get("ocr_heartbeat") or {}
+    try:
+        hb_age = (now - datetime.fromisoformat(hb["at"])).total_seconds() if hb.get("at") else None
+    except (TypeError, ValueError):
+        hb_age = None
+    alive = hb_age is not None and hb_age < 180
+    status = "fail" if stuck or old or ((pending or never) and not alive) else ("warn" if pending > 200 else "ok")
+    detail = f"等待 {pending} 張、卡住 {stuck} 張、等超過 15 分鐘 {old} 張"
+    if never:
+        detail += f"、尚未排入 {never} 張（服務會自動排入）"
+    detail += "；服務心跳 " + (f"{int(hb_age)} 秒前" if hb_age is not None else "沒有（服務沒有在執行，或是舊版）")
+    _item(out, g, "截圖 OCR 佇列", status, detail,
+          "" if status == "ok" else "sudo systemctl restart dailyreport-ocr；sudo journalctl -u dailyreport-ocr -n 50"
+                                    "（每張辨識完成都會記一行：結果、秒數、佇列剩幾張）")
     failed = ReportImage.query.filter_by(ocr_status="error").count()
     if failed:
         _item(out, g, "截圖 OCR 失敗", "warn", f"{failed} 張辨識失敗", "在日報的截圖分頁按「全部重新辨識」")

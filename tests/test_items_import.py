@@ -760,3 +760,60 @@ def test_import_rejects_wrong_doc_no_per_file(app):
     # 修正後重新上傳複檢 → 通過
     fixed = build_checklist_xlsx(items, dt.date(2026, 11, 2), doc_no="Document ID : CFXD-SCA-RLY-DPR-000895")
     assert _import(fm, "20261102_CFXD SLA - SCADA Daily Inspection CheckList.xlsx", fixed)["status"] == "imported"
+
+
+def test_ocr_queue_self_heals(app):
+    """OCR 佇列不會卡住：從沒排入的截圖、卡在辨識中沒有開始時間的截圖都會被撿起來；逾時的標為失敗；健康檢查看心跳。"""
+    from datetime import datetime, timedelta
+
+    from app import db, docno, ocr, sysconf
+    from app.models import Report, ReportImage, User
+
+    with app.app_context():
+        u = User(username="o1", display_name="O", role="first_line")
+        db.session.add(u)
+        db.session.flush()
+        d = dt.date(2026, 7, 1)
+        r = Report(report_date=d, doc_no=docno.doc_no(d), contractor_doc_no=docno.contractor_doc_no(d),
+                   author_id=u.id, updated_by_id=u.id)
+        db.session.add(r)
+        db.session.flush()
+        never = ReportImage(report_id=r.id, kind="screenshot", filename="a.png", ocr_status=None)
+        nostart = ReportImage(report_id=r.id, kind="screenshot", filename="b.png", ocr_status="running", ocr_started_at=None)
+        photo = ReportImage(report_id=r.id, kind="onsite", filename="c.png", ocr_status=None)
+        db.session.add_all([never, nostart, photo])
+        db.session.commit()
+        seen = []
+        while ocr.process_one(db, ReportImage, lambda i: i.filename,
+                              ocr=lambda arr: seen.append(1) or []):
+            pass
+        assert db.session.get(ReportImage, never.id).ocr_status == "error"  # 檔案不存在 → 失敗，但有被處理
+        assert db.session.get(ReportImage, nostart.id).ocr_status == "error"
+        assert db.session.get(ReportImage, photo.id).ocr_status is None  # 照片不辨識
+        # 看門狗：逾時的標為失敗（不會重啟後又卡在同一張）
+        stuck = ReportImage(report_id=r.id, kind="screenshot", filename="d.png", ocr_status="running",
+                            ocr_started_at=datetime.now())
+        db.session.add(stuck)
+        db.session.commit()
+        ocr.mark_timed_out(db, ReportImage, stuck.id, 180)
+        assert "辨識逾時" in db.session.get(ReportImage, stuck.id).ocr_error
+        # 健康檢查：有等待中的截圖但沒有心跳 → 失敗；有心跳 → 正常
+        from app.doctor import run as run_checks
+
+        stuck.ocr_status = "pending"
+        db.session.commit()
+
+        def item():
+            res = run_checks()
+            items = res["items"] if isinstance(res, dict) else res
+            return next(i for i in items if i["name"] == "截圖 OCR 佇列")
+
+        it = item()
+        assert it["status"] == "fail" and "心跳 沒有" in it["detail"]
+        ocr.heartbeat({"done": 1, "pid": 1})
+        db.session.commit()
+        it = item()
+        assert it["status"] == "ok" and "秒前" in it["detail"]
+        sysconf.put("ocr_heartbeat", {"at": (datetime.now() - timedelta(minutes=5)).isoformat()})
+        db.session.commit()
+        assert item()["status"] == "fail"

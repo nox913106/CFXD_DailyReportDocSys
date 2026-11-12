@@ -37,6 +37,7 @@ DEFAULTS = {
     # 稽核紀錄保存天數（180–366）：維護服務每天清除超過的紀錄
     "audit_retention_days": 366,
     "audit_purge_last": "",
+    "ocr_heartbeat": None,  # OCR 背景服務每 30 秒寫入：{at, done, pid}
     "health_enabled": True,
     "health_interval_hours": 6,
     # 結案後自動發送（Microsoft Graph）

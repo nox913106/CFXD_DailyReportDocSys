@@ -36,6 +36,8 @@ CLOCK_STATUS = {
 }
 OCR_STATE = {"pending": "等待辨識", "running": "辨識中", "done": "已辨識", "error": "辨識失敗"}
 STALE_AFTER = timedelta(minutes=10)  # 背景服務中斷時，卡在 running 的截圖重新排隊
+IMAGE_TIMEOUT = 180  # 秒：單張超過就標為失敗並重新啟動服務（避免一張卡住整個佇列）
+HEARTBEAT_EVERY = 30  # 秒：寫入心跳（健康檢查用來判斷服務有沒有在運作）
 
 log = logging.getLogger(__name__)
 _ENGINE = None
@@ -75,7 +77,19 @@ def engine():
 
         logging.getLogger("RapidOCR").setLevel(logging.ERROR)
         _ENGINE = RapidOCR()
+        # RapidOCR 建立時會重設自己的 logger；「區域裡沒有文字」是正常情況，不要每次都寫警告
+        logging.getLogger("RapidOCR").setLevel(logging.ERROR)
     return _ENGINE
+
+
+def warm_up():
+    """啟動時先跑一次辨識，模型真正載入（RapidOCR 第一次辨識時才載入），回傳秒數。"""
+    import numpy as np
+
+    t = time.time()
+    engine()(np.full((48, 160, 3), 255, dtype=np.uint8))
+    logging.getLogger("RapidOCR").setLevel(logging.ERROR)
+    return time.time() - t
 
 
 def read_clock(path, ocr=None):
@@ -144,9 +158,14 @@ def queue_image(img):
 def claim_next(db, ReportImage):
     """原子性地取得下一張待辨識截圖（多個程序同時執行也不會重複處理）。"""
     now = datetime.now()
-    stale = ReportImage.query.filter(ReportImage.ocr_status == "running", ReportImage.ocr_started_at < now - STALE_AFTER)
+    # 卡在辨識中（服務中斷）、或從來沒排入的截圖（畫面會一直顯示辨識中）：重新排入
+    stale = ReportImage.query.filter(ReportImage.ocr_status == "running",
+                                     db.or_(ReportImage.ocr_started_at.is_(None),
+                                            ReportImage.ocr_started_at < now - STALE_AFTER))
     for img in stale:
         img.ocr_status = "pending"
+    ReportImage.query.filter(ReportImage.kind.in_(("screenshot", "staged")), ReportImage.ocr_status.is_(None)) \
+        .update({"ocr_status": "pending"}, synchronize_session=False)
     db.session.commit()
     cand = (ReportImage.query.filter_by(ocr_status="pending").order_by(ReportImage.id).first())
     if cand is None:
@@ -157,10 +176,15 @@ def claim_next(db, ReportImage):
     return db.session.get(ReportImage, cand.id) if n else None
 
 
+_current = {"id": None, "since": 0.0}  # 看門狗用：目前處理中的截圖
+
+
 def process_one(db, ReportImage, path_of, ocr=None):
     img = claim_next(db, ReportImage)
     if img is None:
         return False
+    t = time.time()
+    _current.update(id=img.id, since=t)
     try:
         rec = read_clock(path_of(img), ocr=ocr)
         img.ocr_result = json.dumps(rec, ensure_ascii=False)
@@ -170,9 +194,50 @@ def process_one(db, ReportImage, path_of, ocr=None):
         log.exception("截圖 %s 辨識失敗", img.id)
         img.ocr_status = "error"
         img.ocr_error = str(e)[:500]
+        rec = {"status": "error"}
+    finally:
+        _current.update(id=None, since=0.0)
     img.ocr_at = datetime.now()
     db.session.commit()
+    left = ReportImage.query.filter(ReportImage.ocr_status.in_(("pending", "running"))).count()
+    log.warning("截圖 %s（日報 %s）辨識完成：%s，%.1f 秒；佇列剩 %d 張", img.id, img.report_id, rec.get("status"),
+                time.time() - t, left)
     return True
+
+
+def mark_timed_out(db, ReportImage, iid, timeout):
+    ReportImage.query.filter_by(id=iid).update(
+        {"ocr_status": "error", "ocr_error": f"辨識逾時（超過 {timeout} 秒），已略過；可在截圖分頁按「全部重新辨識」",
+         "ocr_at": datetime.now()}, synchronize_session=False)
+    db.session.commit()
+
+
+def _watchdog(app, db, ReportImage, timeout):
+    """單張辨識超過 timeout 秒（引擎卡住）：把這張標為失敗，然後結束程序讓 systemd 重新啟動。
+    不標失敗的話，重啟後又會卡在同一張。"""
+    import os
+    import threading
+
+    def loop():
+        while True:
+            time.sleep(5)
+            iid, since = _current["id"], _current["since"]
+            if iid is None or time.time() - since < timeout:
+                continue
+            try:
+                with app.app_context():
+                    mark_timed_out(db, ReportImage, iid, timeout)
+            finally:
+                log.error("截圖 %s 辨識超過 %d 秒，標為失敗並重新啟動 OCR 服務", iid, timeout)
+                os._exit(3)
+
+    threading.Thread(target=loop, name="ocr-watchdog", daemon=True).start()
+
+
+def heartbeat(info):
+    from . import sysconf
+
+    sysconf.put("ocr_heartbeat", {"at": datetime.now().isoformat(timespec="seconds"), **info})
 
 
 def run_worker(app, once=False, idle_seconds=5):
@@ -185,10 +250,19 @@ def run_worker(app, once=False, idle_seconds=5):
         return os.path.join(app.config["UPLOAD_DIR"], str(img.report_id), img.filename)
 
     with app.app_context():
-        engine()  # 先載入模型，失敗就直接結束並顯示原因
-        log.warning("OCR 背景服務啟動")
+        sec = warm_up()  # 先載入模型，失敗就直接結束並顯示原因
+        log.warning("OCR 背景服務啟動（模型載入 %.1f 秒）", sec)
+        if not once:
+            _watchdog(app, db, ReportImage, IMAGE_TIMEOUT)
+        done, last_hb = 0, 0.0
         while True:
-            if not process_one(db, ReportImage, path_of):
+            worked = process_one(db, ReportImage, path_of)
+            done += int(worked)
+            if time.time() - last_hb >= HEARTBEAT_EVERY:
+                heartbeat({"done": done, "pid": os.getpid()})
+                db.session.commit()
+                last_hb = time.time()
+            if not worked:
                 if once:
                     return
                 db.session.remove()
