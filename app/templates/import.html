@@ -23,9 +23,15 @@
     </div>
     <progress hidden></progress> <span class="import-log hint"></span>
   </div>
+  <div class="pdf-progress top-gap" data-pdf-status="{{ url_for('imports.pdf_status_api') }}" {{ 'hidden' if not pdf.total }}>
+    <div class="row-between"><strong>正式 PDF 產生進度</strong><span class="hint" data-pdf-summary></span></div>
+    <progress max="{{ pdf.total or 1 }}" value="{{ pdf.count.done }}"></progress>
+    <div class="hint" data-pdf-current></div>
+    <ul class="pdf-errors" data-pdf-errors></ul>
+  </div>
   <div class="table-scroll top-gap">
     <table class="grid-table" data-import-results hidden>
-      <thead><tr><th>檔案</th><th>結果</th><th>日期</th><th>文件編號</th><th>Recorded By</th><th>告警</th><th>檢查表（已對應 / 列）</th><th>說明與警告</th></tr></thead>
+      <thead><tr><th>檔案</th><th>結果</th><th>日期</th><th>文件編號</th><th>Recorded By</th><th>告警</th><th>檢查表（已對應 / 列）</th><th>正式 PDF</th><th>說明與警告</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -35,10 +41,14 @@
 <section class="card">
   <h3>已匯入（{{ recent|length }}）</h3>
   <div class="table-scroll"><table class="grid-table">
-    <thead><tr><th>日期</th><th>文件編號</th><th>檔案</th><th>匯入</th><th>警告</th></tr></thead>
-    <tbody>{% for r in recent %}{% set m = r.import_info %}
+    <thead><tr><th>日期</th><th>文件編號</th><th>檔案</th><th>匯入</th><th>正式 PDF</th><th>警告</th></tr></thead>
+    <tbody>{% for r in recent %}{% set m = r.import_info %}{% set d = r.delivery %}
       <tr><td><a href="{{ url_for('views.detail', report_id=r.id) }}">{{ r.report_date }}</a></td><td>{{ r.doc_no }}</td>
         <td>{{ m.file }}</td><td class="nowrap">{{ m.by }} {{ (m.at or '')[:16].replace('T', ' ') }}</td>
+        <td class="nowrap" data-pdf-cell="{{ r.id }}">{% if not r.original_xlsx %}<span class="fail-text">無原始 Excel</span>
+          {% elif d and d.pdf_md5 %}<a class="ok-text" href="{{ url_for('views.final_pdf', report_id=r.id) }}" target="_blank">✔ 已產生</a>
+          {% elif d and d.state == 'error' %}<a class="fail-text" href="{{ url_for('views.detail', report_id=r.id) }}">✘ 失敗</a>
+          {% elif d and d.state == 'running' %}<span class="warn">產生中…</span>{% elif d %}<span class="hint">排隊中</span>{% endif %}</td>
         <td>{% if m.warnings %}<details><summary>{{ m.warnings|length }} 則</summary><ul>{% for w in m.warnings %}<li>{{ w }}</li>{% endfor %}</ul></details>{% endif %}</td></tr>
     {% endfor %}</tbody>
   </table></div>

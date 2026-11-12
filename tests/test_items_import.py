@@ -626,3 +626,38 @@ def test_ai_context_previous_days_continuity(app):
         days, _ = ai.retrieve_context(snap, limit=20)
         assert len(days) == 10
         assert "至少持續 4 天" in ai.continuity_rule(3, 7)
+
+
+def test_import_pdf_progress(app):
+    """批量匯入後，正式 PDF 產生進度可即時查詢：排隊順序、產生中、完成、失敗。"""
+    from app import db, delivery
+    from app.models import Delivery, Report
+
+    items = _items(app)
+    fm = _browser(app, "fm", "file_manager")
+    for day in (1, 2, 3):
+        x = build_checklist_xlsx(items, dt.date(2026, 9, day))
+        fm.c.post("/import/upload", data={"csrf_token": fm.tok, "files": (io.BytesIO(x), f"CheckList_2026-09-0{day}.xlsx")},
+                  content_type="multipart/form-data", headers={"X-CSRFToken": fm.tok})
+    st = fm.c.get("/import/pdf-status").json
+    assert st["total"] == 3 and st["count"]["queued"] == 3 and [i.get("position") for i in st["items"]] == [1, 2, 3]
+    html = fm.get("/import/")
+    assert "正式 PDF 產生進度" in html and "排隊中" in html
+    with app.app_context():
+        d = Delivery.query.join(Report).filter(Report.report_date == dt.date(2026, 9, 1)).one()
+        d.state = "running"
+        d.set_step("pdf", "running")
+        db.session.commit()
+    st = fm.c.get("/import/pdf-status").json
+    assert st["count"]["running"] == 1 and st["items"][0]["state"] == "running" and "elapsed" in st["items"][0]
+    with app.app_context():
+        d = Delivery.query.join(Report).filter(Report.report_date == dt.date(2026, 9, 1)).one()
+        d.state = "queued"
+        d.set_step("pdf", "pending")
+        db.session.commit()
+        delivery.tick()
+    st = fm.c.get("/import/pdf-status").json
+    assert st["count"]["done"] == 3 and st["count"]["queued"] == 0 and st["eta_seconds"] == 0
+    assert "✔ 已產生" in fm.get("/import/")
+    alice = _browser(app, "alice", "first_line")
+    assert alice.c.get("/import/pdf-status").status_code == 403

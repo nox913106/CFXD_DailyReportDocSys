@@ -516,6 +516,59 @@
 
   // ---------- 匯入歷史日報：逐檔送出，結果逐列顯示 ----------
 
+  // 匯入日報的正式 PDF：維護服務依序產生，這裡每 3 秒更新進度
+  var pdfBox = document.querySelector("[data-pdf-status]"), pdfTimer = null;
+  function fmtSec(s) { s = Math.max(0, Math.round(s)); return s >= 60 ? Math.floor(s / 60) + " 分 " + (s % 60) + " 秒" : s + " 秒"; }
+  function pdfCell(td, it) {
+    td.innerHTML = "";
+    var el;
+    if (it.state === "done") {
+      el = document.createElement("a"); el.href = "/reports/" + it.report_id + "/final.pdf"; el.target = "_blank";
+      el.className = "ok-text"; el.textContent = "✔ 已產生";
+    } else if (it.state === "error") {
+      el = document.createElement("a"); el.href = "/reports/" + it.report_id; el.className = "fail-text";
+      el.textContent = "✘ 失敗"; el.title = it.message || "";
+    } else if (it.state === "running") {
+      el = document.createElement("span"); el.className = "warn"; el.textContent = "產生中…" + (it.elapsed != null ? "（" + it.elapsed + " 秒）" : "");
+    } else {
+      el = document.createElement("span"); el.className = "hint"; el.textContent = "排隊中" + (it.position ? "（第 " + it.position + " 位）" : "");
+    }
+    td.appendChild(el);
+  }
+  function pollPdf() {
+    if (!pdfBox) return;
+    clearTimeout(pdfTimer);
+    api(pdfBox.dataset.pdfStatus).then(function (st) {
+      var c = st.count, pending = c.queued + c.running;
+      pdfBox.hidden = !st.total;
+      var bar = pdfBox.querySelector("progress");
+      bar.max = st.total || 1; bar.value = c.done;
+      pdfBox.querySelector("[data-pdf-summary]").textContent = "已產生 " + c.done + " / " + st.total +
+        (c.running ? "、產生中 " + c.running : "") + (c.queued ? "、排隊 " + c.queued : "") + (c.error ? "、失敗 " + c.error : "") +
+        (pending ? "，預估還要約 " + fmtSec(st.eta_seconds) + "（每份約 " + st.seconds_per_pdf + " 秒）" : "，全部完成") +
+        "（更新於 " + st.now + "）";
+      var run = st.items.filter(function (i) { return i.state === "running"; })[0];
+      pdfBox.querySelector("[data-pdf-current]").textContent = run
+        ? "正在產生：" + run.date + "（" + run.doc_no + "）" + (run.elapsed != null ? "，已 " + run.elapsed + " 秒" : "")
+        : (pending ? "等待維護服務處理…（若一直沒有開始，請確認 dailyreport-maint 服務正在執行）" : "");
+      var ul = pdfBox.querySelector("[data-pdf-errors]"); ul.innerHTML = "";
+      st.items.filter(function (i) { return i.state === "error"; }).forEach(function (i) {
+        var li = document.createElement("li"), a = document.createElement("a");
+        a.href = "/reports/" + i.report_id; a.textContent = i.date + "（" + i.doc_no + "）";
+        li.className = "fail-text"; li.appendChild(a); li.appendChild(document.createTextNode("：" + (i.message || "失敗") + "（到日報頁按「重試」）"));
+        ul.appendChild(li);
+      });
+      var byId = {};
+      st.items.forEach(function (i) { byId[i.report_id] = i; });
+      document.querySelectorAll("[data-pdf-cell]").forEach(function (td) {
+        var it = byId[td.dataset.pdfCell];
+        if (it) pdfCell(td, it);
+      });
+      pdfTimer = pending ? setTimeout(pollPdf, 3000) : null;
+    }).catch(function () { pdfTimer = setTimeout(pollPdf, 10000); });
+  }
+  if (pdfBox && !pdfBox.hidden) pollPdf();
+
   document.querySelectorAll("[data-import-upload]").forEach(function (zone) {
     var table = document.querySelector("[data-import-results]"), tbody = table.tBodies[0];
     var bar = zone.querySelector("progress"), log = zone.querySelector(".import-log");
@@ -527,7 +580,7 @@
     function addRow(r) {
       var tr = document.createElement("tr");
       cell(tr, r.file);
-      cell(tr, LABEL[r.status] || r.status, r.status === "error" ? "fail-text" : (r.status === "skipped" ? "warn" : "ok-text"));
+      cell(tr, LABEL[r.status] || r.status, (r.status === "error" ? "fail-text" : (r.status === "skipped" ? "warn" : "ok-text")) + " nowrap");
       var d = cell(tr, "");
       if (r.report_id) { var a = document.createElement("a"); a.href = "/reports/" + r.report_id; a.textContent = r.date; d.appendChild(a); }
       else d.textContent = r.date || "";
@@ -535,6 +588,8 @@
       var c = r.counts || {}, parts = [];
       Object.keys(c).forEach(function (k) { parts.push(k + " " + c[k].matched + "/" + c[k].rows); });
       cell(tr, parts.join("、"));
+      var pc = cell(tr, r.status === "imported" ? "排隊中" : "—", r.status === "imported" ? "hint nowrap" : "hint");
+      if (r.status === "imported" && r.report_id) pc.dataset.pdfCell = r.report_id;
       var info = cell(tr, r.message || "");
       if (r.warnings && r.warnings.length) {
         var ul = document.createElement("ul");
@@ -559,7 +614,10 @@
           fd.append("files", f, f.name);
           if (dry) fd.append("dry_run", "1");
           return api(zone.dataset.importUpload, { method: "POST", body: fd })
-            .then(function (data) { (data.results || []).forEach(function (r) { n[r.status] = (n[r.status] || 0) + 1; addRow(r); }); })
+            .then(function (data) {
+              (data.results || []).forEach(function (r) { n[r.status] = (n[r.status] || 0) + 1; addRow(r); });
+              if (!dry && n.imported && !pdfTimer) pollPdf();  // 第一份匯入後就開始顯示 PDF 進度
+            })
             .catch(function (err) { n.error++; addRow({ file: f.name, status: "error", message: err.message }); })
             .then(function () {
               bar.value += 1;

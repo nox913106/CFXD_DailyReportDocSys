@@ -291,6 +291,8 @@ ChatGPT Plus、Claude Pro 這類個人訂閱不提供 API，不能接入。
 - **內容不做任何修改**：原始 Excel 逐位元保存在 `instance/imported_xlsx/`（日報頁可下載，SHA-256 與匯入紀錄一致）。
   預覽與正式 PDF 的 CheckList 部分直接由原始 Excel 的儲存格值與版面畫出（不經過系統範本、不重算公式），
   撰寫人顯示 Excel 上的 Recorded By 原文（不必是系統帳號）。
+- 匯入頁的「正式 PDF 產生進度」每 3 秒更新：已產生 / 總數、正在產生哪一份、排隊位置、預估剩餘時間、失敗的項目（連到日報頁重試）；
+  結果表與「已匯入」清單的「正式 PDF」欄也即時更新。
 - 匯入後由維護服務產生正式 PDF（封面 + 原始 Excel 的 CheckList，產生一次並凍結 MD5 / SHA-256），出現在「正式文件」頁；
   不上傳 SharePoint、不寄信。大量匯入時依序產生，每份約 20–60 秒。
 - 另外解析進資料庫供跨日比對、告警歷程使用：Inspection Time、Revision、Recorded By、文件編號、Alarm Summary、

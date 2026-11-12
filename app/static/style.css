@@ -288,3 +288,6 @@ table.versions tr.current td { background: #e7f5ef; }
 .vtype-Z { background: #e6f3e6; color: #276227; }
 .vtype-init { background: #eee; color: #555; }
 code.wrap { overflow-wrap: anywhere; word-break: break-all; }
+.pdf-progress { border: 1px solid #d8e2e8; border-radius: 6px; padding: 10px 12px; background: #f8fbfc; }
+.pdf-progress progress { width: 100%; height: 10px; margin: 6px 0; }
+.pdf-errors { margin: 4px 0 0; padding-left: 18px; }
