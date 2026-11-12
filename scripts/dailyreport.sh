@@ -131,7 +131,7 @@ install_packages() {
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends \
     python3 python3-venv python3-pip nginx sqlite3 git curl ca-certificates openssl fontconfig \
-    fonts-crosextra-carlito fonts-liberation fonts-dejavu-core fonts-noto-cjk \
+    fonts-crosextra-carlito fonts-liberation fonts-dejavu-core fonts-wqy-zenhei \
     libgl1 libglib2.0-0 libgomp1 >/dev/null
   local py
   py=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')

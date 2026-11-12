@@ -6,6 +6,7 @@
 
 import datetime as dt
 import io
+import os
 import json
 import re
 from html import unescape
@@ -569,6 +570,37 @@ def test_official_watermark_and_fingerprint(app):
             t = pg.extract_text()
             assert "CONFIDENTIAL - INTERNAL USE ONLY" in t and st["sha256"] in t and st["filename"] in t
             assert t.count("CONFIDENTIAL") > 10  # 平鋪整頁
+
+
+def test_official_pdf_without_embeddable_cjk_font(app, monkeypatch):
+    """主機只有 PostScript 外框的中文字型（例如 NotoSansCJK .ttc）時，正式 PDF 不能失敗：
+    跳過無法嵌入的字型，浮水印改只用英文；健康檢查回報缺中文字型。"""
+    import glob
+
+    import pypdf
+
+    from app.pdf import fonts
+
+    cff = [p for p in glob.glob("/usr/share/fonts/**/*.otf", recursive=True) if open(p, "rb").read(4) == b"OTTO"]
+    if not cff:
+        import pytest
+
+        pytest.skip("沒有 CFF 字型可模擬")
+    monkeypatch.setitem(fonts.FAMILIES, "CJK", {"": [os.path.basename(cff[0])]})
+    monkeypatch.setattr(fonts, "SYSTEM_DIRS", fonts.SYSTEM_DIRS + [os.path.dirname(cff[0])])
+    fonts.configure(None)
+    assert fonts.cjk_path() is None and fonts.cjk() == fonts.font("Calibri")
+    from app.pdf.report_pdf import _Canvas
+
+    buf = io.BytesIO()
+    cv = _Canvas(buf, pagesize=(595.32, 841.92))
+    cv.stamp = {"filename": "X.pdf", "generated": "2026-11-12 16:27", "sha256": "a" * 64}
+    cv.drawString(72, 700, "page")
+    cv.showPage()
+    cv.save()
+    t = pypdf.PdfReader(io.BytesIO(buf.getvalue())).pages[0].extract_text()
+    assert "CONFIDENTIAL - INTERNAL USE ONLY" in t and "Rally Technology" in t
+    fonts.configure(None)
 
 
 def test_import_earlier_day_regenerates_later_pdf(app):

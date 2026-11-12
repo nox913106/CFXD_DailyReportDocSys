@@ -195,6 +195,17 @@ def run(system=False):
               "sudo apt-get install -y fonts-crosextra-carlito fonts-liberation fonts-dejavu-core")
     else:
         _item(out, g, "字型", "ok", "Carlito / Liberation / DejaVu" + ("，另有 Microsoft 字型" if ms else "（相容字型）"))
+    from .pdf import fonts as pdf_fonts
+
+    try:
+        zh = pdf_fonts.cjk_path(font_dir)
+    except Exception:  # noqa: BLE001
+        zh = None
+    if zh:
+        _item(out, g, "中文字型", "ok", os.path.basename(zh))
+    else:
+        _item(out, g, "中文字型", "fail", "沒有可嵌入 PDF 的中文字型：浮水印與中文內容會缺字",
+              "sudo apt-get install -y fonts-wqy-zenhei，或在「系統設定 → PDF 與上傳」上傳 kaiu.ttf / msjh.ttc")
 
     # ---------------------------------------------------------------- 結案與發送
     g = "結案與發送"

@@ -8,7 +8,7 @@ C:\\Windows\\Fonts 複製 calibri*.ttf、arial*.ttf、times*.ttf、kaiu.ttf）�
 import os
 
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase.ttfonts import TTFError, TTFont
 
 SYSTEM_DIRS = [
     "/usr/share/fonts/truetype/crosextra",
@@ -45,7 +45,8 @@ FAMILIES = {
         "": ["seguisym.ttf", "DejaVuSans.ttf"],
     },
     "CJK": {
-        "": ["kaiu.ttf", "msjh.ttc", "mingliu.ttc", "wqy-zenhei.ttc", "NotoSansCJK-Regular.ttc"],
+        # NotoSansCJK 是 PostScript (CFF) 外框，reportlab 無法嵌入；只能用 TrueType 外框的中文字型
+        "": ["kaiu.ttf", "msjh.ttc", "mingliu.ttc", "wqy-zenhei.ttc", "wqy-microhei.ttc", "ukai.ttc", "uming.ttc"],
     },
 }
 ALIASES = {
@@ -74,13 +75,25 @@ def configure(font_dir=None):
     _registered.clear()
 
 
-def _find(candidates):
+def _paths(candidates, dirs=None):
     for name in candidates:
-        for d in _font_dirs or SYSTEM_DIRS:
+        for d in dirs or _font_dirs or SYSTEM_DIRS:
             for fname in (name, name.upper(), name.capitalize()):
                 p = os.path.join(d, fname)
                 if os.path.exists(p):
-                    return p
+                    yield p
+                    break
+
+
+def _load(rl_name, candidates, dirs=None):
+    """依序嘗試候選字型檔，跳過無法嵌入的（例如 PostScript 外框的 .ttc/.otf），回傳成功的路徑。"""
+    for path in _paths(candidates, dirs):
+        kwargs = {"subfontIndex": 0} if path.lower().endswith(".ttc") else {}
+        try:
+            pdfmetrics.registerFont(TTFont(rl_name, path, **kwargs))
+        except (TTFError, OSError, ValueError):
+            continue
+        return path
     return None
 
 
@@ -92,22 +105,27 @@ def font(family, bold=False, italic=False):
     if key in _registered:
         return _registered[key]
     styles = FAMILIES[fam]
-    path = _find(styles.get(style) or styles[""])
+    rl_name = f"{fam.replace(' ', '')}-{style or 'R'}"
+    path = _load(rl_name, styles.get(style) or styles[""])
     if path is None and style:
-        path = _find(styles[""])
+        path = _load(rl_name, styles[""])
     if path is None:
         if fam != "Calibri":
-            return font("Calibri", bold, italic)
+            _registered[key] = font("Calibri", bold, italic)
+            return _registered[key]
         raise RuntimeError("找不到 Calibri 或 Carlito 字型，請安裝 fonts-crosextra-carlito")
-    rl_name = f"{fam.replace(' ', '')}-{style or 'R'}"
-    kwargs = {"subfontIndex": 0} if path.lower().endswith(".ttc") else {}
-    pdfmetrics.registerFont(TTFont(rl_name, path, **kwargs))
     _registered[key] = rl_name
     return rl_name
 
 
 def cjk():
+    """中文字型；找不到可嵌入的中文字型時退回 Calibri（中文字會缺字，但 PDF 照常產生）。"""
     return font("CJK")
+
+
+def cjk_path(font_dir=None):
+    """實際會用的中文字型檔路徑（健康檢查用）；沒有可用的回傳 None。"""
+    return _load("CJK-probe", FAMILIES["CJK"][""], ([font_dir] if font_dir else []) + SYSTEM_DIRS)
 
 
 def symbol():
