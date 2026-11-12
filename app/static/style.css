@@ -310,3 +310,4 @@ code.wrap { overflow-wrap: anywhere; word-break: break-all; }
 .del-official { border: 1px solid #f1c7c7; border-radius: 6px; padding: 10px 12px; background: #fff8f8; }
 .del-official h3 { margin-top: 0; }
 .del-official:not(.active) { opacity: .75; }
+.flash.warn-box { background: #fff7e6; border-color: #f0c36d; color: #6b4b00; }

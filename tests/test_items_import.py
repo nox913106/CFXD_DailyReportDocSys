@@ -727,3 +727,36 @@ def test_bulk_delete_official(app):
         assert Report.query.filter(Report.id.in_(ids)).count() == 1
         logs = AuditLog.query.filter_by(action="delete_report").all()
         assert len(logs) == 2 and all("批次刪除 2 份，身分確認：fm" in l.detail for l in logs)
+
+
+def test_import_rejects_wrong_doc_no_per_file(app):
+    """文件編號依日期固定：2026-11-02 應為 000895，Excel 填 000894 → 只拒絕這個檔案並說明錯誤點；其他檔案照常匯入。"""
+    import openpyxl
+
+    from app.models import Report
+
+    items = _items(app)
+    fm = _browser(app, "fm", "file_manager")
+    bad = build_checklist_xlsx(items, dt.date(2026, 11, 2), doc_no="Document ID : CFXD-SCA-RLY-DPR-000894")
+    r = _import(fm, "20261102_CFXD SLA - SCADA Daily Inspection CheckList.xlsx", bad)
+    assert r["status"] == "error" and "拒絕匯入" in r["message"] and "人工" in r["message"]
+    assert any("正確文件編號是 CFXD-SCA-RLY-DPR-000895" in e and "000894" in e and "Alarm Summary!F2" in e for e in r["errors"])
+    # 各工作表不一致也拒絕（列出每個錯的位置）
+    wb = openpyxl.load_workbook(io.BytesIO(build_checklist_xlsx(items, dt.date(2026, 11, 3),
+                                                                doc_no="Document ID : CFXD-SCA-RLY-DPR-000896")))
+    wb["Summary"]["C3"] = "CFXD-SCA-RLY-DPR-000899"
+    buf = io.BytesIO()
+    wb.save(buf)
+    r = _import(fm, "CheckList_2026-11-03.xlsx", buf.getvalue())
+    assert r["status"] == "error" and len(r["errors"]) == 1 and "Summary!C3" in r["errors"][0]
+    # 檔名日期與 Inspection Date 不同
+    r = _import(fm, "CheckList_2026-11-05.xlsx", build_checklist_xlsx(items, dt.date(2026, 11, 4)))
+    assert r["status"] == "error" and "檔名是 2026-11-05" in r["errors"][0]
+    # 正確的檔案照常匯入（不受同批其他檔案的錯誤影響）
+    ok = build_checklist_xlsx(items, dt.date(2026, 11, 1), doc_no="Document ID : CFXD-SCA-RLY-DPR-000894")
+    assert _import(fm, "CheckList_2026-11-01.xlsx", ok)["status"] == "imported"
+    with app.app_context():
+        assert [x.doc_no for x in Report.query.all()] == ["CFXD-SCA-RLY-DPR-000894"]
+    # 修正後重新上傳複檢 → 通過
+    fixed = build_checklist_xlsx(items, dt.date(2026, 11, 2), doc_no="Document ID : CFXD-SCA-RLY-DPR-000895")
+    assert _import(fm, "20261102_CFXD SLA - SCADA Daily Inspection CheckList.xlsx", fixed)["status"] == "imported"

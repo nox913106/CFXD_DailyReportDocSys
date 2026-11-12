@@ -596,7 +596,7 @@
   document.querySelectorAll("[data-import-upload]").forEach(function (zone) {
     var table = document.querySelector("[data-import-results]"), tbody = table.tBodies[0];
     var bar = zone.querySelector("progress"), log = zone.querySelector(".import-log");
-    var LABEL = { imported: "已匯入", would_import: "可以匯入", skipped: "略過", error: "錯誤" };
+    var LABEL = { imported: "已匯入", would_import: "可以匯入", skipped: "略過", error: "拒絕" };
     function cell(tr, text, cls) {
       var td = document.createElement("td"); td.textContent = text == null ? "" : String(text);
       if (cls) td.className = cls; tr.appendChild(td); return td;
@@ -614,7 +614,15 @@
       cell(tr, parts.join("、"));
       var pc = cell(tr, r.status === "imported" ? "排隊中" : "—", r.status === "imported" ? "hint nowrap" : "hint");
       if (r.status === "imported" && r.report_id) pc.dataset.pdfCell = r.report_id;
-      var info = cell(tr, r.message || "");
+      var info = cell(tr, "");
+      var msg = document.createElement("span"); msg.textContent = r.message || "";
+      if (r.status === "error") msg.className = "fail-text";
+      info.appendChild(msg);
+      if (r.errors && r.errors.length) {  // 資料錯誤點（紅字）：人工修正後重新上傳複檢
+        var eu = document.createElement("ul"); eu.className = "fail-text";
+        r.errors.forEach(function (w) { var li = document.createElement("li"); li.textContent = w; eu.appendChild(li); });
+        info.appendChild(eu);
+      }
       if (r.warnings && r.warnings.length) {
         var ul = document.createElement("ul");
         r.warnings.forEach(function (w) { var li = document.createElement("li"); li.textContent = w; ul.appendChild(li); });
@@ -661,20 +669,19 @@
             var tr = addRow(r);
             if (r.status === "would_import") batch.push({ file: f, token: r.token, tr: tr });
             bar.value += 1;
-            log.textContent = "檢查 " + bar.value + " / " + files.length + "：可以匯入 " + n.would_import + "、略過 " + n.skipped + "、格式不符 " + n.error;
+            log.textContent = "檢查 " + bar.value + " / " + files.length + "：可以匯入 " + n.would_import + "、略過 " + n.skipped + "、拒絕 " + n.error;
           });
         });
       });
       chain.then(function () {
-        if (n.error) {
-          batch = [];
-          setVerdict("有 " + n.error + " 個檔案格式不符或無法讀取（紅字「錯誤」的列，原因寫在說明欄），整批拒絕匯入，沒有匯入任何檔案。" +
-                     "請移除或修正這些檔案後重新選擇。", "flash error", false);
-        } else if (!batch.length) {
-          setVerdict("沒有可以匯入的檔案：" + n.skipped + " 個都略過（原因寫在說明欄）。", "flash", false);
+        var rej = n.error ? "拒絕 " + n.error + " 份（紅字列出錯誤點，這些檔案不會匯入；請人工檢查修正 Excel 後重新上傳複檢）" : "";
+        var skip = n.skipped ? "略過 " + n.skipped + " 份（重複，原因寫在說明欄）" : "";
+        if (!batch.length) {
+          setVerdict("沒有可以匯入的檔案：" + [rej, skip].filter(Boolean).join("；") + "。", n.error ? "flash error" : "flash", false);
         } else {
-          setVerdict("檢查通過：可以匯入 " + batch.length + " 份" + (n.skipped ? "，略過 " + n.skipped + " 份（重複，原因寫在說明欄）" : "") +
-                     "。確認後按「確定匯入」；匯入後為已結案日報，不能修改（檔案管理員以上可刪除後重匯）。", "flash success", true);
+          setVerdict("可以匯入 " + batch.length + " 份" + (rej || skip ? "；" + [rej, skip].filter(Boolean).join("；") : "") +
+                     "。確認後按「確定匯入」只匯入檢查通過的檔案；匯入後為已結案日報，不能修改（檔案管理員以上可刪除後重匯）。",
+                     n.error ? "flash warn-box" : "flash success", true);
           verdict.querySelector("[data-import-confirm]").textContent = "確定匯入 " + batch.length + " 份";
         }
       });

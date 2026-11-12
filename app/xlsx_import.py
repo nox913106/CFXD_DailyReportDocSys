@@ -66,6 +66,7 @@ class Parsed:
     results: dict = field(default_factory=dict)  # item_id -> (N/W/F/None, note)
     counts: dict = field(default_factory=dict)  # sheet -> {"rows", "matched", "N", "W", "F", "blank"}
     warnings: list = field(default_factory=list)
+    errors: list = field(default_factory=list)  # 資料不一致：這個檔案拒絕匯入，人工修正後重新上傳複檢
 
 
 def _date(v):
@@ -137,24 +138,39 @@ def parse(filename, data):
         raise ImportError_("讀不到日期（Alarm Summary 的 I2 或檔名中的日期）")
     file_day = _date_from_text(filename)
     if file_day and file_day != p.report_date:
-        p.warnings.append(f"檔名日期 {file_day} 與 Inspection Date {p.report_date} 不同，以 Inspection Date 為準")
+        p.errors.append(f"日期不一致：檔名是 {file_day}，Alarm Summary 的 Inspection Date（I2）是 {p.report_date}")
     p.inspection_time = _time(ws["I3"].value)
     try:
         p.revision = max(0, int(float(ws["I4"].value or 0)))
     except (TypeError, ValueError):
         p.revision = 0
     p.author = _text(ws["I5"].value)
+    docs, contractors = {}, {}  # 編號 -> [工作表!儲存格]
     for sheet in wb.worksheets:
         for row in sheet.iter_rows(max_row=8):
             for c in row:
                 if isinstance(c.value, str):
-                    if m := DOC_RE.search(c.value):
-                        p.doc_no = p.doc_no or m[0]
-                    if m := CONTRACTOR_RE.search(c.value):
-                        p.contractor_doc_no = p.contractor_doc_no or m[0]
-    if not p.doc_no:
-        p.doc_no = docno.doc_no(p.report_date)
-        p.warnings.append(f"Excel 裡沒有文件編號，依日期推算為 {p.doc_no}")
+                    for m in DOC_RE.finditer(c.value):
+                        docs.setdefault(m[0], []).append(f"{sheet.title}!{c.coordinate}")
+                    for m in CONTRACTOR_RE.finditer(c.value):
+                        contractors.setdefault(m[0], []).append(f"{sheet.title}!{c.coordinate}")
+    expect_doc, expect_con = docno.doc_no(p.report_date), docno.contractor_doc_no(p.report_date)
+
+    def where(cells):
+        return "、".join(cells[:4]) + (f" 等 {len(cells)} 處" if len(cells) > 4 else "")
+
+    # 文件編號依日期固定（docno 規則）：Excel 內的編號必須等於該日期的正確編號，而且各工作表一致
+    for value, cells in docs.items():
+        if value != expect_doc:
+            p.errors.append(f"文件編號錯誤：{p.report_date} 的正確文件編號是 {expect_doc}，"
+                            f"但 Excel 填的是 {value}（{where(cells)}）")
+    for value, cells in contractors.items():
+        if value != expect_con:
+            p.errors.append(f"承包商文件編號錯誤：{p.report_date} 應為 {expect_con}，但 Excel 填的是 {value}（{where(cells)}）")
+    p.doc_no = expect_doc
+    p.contractor_doc_no = expect_con if contractors else ""
+    if not docs:
+        p.warnings.append(f"Excel 裡沒有文件編號，依日期推算為 {expect_doc}")
 
     for r in range(ALARM_FIRST_ROW, ws.max_row + 1):
         vals = {c: _text(ws[f"{c}{r}"].value) for c in "CDEFGHI"}
@@ -248,7 +264,10 @@ def import_one(filename, data, user, dry_run=False):
     except ImportError_ as e:
         return {"file": filename, "status": "error", "message": str(e)}
     out = {"file": filename, "sha256": p.sha256, "date": p.report_date.isoformat(), "doc_no": p.doc_no, "author": p.author,
-           "alarms": len(p.alarms), "counts": p.counts, "warnings": p.warnings}
+           "alarms": len(p.alarms), "counts": p.counts, "warnings": p.warnings, "errors": p.errors}
+    if p.errors:  # 資料不一致：只拒絕這個檔案，說明錯在哪裡，人工修正後重新上傳複檢
+        out.update(status="error", message=f"拒絕匯入：發現 {len(p.errors)} 處資料錯誤，請人工檢查修正 Excel 後重新上傳複檢")
+        return out
     existing = Report.query.filter_by(report_date=p.report_date).first()
     if existing:
         out.update(status="skipped", message=f"{p.report_date} 已有日報（{existing.doc_no}，{existing.status_label}），不覆蓋",
