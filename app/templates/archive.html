@@ -14,10 +14,11 @@
     下載後可用 MD5 核對檔案是否完整（Windows：<code>certutil -hashfile 檔名.pdf MD5</code>；Linux / macOS：<code>md5sum 檔名.pdf</code>）。</p>
   <div class="tablewrap">
   <table class="list">
-    <tr><th>日期</th><th>文件編號</th><th>版次</th><th>檔案</th><th>大小</th><th>MD5</th><th>結案</th></tr>
+    <tr>{% if can_delete_official(current_user) %}<th class="nowrap"><input type="checkbox" data-sel-all title="全選"></th>{% endif %}<th>日期</th><th>文件編號</th><th>版次</th><th>檔案</th><th>大小</th><th>MD5</th><th>結案</th></tr>
     {% for r in reports %}
     {% set d = r.delivery %}
     <tr>
+      {% if can_delete_official(current_user) %}<td><input type="checkbox" name="ids" value="{{ r.id }}" form="del-official" data-sel></td>{% endif %}
       <td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td><td>{{ r.revision }}</td>
       <td><a href="{{ url_for('views.final_pdf', report_id=r.id, download=1) }}">{{ d.pdf_name }}</a></td>
       <td>{{ '%.1f'|format(d.pdf_size / 1e6) }} MB</td>
@@ -25,9 +26,10 @@
       <td>{{ d.closed_at.strftime('%Y-%m-%d %H:%M') }}</td>
     </tr>
     {% else %}
-    <tr><td colspan="7" class="hint">{{ '這個月' if month else '目前' }}沒有已結案的日報。</td></tr>
+    <tr><td colspan="8" class="hint">{{ '這個月' if month else '目前' }}沒有已結案的日報。</td></tr>
     {% endfor %}
   </table>
   </div>
+  {% if can_delete_official(current_user) and reports %}{% include "_delete_official.html" %}{% endif %}
 </section>
 {% endblock %}

@@ -247,7 +247,7 @@ def import_one(filename, data, user, dry_run=False):
         p = parse(filename, data)
     except ImportError_ as e:
         return {"file": filename, "status": "error", "message": str(e)}
-    out = {"file": filename, "date": p.report_date.isoformat(), "doc_no": p.doc_no, "author": p.author,
+    out = {"file": filename, "sha256": p.sha256, "date": p.report_date.isoformat(), "doc_no": p.doc_no, "author": p.author,
            "alarms": len(p.alarms), "counts": p.counts, "warnings": p.warnings}
     existing = Report.query.filter_by(report_date=p.report_date).first()
     if existing:

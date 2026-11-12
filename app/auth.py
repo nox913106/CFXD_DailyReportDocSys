@@ -181,6 +181,22 @@ def _tls_hint(e):
     return msg
 
 
+def verify_password(username, password):
+    """重新確認身分（刪除正式文件等高風險操作）：本機帳號比對本機密碼，其他用 AD 驗證。
+    回傳 User 或 None。不登入、不改 session。"""
+    username = (username or "").strip().split("\\")[-1].split("@")[0].lower()
+    if not username or not password:
+        return None
+    user = User.query.filter_by(username=username).first()
+    if user is None:
+        return None
+    if user.password_hash:
+        return user if check_password_hash(user.password_hash, password) else None
+    if current_app.config["AUTH_MODE"] == "dev":
+        return user
+    return user if ad_authenticate(username, password) else None
+
+
 def _next_url():
     next_url = request.args.get("next", "")
     # 只允許站內相對路徑，避免開放式重新導向

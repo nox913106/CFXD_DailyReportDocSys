@@ -516,6 +516,30 @@
 
   // ---------- 匯入歷史日報：逐檔送出，結果逐列顯示 ----------
 
+  // 刪除選取的正式文件：全選、已選份數、送出前確認
+  var delForm = document.querySelector("[data-del-official]");
+  if (delForm) {
+    var boxes = function () { return Array.prototype.slice.call(document.querySelectorAll("[data-sel]")); };
+    var refresh = function () {
+      var n = boxes().filter(function (b) { return b.checked; }).length;
+      delForm.querySelector("[data-sel-count]").textContent = n;
+      delForm.querySelector("[data-del-submit]").disabled = !n;
+      delForm.classList.toggle("active", n > 0);
+    };
+    document.addEventListener("change", function (e) {
+      if (e.target.matches("[data-sel-all]")) boxes().forEach(function (b) { b.checked = e.target.checked; });
+      if (e.target.matches("[data-sel], [data-sel-all]")) refresh();
+    });
+    delForm.addEventListener("submit", function (e) {
+      var picked = boxes().filter(function (b) { return b.checked; }).map(function (b) {
+        var tr = b.closest("tr"); return tr ? tr.cells[1].textContent.trim() + " " + tr.cells[2].textContent.trim() : b.value;
+      });
+      if (!confirm("確定刪除這 " + picked.length + " 份正式文件？\n\n" + picked.slice(0, 20).join("\n") +
+                   (picked.length > 20 ? "\n…等 " + picked.length + " 份" : "") + "\n\n刪除後文件編號會釋放，不能復原。")) e.preventDefault();
+    });
+    refresh();
+  }
+
   // 匯入日報的正式 PDF：維護服務依序產生，這裡每 3 秒更新進度
   var pdfBox = document.querySelector("[data-pdf-status]"), pdfTimer = null;
   function fmtSec(s) { s = Math.max(0, Math.round(s)); return s >= 60 ? Math.floor(s / 60) + " 分 " + (s % 60) + " 秒" : s + " 秒"; }
@@ -597,36 +621,93 @@
         info.appendChild(ul);
       }
       tbody.appendChild(tr);
+      return tr;
     }
+    var verdict = document.querySelector("[data-import-verdict]"), batch = null;
+    function post(f, extra) {
+      var fd = new FormData();
+      fd.append("files", f, f.name);
+      Object.keys(extra).forEach(function (k) { fd.append(k, extra[k]); });
+      return api(zone.dataset.importUpload, { method: "POST", body: fd })
+        .then(function (data) { return (data.results || [])[0] || { file: f.name, status: "error", message: "沒有回應" }; })
+        .catch(function (err) { return { file: f.name, status: "error", message: err.message }; });
+    }
+    function setVerdict(text, cls, canImport) {
+      verdict.hidden = false;
+      verdict.className = "import-verdict top-gap " + cls;
+      verdict.querySelector("[data-verdict-text]").textContent = text;
+      verdict.querySelector("[data-import-confirm]").hidden = !canImport;
+      verdict.querySelector("[data-import-cancel]").hidden = !canImport;
+    }
+    // 第一步：逐檔檢查（必做）。有任何格式不符 → 整批拒絕；重複的略過。
     function run(files) {
-      files = files.filter(function (f) { return /\.xls[xm]$/i.test(f.name); });
+      files = files.filter(function (f) { return /\.xls[xm]$/i.test(f.name) && !/^~\$/.test(f.name); });
       if (!files.length) { alert("沒有 .xlsx / .xlsm 檔案"); return; }
       files.sort(function (x, y) { return (x.webkitRelativePath || x.name) < (y.webkitRelativePath || y.name) ? -1 : 1; });
-      var dry = zone.querySelector("[data-import-dry]").checked;
-      if (!dry && !confirm("正式匯入 " + files.length + " 個檔案？匯入後為已結案日報，不能修改（可由系統管理員刪除後重匯）。")) return;
-      table.hidden = false; tbody.innerHTML = "";
+      table.hidden = false; tbody.innerHTML = ""; verdict.hidden = true;
       bar.hidden = false; bar.max = files.length; bar.value = 0;
-      var n = { imported: 0, would_import: 0, skipped: 0, error: 0 };
+      var n = { would_import: 0, skipped: 0, error: 0 }, bySha = {}, byDate = {};
+      batch = [];
       var chain = Promise.resolve();
       files.forEach(function (f) {
         chain = chain.then(function () {
-          var fd = new FormData();
-          fd.append("files", f, f.name);
-          if (dry) fd.append("dry_run", "1");
-          return api(zone.dataset.importUpload, { method: "POST", body: fd })
-            .then(function (data) {
-              (data.results || []).forEach(function (r) { n[r.status] = (n[r.status] || 0) + 1; addRow(r); });
-              if (!dry && n.imported && !pdfTimer) pollPdf();  // 第一份匯入後就開始顯示 PDF 進度
-            })
-            .catch(function (err) { n.error++; addRow({ file: f.name, status: "error", message: err.message }); })
-            .then(function () {
-              bar.value += 1;
-              log.textContent = (dry ? "檢查 " : "匯入 ") + bar.value + " / " + files.length + "：" +
-                (dry ? "可以匯入 " + n.would_import : "已匯入 " + n.imported) + "、略過 " + n.skipped + "、錯誤 " + n.error;
-            });
+          return post(f, { mode: "check" }).then(function (r) {
+            if (r.status === "would_import") {  // 同一批裡的重複
+              if (bySha[r.sha256]) { r.status = "skipped"; r.message = "與「" + bySha[r.sha256] + "」是同一個檔案，略過"; delete r.token; }
+              else if (byDate[r.date]) { r.status = "skipped"; r.message = "與「" + byDate[r.date] + "」同一天（" + r.date + "），只匯入第一個，略過"; delete r.token; }
+              else { bySha[r.sha256] = r.file; byDate[r.date] = r.file; }
+            }
+            n[r.status] = (n[r.status] || 0) + 1;
+            var tr = addRow(r);
+            if (r.status === "would_import") batch.push({ file: f, token: r.token, tr: tr });
+            bar.value += 1;
+            log.textContent = "檢查 " + bar.value + " / " + files.length + "：可以匯入 " + n.would_import + "、略過 " + n.skipped + "、格式不符 " + n.error;
+          });
         });
       });
+      chain.then(function () {
+        if (n.error) {
+          batch = [];
+          setVerdict("有 " + n.error + " 個檔案格式不符或無法讀取（紅字「錯誤」的列，原因寫在說明欄），整批拒絕匯入，沒有匯入任何檔案。" +
+                     "請移除或修正這些檔案後重新選擇。", "flash error", false);
+        } else if (!batch.length) {
+          setVerdict("沒有可以匯入的檔案：" + n.skipped + " 個都略過（原因寫在說明欄）。", "flash", false);
+        } else {
+          setVerdict("檢查通過：可以匯入 " + batch.length + " 份" + (n.skipped ? "，略過 " + n.skipped + " 份（重複，原因寫在說明欄）" : "") +
+                     "。確認後按「確定匯入」；匯入後為已結案日報，不能修改（檔案管理員以上可刪除後重匯）。", "flash success", true);
+          verdict.querySelector("[data-import-confirm]").textContent = "確定匯入 " + batch.length + " 份";
+        }
+      });
     }
+    // 第二步：手動確定後才匯入（每個檔案都要帶檢查時的 token）
+    verdict.querySelector("[data-import-confirm]").addEventListener("click", function () {
+      var todo = batch || [];
+      if (!todo.length) return;
+      batch = null;
+      verdict.querySelector("[data-import-confirm]").hidden = true;
+      verdict.querySelector("[data-import-cancel]").hidden = true;
+      bar.max = todo.length; bar.value = 0;
+      var n = { imported: 0, skipped: 0, error: 0 }, chain = Promise.resolve();
+      todo.forEach(function (it) {
+        chain = chain.then(function () {
+          return post(it.file, { mode: "import", token: it.token }).then(function (r) {
+            n[r.status] = (n[r.status] || 0) + 1;
+            var tr = addRow(r);
+            tbody.replaceChild(tr, it.tr);
+            bar.value += 1;
+            log.textContent = "匯入 " + bar.value + " / " + todo.length + "：已匯入 " + n.imported + "、略過 " + n.skipped + "、錯誤 " + n.error;
+            if (n.imported && !pdfTimer) pollPdf();  // 第一份匯入後就開始顯示 PDF 進度
+          });
+        });
+      });
+      chain.then(function () {
+        setVerdict("匯入完成：已匯入 " + n.imported + " 份" + (n.skipped ? "、略過 " + n.skipped : "") + (n.error ? "、錯誤 " + n.error : "") +
+                   "。正式 PDF 由維護服務依序產生，進度見上方。", n.error ? "flash error" : "flash success", false);
+      });
+    });
+    verdict.querySelector("[data-import-cancel]").addEventListener("click", function () {
+      batch = null; verdict.hidden = true; tbody.innerHTML = ""; table.hidden = true; bar.hidden = true; log.textContent = "已取消，沒有匯入任何檔案。";
+    });
     zone.querySelectorAll("[data-import-files]").forEach(function (input) {
       input.addEventListener("change", function () { var fs = Array.prototype.slice.call(input.files); input.value = ""; run(fs); });
     });

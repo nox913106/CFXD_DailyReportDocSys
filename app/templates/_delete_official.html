@@ -1,0 +1,15 @@
+{# 刪除選取的正式文件（已結案）：表格每列的勾選框用 form="del-official" 連到這個表單。檔案管理員以上。 #}
+<form id="del-official" method="post" action="{{ url_for('views.delete_official') }}" class="danger-zone del-official top-gap"
+      data-del-official>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="back" value="{{ request.full_path.rstrip('?') }}">
+  <h3>刪除選取的正式文件（已選 <span data-sel-count>0</span> 份）</h3>
+  <p class="hint">刪除後文件編號釋放，日報不再出現在系統與「正式文件」頁；正式 PDF 移到主機的 <code>instance/final_pdf/_deleted/</code> 保留。
+    已上傳 SharePoint 的檔案與已寄出的日報 Mail 不會收回。選取的任何一份不能刪（例如發送進行中），整批都不會刪。
+    請輸入<b>您本人</b>的 AD 帳號與密碼確認（本機緊急帳號用本機密碼），每次刪除與失敗的確認都記在稽核紀錄。</p>
+  <div class="form-grid">
+    <label>帳號<input name="auth_username" autocomplete="username" placeholder="{{ current_user.username }}" required></label>
+    <label>密碼<input name="auth_password" type="password" autocomplete="current-password" required></label>
+  </div>
+  <div class="actions"><button type="submit" class="danger" data-del-submit disabled>刪除選取的正式文件</button></div>
+</form>

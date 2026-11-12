@@ -533,6 +533,7 @@ AUDIT_LABELS = {"delete_report": "刪除日報", "set_role": "變更角色", "se
                 "ai_provider_add": "新增 AI 服務", "ai_provider_edit": "修改 AI 服務", "ai_provider_delete": "刪除 AI 服務",
                 "sys_settings": "系統設定", "local_account": "本機緊急帳號", "backup": "備份", "restore": "還原",
                 "delegation": "代理權限", "checklist_items": "檢查項目", "import_report": "匯入歷史日報",
+                "delete_auth_fail": "刪除身分確認失敗",
                 "audit_export": "匯出稽核紀錄", "audit_retention": "稽核保存天數", "audit_purge": "清除過期稽核紀錄"}
 
 

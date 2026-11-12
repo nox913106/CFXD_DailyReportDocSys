@@ -11,17 +11,25 @@
     <li>內容不做任何修改：原始 Excel 原檔保存，PDF 的 CheckList 直接由原始 Excel 畫出，撰寫人用 Recorded By 原文。匯入後自動產生正式 PDF（不上傳、不寄信）。</li>
     <li>Excel 裡沒有的封面記錄（值班 / 問題 / 現場 / 告警記錄）、照片、截圖、核准人不會有。</li>
     <li>跨日比對用的資料：檢查表依每列的文字對應系統的檢查項目，舊版範本多出或少的項目會列在警告中（PDF 一律照原始 Excel，不受影響）。</li>
-    <li>建議先勾「只檢查不匯入」跑一次，確認沒有錯誤再正式匯入。量很大（例如整年）時，也可以在主機上執行
+    <li><b>步驟：選擇檔案 → 系統自動檢查每個檔案 → 確認結果後按「確定匯入」</b>。任何一個檔案格式不符（不是 CheckList、缺工作表、讀不到日期、檢查表對應不到），
+      整批拒絕匯入，並列出原因；重複的檔案（同一個檔案選了兩次、同一天有兩個檔案、系統已經有該日期或文件編號）略過並說明，不影響其他檔案。</li>
+    <li>量很大（例如整年）時，也可以在主機上執行
       <code>flask --app wsgi import-xlsx &lt;資料夾&gt; --user &lt;帳號&gt; [--dry-run]</code>（可直接讀 NAS 掛載的資料夾）。</li>
   </ul>
   <div class="batch-drop" data-import-upload="{{ url_for('imports.upload') }}">
-    <label><input type="checkbox" data-import-dry checked> 只檢查不匯入</label>
-    <div class="actions top-gap">
+    <div class="actions">
       <label class="button secondary">選擇檔案<input type="file" multiple accept=".xlsx,.xlsm" data-import-files hidden></label>
       <label class="button secondary">選擇資料夾<input type="file" webkitdirectory multiple data-import-files hidden></label>
       <span class="hint">或把檔案 / 資料夾拖曳到這裡</span>
     </div>
     <progress hidden></progress> <span class="import-log hint"></span>
+  </div>
+  <div class="import-verdict top-gap" data-import-verdict hidden>
+    <p data-verdict-text></p>
+    <div class="actions">
+      <button type="button" data-import-confirm>確定匯入</button>
+      <button type="button" class="secondary" data-import-cancel>取消</button>
+    </div>
   </div>
   <div class="pdf-progress top-gap" data-pdf-status="{{ url_for('imports.pdf_status_api') }}" {{ 'hidden' if not pdf.total }}>
     <div class="row-between"><strong>正式 PDF 產生進度</strong><span class="hint" data-pdf-summary></span></div>
@@ -41,9 +49,10 @@
 <section class="card">
   <h3>已匯入（{{ recent|length }}）</h3>
   <div class="table-scroll"><table class="grid-table">
-    <thead><tr><th>日期</th><th>文件編號</th><th>檔案</th><th>匯入</th><th>正式 PDF</th><th>警告</th></tr></thead>
+    <thead><tr><th class="nowrap"><input type="checkbox" data-sel-all title="全選"></th><th>日期</th><th>文件編號</th><th>檔案</th><th>匯入</th><th>正式 PDF</th><th>警告</th></tr></thead>
     <tbody>{% for r in recent %}{% set m = r.import_info %}{% set d = r.delivery %}
-      <tr><td><a href="{{ url_for('views.detail', report_id=r.id) }}">{{ r.report_date }}</a></td><td>{{ r.doc_no }}</td>
+      <tr><td><input type="checkbox" name="ids" value="{{ r.id }}" form="del-official" data-sel></td>
+        <td><a href="{{ url_for('views.detail', report_id=r.id) }}">{{ r.report_date }}</a></td><td>{{ r.doc_no }}</td>
         <td>{{ m.file }}</td><td class="nowrap">{{ m.by }} {{ (m.at or '')[:16].replace('T', ' ') }}</td>
         <td class="nowrap" data-pdf-cell="{{ r.id }}">{% if not r.original_xlsx %}<span class="fail-text">無原始 Excel</span>
           {% elif d and d.pdf_md5 %}<a class="ok-text" href="{{ url_for('views.final_pdf', report_id=r.id) }}" target="_blank">✔ 已產生</a>
@@ -52,6 +61,7 @@
         <td>{% if m.warnings %}<details><summary>{{ m.warnings|length }} 則</summary><ul>{% for w in m.warnings %}<li>{{ w }}</li>{% endfor %}</ul></details>{% endif %}</td></tr>
     {% endfor %}</tbody>
   </table></div>
+  {% include "_delete_official.html" %}
 </section>
 {% endif %}
 {% endblock %}

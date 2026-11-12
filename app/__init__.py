@@ -150,6 +150,9 @@ def create_app():
 
     app.jinja_env.globals["LEVEL_LABELS"] = LEVEL_LABELS
     app.jinja_env.globals["COPYRIGHT_YEAR"] = 2026
+    from .approval import can_delete_official
+
+    app.jinja_env.globals["can_delete_official"] = can_delete_official
 
     @app.context_processor
     def _app_version():

@@ -72,12 +72,29 @@ def pdf_status_api():
     return jsonify(pdf_status())
 
 
+CHECK_MAX_AGE = 3 * 3600  # 檢查後 3 小時內要確定匯入
+
+
+def _signer():
+    from itsdangerous import URLSafeTimedSerializer
+
+    from flask import current_app
+
+    return URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="xlsx-import-check")
+
+
 @bp.route("/upload", methods=["POST"])
 def upload():
-    """一次一個檔案（瀏覽器逐檔送出，不受單次上傳上限影響）。"""
+    """一次一個檔案（瀏覽器逐檔送出，不受單次上傳上限影響）。
+    mode=check：只檢查（必做的第一步），可以匯入的檔案回傳 token；
+    mode=import：正式匯入，必須帶這個檔案檢查時拿到的 token（內容與操作者都要相同），沒檢查過的不能匯入。"""
+    import hashlib
+
+    from itsdangerous import BadSignature, SignatureExpired
+
     from .xlsx_import import import_one
 
-    dry = request.form.get("dry_run") == "1"
+    mode = request.form.get("mode") or ("check" if request.form.get("dry_run") == "1" else "import")
     out = []
     for f in request.files.getlist("files"):
         name = (f.filename or "").replace("\\", "/").rsplit("/", 1)[-1]
@@ -87,5 +104,24 @@ def upload():
         if name.startswith("~$"):
             out.append({"file": name, "status": "skipped", "message": "Excel 開啟中的暫存檔"})
             continue
-        out.append(import_one(name, f.read(), current_user, dry_run=dry))
+        data = f.read()
+        if mode == "import":
+            sha = hashlib.sha256(data).hexdigest()
+            try:
+                tok = _signer().loads(request.form.get("token") or "", max_age=CHECK_MAX_AGE)
+                ok = tok == {"sha256": sha, "user": current_user.id}
+            except SignatureExpired:
+                out.append({"file": name, "status": "error", "message": "檢查已超過 3 小時，請重新選擇檔案檢查"})
+                continue
+            except BadSignature:
+                ok = False
+            if not ok:
+                out.append({"file": name, "status": "error", "message": "這個檔案沒有通過匯入前的檢查（或檢查後內容有變），請重新選擇檔案"})
+                continue
+            out.append(import_one(name, data, current_user))
+            continue
+        r = import_one(name, data, current_user, dry_run=True)
+        if r["status"] == "would_import":
+            r["token"] = _signer().dumps({"sha256": r["sha256"], "user": current_user.id})
+        out.append(r)
     return jsonify(results=out)

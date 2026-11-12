@@ -1730,7 +1730,8 @@ def test_close_and_delivery(app, monkeypatch):
     assert "只有已核准的日報可以結案" in boss.post(f"/reports/{rid}/close")
     # 結案後不能再改、不能刪除；二線不能取消結案，檔案管理員可以（發送開始前）
     assert "取消結案" not in carol.get(f"/reports/{rid}")
-    assert boss.c.post(f"/reports/{rid}/delete", data={"csrf_token": boss.tok, "confirm_doc_no": "x"}).status_code == 403
+    assert "結案鎖檔中或發送排隊中" in boss.post(f"/reports/{rid}/delete", {"auth_username": "boss", "auth_password": "x"})
+    assert carol.c.post(f"/reports/{rid}/delete", data={"csrf_token": carol.tok}).status_code == 403  # 二線不能刪正式文件
     html = boss.post(f"/reports/{rid}/close/cancel", {"reason": "排版要再確認"})
     assert "已取消結案" in html
     with app.app_context():
@@ -2087,7 +2088,7 @@ def test_permission_matrix_matches_code(app):
                 "取消結案（發送開始前）": lambda: bool(perm.can_cancel_close(u, locked)),
                 "發送中止時重試": lambda: bool(perm.can_retry_delivery(u, failed)),
                 "刪除日報（未結案；刪除後文件編號可再使用）": lambda: bool(perm.can_delete(u, draft)),
-                "刪除已結案的日報（發送進行中除外）": lambda: bool(perm.can_delete(u, failed)),
+                "刪除已結案的正式文件（可複選；需再輸入本人帳號密碼）": lambda: bool(perm.can_delete(u, failed)),
                 "授權二線管理員代理": lambda: bool(perm.can_manage_delegations(u)),
                 "下載已結案的正式 PDF": lambda: u.role != "guest",
                 "調整角色、指派系統管理員": lambda: perm.can_manage_users(u),
@@ -2307,7 +2308,7 @@ def test_status_change_and_health_push_to_teams(app, monkeypatch):
     boss.post(f"/reports/{rid}/review", {"action": "approve"})
     carol.get(f"/reports/{rid}")
     carol.post(f"/reports/{rid}/close")
-    boss.post(f"/reports/{rid}/delete", {"confirm_doc_no": "x"}, status=403)  # 已結案不能刪
+    assert "結案鎖檔中或發送排隊中" in boss.post(f"/reports/{rid}/delete", {"auth_username": "boss", "auth_password": "x"})
     with app.app_context():
         assert TeamsMessage.query.filter(TeamsMessage.sent_at.is_(None)).count() == 7  # 舊日期的日報也通知
         assert teams.flush() == 7 and teams.flush() == 0

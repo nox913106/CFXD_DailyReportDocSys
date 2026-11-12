@@ -77,6 +77,23 @@ def _items(app):
         return active_items()
 
 
+def _upload(b, name, data, mode, token=None):
+    payload = {"csrf_token": b.tok, "files": (io.BytesIO(data), name), "mode": mode}
+    if token:
+        payload["token"] = token
+    r = b.c.post("/import/upload", data=payload, content_type="multipart/form-data", headers={"X-CSRFToken": b.tok})
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    return r.json["results"][0]
+
+
+def _import(b, name, data, dry=False):
+    """和網頁相同的兩步：先檢查（必做），通過才帶 token 正式匯入。"""
+    r = _upload(b, name, data, "check")
+    if dry or r["status"] != "would_import":
+        return r
+    return _upload(b, name, data, "import", r["token"])
+
+
 def _browser(app, username, role):
     b = Browser(app)
     b.login(username)
@@ -312,13 +329,12 @@ def test_import_history_xlsx(app):
     assert "匯入歷史日報" in fm.get("/import/")
 
     def up(name, data, dry=False):
-        payload = {"csrf_token": fm.tok, "files": (io.BytesIO(data), name)}
-        if dry:
-            payload["dry_run"] = "1"
-        r = fm.c.post("/import/upload", data=payload, content_type="multipart/form-data",
-                      headers={"X-CSRFToken": fm.tok})
-        assert r.status_code == 200, r.get_data(as_text=True)[:300]
-        return r.json["results"][0]
+        return _import(fm, name, data, dry)
+
+    # 沒有經過檢查（沒有 token、或 token 不是這個檔案的）不能匯入
+    assert "沒有通過匯入前的檢查" in _upload(fm, "x.xlsx", x1, "import")["message"]
+    tok_other = _upload(fm, "x2.xlsx", x2, "check")["token"]
+    assert "沒有通過匯入前的檢查" in _upload(fm, "x.xlsx", x1, "import", tok_other)["message"]
 
     r = up("CheckList_2026-10-02.xlsx", x2, dry=True)
     assert r["status"] == "would_import" and any("系統有 1 個項目" in w for w in r["warnings"])
@@ -349,6 +365,7 @@ def test_import_history_xlsx(app):
         assert ChecklistResult.query.filter_by(report_id=b.id, result=None).count() == 1  # 舊範本沒有的 VM 項目
         assert "Nobody Here" in b.import_info["author"]
         bid = b.id
+    assert 'form="del-official"' in fm.get("/import/")  # 已匯入清單可以複選刪除
     html = fm.get(f"/reports/{bid}")
     assert "從過去的 CheckList Excel 匯入" in html and "下載原始 Excel" in html and "正式 PDF 產生中" in html
     assert "撰寫人為 Excel 的 Recorded By「Nobody Here」" in html and "不是系統帳號" not in html  # 撰寫人照 Excel 原文，不換成匯入者
@@ -391,7 +408,7 @@ def test_import_history_xlsx(app):
         n = db.session.get(Report, nid)
         assert [r.device_name for r in n.alarm_rows] == ["FW-01", "UTM-01"]
     # 檔案管理員可以刪除匯入的日報（重匯用）；一般已結案日報仍不能刪
-    html = fm.post(f"/reports/{bid}/delete", {"confirm_doc_no": r2["doc_no"]})
+    html = fm.post(f"/reports/{bid}/delete", {"auth_username": "fm", "auth_password": "x"})
     assert "已刪除" in html
     with app.app_context():
         assert Report.query.filter_by(report_date=d2).count() == 0
@@ -486,7 +503,7 @@ def test_admin_deletes_closed_report(app, tmp_path):
         db.session.add(dl)
         db.session.commit()
         rid, doc, did = r.id, r.doc_no, dl.id
-    assert fm.c.post(f"/reports/{rid}/delete", data={"csrf_token": fm.tok, "confirm_doc_no": doc}).status_code == 403
+    assert "正式 PDF / 發送正在進行" in fm.post(f"/reports/{rid}/delete", {"auth_username": "fm", "auth_password": "x"})
     assert "刪除日報" not in fm.get(f"/reports/{rid}")
     html = admin.get(f"/reports/{rid}")
     assert "刪除日報" not in html  # 發送進行中
@@ -495,11 +512,19 @@ def test_admin_deletes_closed_report(app, tmp_path):
         db.session.commit()
     html = admin.get(f"/reports/{rid}")
     assert "刪除日報" in html and "已結案" in html and "_deleted" in html
-    html = admin.post(f"/reports/{rid}/delete", {"confirm_doc_no": doc})
+    # 二次確認：本人帳號 + 密碼（本機帳號用本機密碼）
+    assert "請輸入您的帳號與密碼" in admin.post(f"/reports/{rid}/delete", {"confirm_doc_no": doc})
+    assert "帳號或密碼錯誤" in admin.post(f"/reports/{rid}/delete", {"auth_username": "sysadmin", "auth_password": "wrong"})
+    assert "必須是目前登入的您本人" in admin.post(f"/reports/{rid}/delete", {"auth_username": "fm", "auth_password": "x"})
+    with app.app_context():
+        assert db.session.get(Report, rid) is not None
+        assert AuditLog.query.filter_by(action="delete_auth_fail").count() == 2
+    html = admin.post(f"/reports/{rid}/delete", {"auth_username": "SYSADMIN", "auth_password": "a-very-long-pass"})
     assert "已刪除" in html
     with app.app_context():
         assert db.session.get(Report, rid) is None
         log = AuditLog.query.filter_by(action="delete_report").one()
+        assert "身分確認：sysadmin" in log.detail
         assert "_deleted" in log.detail and "abc123" in log.detail
         assert not os.path.exists(full)
         assert os.listdir(os.path.join(app.instance_path, "final_pdf", "_deleted"))
@@ -560,9 +585,7 @@ def test_import_earlier_day_regenerates_later_pdf(app):
 
     def up(day, author):
         x = build_checklist_xlsx(items, day, author=author)
-        r = fm.c.post("/import/upload", data={"csrf_token": fm.tok, "files": (io.BytesIO(x), f"CheckList_{day}.xlsx")},
-                      content_type="multipart/form-data", headers={"X-CSRFToken": fm.tok})
-        return r.json["results"][0]
+        return _import(fm, f"CheckList_{day}.xlsx", x)
 
     assert up(dt.date(2026, 11, 11), "Simon Lin")["status"] == "imported"
     with app.app_context():
@@ -637,8 +660,7 @@ def test_import_pdf_progress(app):
     fm = _browser(app, "fm", "file_manager")
     for day in (1, 2, 3):
         x = build_checklist_xlsx(items, dt.date(2026, 9, day))
-        fm.c.post("/import/upload", data={"csrf_token": fm.tok, "files": (io.BytesIO(x), f"CheckList_2026-09-0{day}.xlsx")},
-                  content_type="multipart/form-data", headers={"X-CSRFToken": fm.tok})
+        _import(fm, f"CheckList_2026-09-0{day}.xlsx", x)
     st = fm.c.get("/import/pdf-status").json
     assert st["total"] == 3 and st["count"]["queued"] == 3 and [i.get("position") for i in st["items"]] == [1, 2, 3]
     html = fm.get("/import/")
@@ -661,3 +683,47 @@ def test_import_pdf_progress(app):
     assert "✔ 已產生" in fm.get("/import/")
     alice = _browser(app, "alice", "first_line")
     assert alice.c.get("/import/pdf-status").status_code == 403
+
+
+def test_bulk_delete_official(app):
+    """正式文件可以複選刪除：檔案管理員以上、本人帳號密碼確認；任何一份不能刪就整批不刪。"""
+    from datetime import datetime
+
+    from app import db, docno
+    from app.models import AuditLog, Delivery, Report, User
+
+    fm = _browser(app, "fm", "file_manager")
+    sl = _browser(app, "sl", "second_line")
+    with app.app_context():
+        u = User.query.filter_by(username="fm").one()
+        ids = []
+        for day, state in ((1, "done"), (2, "done"), (3, "running")):
+            d = dt.date(2026, 8, day)
+            r = Report(report_date=d, doc_no=docno.doc_no(d), contractor_doc_no=docno.contractor_doc_no(d),
+                       author_id=u.id, status="closed")
+            db.session.add(r)
+            db.session.flush()
+            db.session.add(Delivery(report_id=r.id, state=state, run_after=datetime.now(), pdf_md5="m" * 32,
+                                    pdf_name=f"{day}.pdf", pdf_size=10, pdf_sha256="s" * 64))
+            ids.append(r.id)
+        db.session.commit()
+    html = fm.get("/archive")
+    assert 'form="del-official"' in html and "刪除選取的正式文件" in html
+    assert 'form="del-official"' not in sl.get("/archive")
+    assert sl.c.post("/reports/delete-official", data={"csrf_token": sl.tok, "ids": ids[:1]}).status_code == 403
+
+    def post(ids_, **kw):
+        return fm.post("/reports/delete-official", {"ids": [str(i) for i in ids_], "back": "/archive", **kw})
+
+    assert "請先勾選" in post([], auth_username="fm", auth_password="x")
+    html = post(ids, auth_username="fm", auth_password="x")  # 第 3 份發送進行中 → 整批不刪
+    assert "沒有刪除任何檔案" in html and "2026-08-03" in html
+    assert "請輸入您的帳號與密碼" in post(ids[:2])
+    with app.app_context():
+        assert Report.query.filter(Report.id.in_(ids)).count() == 3
+    html = post(ids[:2], auth_username="fm", auth_password="x")
+    assert "已刪除 2 份正式文件" in html and "2026-08-01" in html
+    with app.app_context():
+        assert Report.query.filter(Report.id.in_(ids)).count() == 1
+        logs = AuditLog.query.filter_by(action="delete_report").all()
+        assert len(logs) == 2 and all("批次刪除 2 份，身分確認：fm" in l.detail for l in logs)

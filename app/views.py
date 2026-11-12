@@ -463,20 +463,31 @@ def _set_aside_final_pdf(report):
     return rel + (f"（MD5 {d.pdf_md5}）" if d.pdf_md5 else "")
 
 
-@bp.route("/reports/<int:report_id>/delete", methods=["POST"])
-def delete(report_id):
-    """刪除日報（含截圖檔）。刪除後文件編號釋放：同一天可重新建立，編號也可以再用在其他日報。"""
-    report = get_report(report_id)
-    d = perm.can_delete(current_user, report)
-    if not d:
-        if (report.status == "closed" and not report.imported and not current_user.is_admin) \
-                or current_user.role in ("first_line", "viewer"):
-            abort(403)
-        flash(d.reason, "error")
-        return redirect(url_for("views.detail", report_id=report.id))
-    if request.form.get("confirm_doc_no", "").strip() != report.doc_no:
-        flash("請輸入完整文件編號以確認刪除。", "error")
-        return redirect(url_for("views.detail", report_id=report.id))
+def _reauth():
+    """刪除正式文件前再次確認身分：表單的帳號必須是目前登入者本人，密碼用 AD（本機帳號用本機密碼）驗證，
+    角色必須是檔案管理員以上。回傳錯誤訊息，通過時回傳 None。失敗寫入稽核紀錄。"""
+    from .auth import verify_password
+
+    name = (request.form.get("auth_username") or "").strip()
+    norm = name.split("\\")[-1].split("@")[0].lower()
+    if not perm.can_delete_official(current_user):
+        return "只有檔案管理員、系統管理員可以刪除正式文件。"
+    if not name or not request.form.get("auth_password"):
+        return "請輸入您的帳號與密碼確認刪除。"
+    if norm != current_user.username:
+        err = f"帳號必須是目前登入的您本人（{current_user.username}）。"
+    elif verify_password(name, request.form.get("auth_password")) is None:
+        err = "帳號或密碼錯誤，未刪除任何檔案。"
+    else:
+        return None
+    db.session.add(AuditLog(action="delete_auth_fail", actor_id=current_user.id, target=name[:128],
+                            detail="刪除正式文件的身分確認失敗：" + err))
+    db.session.commit()
+    return err
+
+
+def _remove_report(report, note=""):
+    """刪除一份日報（不 commit）：正式 PDF 移到 _deleted、寫稽核紀錄、Teams 通知。回傳截圖資料夾（commit 後再刪）。"""
     folder = os.path.join(current_app.config["UPLOAD_DIR"], str(report.id))
     detail = f"{report.report_date} {report.status_label}"
     final = _set_aside_final_pdf(report)
@@ -485,19 +496,91 @@ def delete(report_id):
     dl = report.delivery
     if dl and (dl.sp_web_url or dl.mail_sent_at):
         detail += "；SharePoint 檔案與已寄出的 Mail 不受影響" + (f"（{dl.sp_web_url}）" if dl.sp_web_url else "")
+    if note:
+        detail += "；" + note
     db.session.add(AuditLog(action="delete_report", actor_id=current_user.id, target=report.doc_no, detail=detail))
     if not report.imported:
         teams.status_changed(report, report.status, "delete", current_user)
     for log in report.review_logs:
         db.session.delete(log)
     db.session.delete(report)
-    db.session.commit()
-    if os.path.isdir(folder):
-        import shutil
+    return folder
 
-        shutil.rmtree(folder, ignore_errors=True)
-    flash(f"已刪除 {report.report_date} 的日報，文件編號 {report.doc_no} 已釋放，可以再使用。", "success")
+
+def _rm_folders(folders):
+    import shutil
+
+    for f in folders:
+        if os.path.isdir(f):
+            shutil.rmtree(f, ignore_errors=True)
+
+
+@bp.route("/reports/<int:report_id>/delete", methods=["POST"])
+def delete(report_id):
+    """刪除日報（含截圖檔）。刪除後文件編號釋放：同一天可重新建立，編號也可以再用在其他日報。
+    未結案：輸入文件編號確認。已結案的正式文件：檔案管理員以上，輸入本人帳號密碼確認。"""
+    report = get_report(report_id)
+    d = perm.can_delete(current_user, report)
+    if not d:
+        if current_user.role in ("first_line", "viewer") or (report.status == "closed"
+                                                             and not perm.can_delete_official(current_user)):
+            abort(403)
+        flash(d.reason, "error")
+        return redirect(url_for("views.detail", report_id=report.id))
+    if report.status == "closed":
+        err = _reauth()
+        if err:
+            flash(err, "error")
+            return redirect(url_for("views.detail", report_id=report.id))
+        note = f"身分確認：{current_user.username}"
+    else:
+        if request.form.get("confirm_doc_no", "").strip() != report.doc_no:
+            flash("請輸入完整文件編號以確認刪除。", "error")
+            return redirect(url_for("views.detail", report_id=report.id))
+        note = ""
+    date_, doc = report.report_date, report.doc_no
+    folder = _remove_report(report, note)
+    db.session.commit()
+    _rm_folders([folder])
+    flash(f"已刪除 {date_} 的日報，文件編號 {doc} 已釋放，可以再使用。", "success")
     return redirect(url_for("views.index"))
+
+
+@bp.route("/reports/delete-official", methods=["POST"])
+def delete_official():
+    """一次刪除多份已結案的正式文件（正式文件頁、匯入頁勾選）。全部通過檢查才刪，任何一份不能刪就整批不刪。"""
+    back = request.form.get("back") or url_for("views.archive")
+    if not back.startswith("/"):
+        back = url_for("views.archive")
+    if not perm.can_delete_official(current_user):
+        abort(403)
+    ids = sorted({int(x) for x in request.form.getlist("ids") if x.isdigit()})
+    if not ids:
+        flash("請先勾選要刪除的正式文件。", "error")
+        return redirect(back)
+    reports = Report.query.filter(Report.id.in_(ids)).order_by(Report.report_date).all()
+    problems = [f"編號 {i} 不存在" for i in ids if i not in {r.id for r in reports}]
+    for r in reports:
+        if r.status != "closed":
+            problems.append(f"{r.report_date}（{r.doc_no}）不是已結案的正式文件")
+            continue
+        dd = perm.can_delete(current_user, r)
+        if not dd:
+            problems.append(f"{r.report_date}（{r.doc_no}）：{dd.reason}")
+    if problems:
+        flash("沒有刪除任何檔案：" + "；".join(problems), "error")
+        return redirect(back)
+    err = _reauth()
+    if err:
+        flash(err, "error")
+        return redirect(back)
+    note = f"批次刪除 {len(reports)} 份，身分確認：{current_user.username}"
+    labels = [f"{r.report_date}（{r.doc_no}）" for r in reports]
+    folders = [_remove_report(r, note) for r in reports]
+    db.session.commit()
+    _rm_folders(folders)
+    flash(f"已刪除 {len(labels)} 份正式文件，文件編號已釋放：" + "、".join(labels), "success")
+    return redirect(back)
 
 
 # ---------------------------------------------------------------- 帳號管理（系統管理員）

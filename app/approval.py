@@ -99,18 +99,23 @@ def can_edit(user, report):
 
 def can_delete(user, report):
     """刪除（釋放文件編號）：系統管理員、檔案管理員；二線管理員需經檔案管理員授權代理。
-    已結案的只有系統管理員能刪除，而且發送不能正在進行。"""
-    if report.status == "closed" and not report.imported:
-        if not user.is_admin:
-            return Decision(False, None, "已結案的日報只有系統管理員可以刪除。")
+    已結案的正式文件（含 Excel 匯入）只有檔案管理員以上能刪除，刪除時要再輸入本人帳號密碼，
+    而且發送 / 正式 PDF 不能正在進行。"""
+    if report.status == "closed":
+        if not can_delete_official(user):
+            return Decision(False, None, "已結案的正式文件只有檔案管理員、系統管理員可以刪除。")
         d = report.delivery
-        if d and d.state in ("queued", "running"):
+        if d and d.state == "running":
             return Decision(False, None, "正式 PDF / 發送正在進行，完成或中止後才能刪除。")
+        if d and d.state in ("scheduled", "queued") and not report.imported:
+            return Decision(False, None, "結案鎖檔中或發送排隊中，發送完成或中止後才能刪除（鎖檔期間可「取消結案」）。")
         return Decision(True, None, "")
-    if report.imported:  # Excel 匯入錯了要能刪掉重匯
-        return Decision(user.is_admin or user.role in ("admin", "file_manager"), None,
-                        "Excel 匯入的日報只有檔案管理員、系統管理員可以刪除。")
     return _manager_action(user, report, False, "刪除")
+
+
+def can_delete_official(user):
+    """刪除已結案的正式文件：檔案管理員以上（含系統管理員）。"""
+    return bool(user.is_admin or user.role in ("admin", "file_manager"))
 
 
 def can_submit(user, report):
@@ -226,6 +231,7 @@ PERMISSION_MATRIX = (
         ("取消結案（發送開始前）", "yynnnn"),
         ("發送中止時重試", "yyynnn"),
         ("刪除日報（未結案；刪除後文件編號可再使用）", "yydnnn"),
+        ("刪除已結案的正式文件（可複選；需再輸入本人帳號密碼）", "yynnnn"),
         ("授權二線管理員代理", "yynnnn"),
         ("下載已結案的正式 PDF", "yyyyyn"),
     )),
@@ -240,7 +246,7 @@ MATRIX_NOTES = (
     "系統管理員：本機緊急帳號，或在「帳號管理」被指派的檔案管理員 / 二線管理員。擁有所有權限，不受職責分離限制。",
     "✔* = 經檔案管理員授權代理時可以（右上角「代理設定」），文件上仍顯示核准人本人。",
     "檔案管理員、二線管理員不能審核自己撰寫或送審的日報（職責分離）。",
-    "只有系統管理員能調整角色與後端系統設定。已結案的日報任何人都不能修改或刪除。",
+    "只有系統管理員能調整角色與後端系統設定。已結案的日報任何人都不能修改；檔案管理員以上可以刪除，但要再輸入本人的帳號密碼確認。",
     "訪客：AD 帳號首次登入的預設角色，只能看歡迎頁（請系統管理員開通），所有內容與操作都禁止。",
 )
 
