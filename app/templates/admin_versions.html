@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}版本紀錄 - CFXD{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>
+{% include "_admin_nav.html" %}
+<section class="card">
+  <h3>目前版本：{{ current or '（未知）' }}{% if commit %} <span class="hint">commit <code>{{ commit }}</code></span>{% endif %}</h3>
+  <p class="hint">版號 vX.Y.Z 從第一個 commit（v1.0.0）開始，每個 commit 依類型進一版（merge commit 不計）：</p>
+  <ul class="hint">
+    <li><strong>X 核心架構</strong>：跳躍式改版，動到核心架構（資料模型、權限、設定、流程架構），Y、Z 歸零。共 {{ counts.X }} 次。</li>
+    <li><strong>Y 功能</strong>：現有功能的新增、刪除、變更，Z 歸零。共 {{ counts.Y }} 次。</li>
+    <li><strong>Z 修正</strong>：修正 BUG、錯誤、安全補丁。共 {{ counts.Z }} 次。</li>
+  </ul>
+  <p class="hint">升級：<code class="wrap">curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash -s -- upgrade</code>
+    （「系統狀態」頁會提示 GitHub 上是否有新版）</p>
+</section>
+<section class="card">
+  <h3>全部版本（{{ rows|length }}）</h3>
+  <div class="table-scroll"><table class="list versions">
+    <colgroup><col class="c-ver"><col class="c-date"><col class="c-commit"><col class="c-type"><col></colgroup>
+    <tr><th>版本</th><th>日期</th><th>commit</th><th>類型</th><th>內容</th></tr>
+    {% for r in rows %}
+    <tr class="{{ 'current' if r.version == current }} {{ 'major' if r.type == 'X' }}">
+      <td><strong>{{ r.version }}</strong>{% if r.version == current %} <span class="badge approved">目前</span>{% endif %}</td>
+      <td>{{ r.date }}</td>
+      {% set c = commit if (r.commit.startswith('（') and r.version == current and commit) else r.commit %}
+      <td>{% if c and not c.startswith('（') %}<a href="https://github.com/nox913106/CFXD_DailyReportDocSys/commit/{{ c }}" target="_blank" rel="noopener"><code>{{ c }}</code></a>{% else %}{{ r.commit }}{% endif %}</td>
+      <td><span class="vtype vtype-{{ r.type if r.type in ('X','Y','Z') else 'init' }}">{{ r.type }} {{ type_labels.get(r.type, '') }}</span></td>
+      <td>{{ r.text }}</td>
+    </tr>
+    {% else %}<tr><td colspan="5" class="hint">找不到 CHANGELOG.md。</td></tr>{% endfor %}
+  </table></div>
+</section>
+{% endblock %}

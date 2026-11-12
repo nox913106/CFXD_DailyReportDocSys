@@ -273,3 +273,18 @@ table.audit tr.group td { background: #eef2f5; font-weight: 600; white-space: no
 .audit-filter .actions { flex-wrap: wrap; align-items: center; }
 .site-footer { text-align: center; color: #888; font-size: 12px; padding: 18px 16px 24px; }
 .site-footer code { font-size: 12px; }
+/* 版本紀錄 */
+table.versions { table-layout: fixed; width: 100%; min-width: 640px; }
+table.versions .c-ver { width: 9em; }
+table.versions .c-date { width: 7.5em; }
+table.versions .c-commit { width: 6.5em; }
+table.versions .c-type { width: 7.5em; }
+table.versions td { vertical-align: top; overflow-wrap: anywhere; }
+table.versions tr.major td { background: #fff6e5; }
+table.versions tr.current td { background: #e7f5ef; }
+.vtype { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 12px; white-space: nowrap; }
+.vtype-X { background: #fde2c8; color: #8a3b00; }
+.vtype-Y { background: #dde9f7; color: #1f4a7a; }
+.vtype-Z { background: #e6f3e6; color: #276227; }
+.vtype-init { background: #eee; color: #555; }
+code.wrap { overflow-wrap: anywhere; word-break: break-all; }

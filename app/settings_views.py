@@ -34,6 +34,40 @@ def _audit(action, target, detail=""):
     db.session.add(AuditLog(action=action, actor_id=current_user.id, target=target[:128], detail=detail[:500]))
 
 
+TYPE_LABELS = {"X": "核心架構", "Y": "功能", "Z": "修正", "—": "初版"}
+
+
+def changelog():
+    """讀程式根目錄的 CHANGELOG.md 版本表：[{version, date, commit, type, text}]（新到舊）。"""
+    import re
+
+    from .backup import app_dir
+
+    rows = []
+    try:
+        with open(os.path.join(app_dir(), "CHANGELOG.md"), encoding="utf-8") as fh:
+            for line in fh:
+                m = re.match(r"^\|\s*(v\d+\.\d+\.\d+)\s*\|\s*([^|]*)\|\s*([^|]*)\|\s*([^|]*)\|\s*(.*)\|\s*$", line)
+                if m:
+                    v, d, c, t, text = (x.strip() for x in m.groups())
+                    rows.append({"version": v, "date": d, "commit": c.strip("`"), "type": t, "text": text})
+    except OSError:
+        pass
+    return rows
+
+
+@bp.route("/versions")
+def versions():
+    """版本紀錄：全部版號（vX.Y.Z）、日期、commit、類型與內容；標出目前執行的版本。"""
+    from .backup import semver, version
+
+    rows = changelog()
+    current = f"v{semver()}" if semver() else ""
+    counts = {k: sum(1 for r in rows if r["type"] == k) for k in ("X", "Y", "Z")}
+    return render_template("admin_versions.html", tab="versions", rows=rows, current=current,
+                           commit=(version() or "")[:7], counts=counts, type_labels=TYPE_LABELS)
+
+
 @bp.route("/ai", methods=["GET"])
 def ai():
     providers = AIProvider.query.order_by(AIProvider.priority, AIProvider.id).all()

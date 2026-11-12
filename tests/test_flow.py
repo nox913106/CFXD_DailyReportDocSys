@@ -590,6 +590,12 @@ def test_local_admin(app):
         assert not AuditLog.query.filter_by(target="ancient").count()
         assert AuditLog.query.filter_by(action="audit_purge").count() == 1
         assert AuditLog.query.filter_by(action="audit_retention").count() == 1
+    # 版本紀錄分頁：全部版號，標出目前版本
+    html = b.get("/admin/settings/versions")
+    ver = open("VERSION").read().strip()
+    assert f"目前版本：v{ver}" in html and "v1.0.0" in html and "e027f84" in html and "核心架構" in html
+    assert html.count("<tr") >= 58
+    other.get("/admin/settings/versions", status=403)
     html = b.get("/admin/audit")
     assert 'value="180"' in html and "© 2026 RallyTech 版權所有" in html and f">v{open('VERSION').read().strip()}</span>" in html
 
