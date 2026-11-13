@@ -1,12 +1,17 @@
-{% extends "base.html" %}
-{% block title %}登入 - CFXD 日報系統{% endblock %}
-{% block content %}
-<form method="post" class="card login">
+{% extends "_landing.html" %}
+{% block title %}登入 - CFXD SLA 日報系統{% endblock %}
+{% block card %}
+<form method="post" class="login-card">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <h1>登入</h1>
-  <p class="hint">請使用公司 AD 帳號（電腦登入帳號）</p>
+  <h2>登入</h2>
+  <p class="hint">請使用公司 AD 帳號與密碼（與電腦登入相同）</p>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}
+  {% endwith %}
   {% include "_login_user.html" %}
   <label>密碼<input name="password" type="password" autocomplete="current-password" required></label>
   <button type="submit">登入</button>
+  <p class="hint small">密碼就是 AD 帳號密碼，變更請依公司 AD 密碼流程。沒有使用權限請聯絡系統管理員。</p>
+  <p class="hint small mobile-only">在手機或平板審核？請改用 <a href="{{ url_for('auth.admin_login') }}">後台登入</a>。</p>
 </form>
 {% endblock %}

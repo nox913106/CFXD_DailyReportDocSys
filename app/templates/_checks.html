@@ -20,7 +20,7 @@
   {% endif %}
   {% set issues = checks.sorted_issues() %}
   {% if issues %}
-  <table class="list issues">
+  <table class="list issues no-cards">
     <tr><th>嚴重度</th><th>類別</th><th>說明</th><th>項次</th><th>對象</th><th>依據</th><th>實際</th></tr>
     {% for i in issues %}
     <tr class="sev-row-{{ {'錯誤': 'err', '警告': 'warn', '提醒': 'info'}[i.severity] }}">

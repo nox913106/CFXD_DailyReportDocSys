@@ -2505,11 +2505,22 @@ def test_login_suffix_and_admin_login(app):
     html = anon.get("/admin")
     assert "後台登入" in html and 'value="local"' in html and 'value="ad"' in html
 
-    # 非系統管理員的 AD 帳號不能進後台，也不會被登入
+    # 一線使用者（dev 模式新帳號）不能進後台，也不會被登入
     nb = Browser(app)
     nb.get("/admin")
-    assert "沒有系統管理員權限" in nb.post("/admin", {"method": "ad", "username": "nina", "password": "x"})
+    assert "後台只限管理員" in nb.post("/admin", {"method": "ad", "username": "nina", "password": "x"})
     assert nb.c.get("/").status_code == 302
+    assert "如果你不是管理員，請離開此頁" in nb.get("/admin")
+    # 二線管理員可以登入後台，進日報清單
+    with app.app_context():
+        u = User(username="sl2", display_name="SL")
+        u.set_role("second_line")
+        db.session.add(u)
+        db.session.commit()
+    sl = Browser(app)
+    sl.get("/admin")
+    r = sl.c.post("/admin", data={"csrf_token": sl.tok, "method": "ad", "username": "sl2", "password": "x"})
+    assert r.status_code == 302 and r.headers["Location"].endswith("/")
     # 被指派系統管理員的 AD 帳號可以用 AD 方式登入後台，回到 next
     with app.app_context():
         u = User(username="opsad", display_name="Ops")
@@ -2522,4 +2533,32 @@ def test_login_suffix_and_admin_login(app):
     r = ad.c.post("/admin?next=/admin/settings/sysinfo", data={"csrf_token": ad.tok, "method": "ad",
                                                                "username": "opsad@rallytech.com.tw", "password": "x"})
     assert r.status_code == 302 and r.headers["Location"].endswith("/admin/settings/sysinfo")
-    assert ad.c.get("/admin").headers["Location"].endswith("/admin/settings/")
+    assert ad.c.get("/admin").headers["Location"].endswith("/")
+
+
+def test_mobile_backoffice_markup_and_pdf_viewer(app):
+    """手機 / 平板：清單有手機專用列表、撰寫入口標成只在電腦顯示、日報頁有 PDF 檢視器按鈕與底部審核列；
+    站內 PDF 檢視器頁面與 pdf.js 檔案存在。"""
+    import os
+
+    alice = Browser(app)
+    alice.login("alice")
+    rid = submitted_report(app, alice, "2026-11-09")
+    boss = Browser(app)
+    boss.login("boss")
+    set_role(app, "boss", "file_manager")
+    finish_ocr(app, rid)
+    html = boss.get("/")
+    assert 'class="m-only m-tiles"' in html and 'class="m-list m-only"' in html
+    assert "new-report desk-only" in alice.get("/")
+    html = boss.get(f"/reports/{rid}")
+    assert "m-summary" in html and f"/reports/{rid}/view" in html and "m-dock" in html
+    assert 'data-need-comment' in html and 'data-confirm' in html
+    html = boss.get(f"/reports/{rid}/view")
+    assert 'id="pdfv"' in html and f'data-src="/reports/{rid}/pdf"' in html and "pdfview.js" in html
+    assert "pdfv-bar" not in boss.get(f"/reports/{rid}/view?embed=1")
+    boss.get(f"/reports/{rid}/view?kind=final", status=404)  # 還沒有正式 PDF
+    static = os.path.join(app.root_path, "static")
+    for f in ("pdfview.js", "mobile.css", "logo.png", "vendor/pdfjs/pdf.min.js", "vendor/pdfjs/pdf.worker.min.js"):
+        assert os.path.isfile(os.path.join(static, f)), f
+    assert "手機、平板版不提供撰寫" in alice.get(f"/reports/{rid}/basic")

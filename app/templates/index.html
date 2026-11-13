@@ -1,13 +1,33 @@
 {% extends "base.html" %}
+{% macro m_item(r, sub='', href=None, badge=True) %}
+<li><a href="{{ href or url_for('views.detail', report_id=r.id) }}">
+  <span class="m-day"><b>{{ r.report_date.strftime('%m/%d') }}</b><small>{{ ['一','二','三','四','五','六','日'][r.report_date.weekday()] }}</small></span>
+  <span class="m-body"><span class="m-title">{{ r.doc_no.split('-')[-2:]|join('-') if r.doc_no.count('-') >= 2 else r.doc_no }}</span><span class="m-sub">{{ sub }}</span></span>
+  {% if badge %}<span class="badge {{ r.status }}">{{ r.status_label }}</span>{% endif %}<span class="m-chev" aria-hidden="true">›</span></a></li>
+{% endmacro %}
 {% block content %}
 {% if guests %}
 <div class="flash">有 {{ guests }} 個 AD 帳號以訪客身分登入、等待開通權限。
   <a href="{{ url_for('views.users') }}#guests">前往帳號管理設定角色</a></div>
 {% endif %}
+{% if current_user.is_admin or current_user.role in ('admin', 'file_manager', 'second_line') %}
+<nav class="m-only m-tiles">
+  <a href="#m-pending" class="{{ 'hot' if pending }}"><b>{{ pending|length }}</b>待審核</a>
+  <a href="#m-close" class="{{ 'hot' if to_close }}"><b>{{ to_close|length }}</b>待結案</a>
+  <a href="#m-error" class="{{ 'bad' if delivery_errors }}"><b>{{ delivery_errors|length }}</b>發送中止</a>
+</nav>
+{% endif %}
 {% if pending %}
-<section class="card">
+<section class="card" id="m-pending">
   <h2>待我審核（{{ pending|length }}）</h2>
-  <table class="list">
+  <ul class="m-list m-only">
+    {% for r in pending %}{% set c = pending_checks[r.id] %}
+    {{ m_item(r, r.author_name ~ ' 送審 ' ~ (r.submitted_at.strftime('%m-%d %H:%M') if r.submitted_at else '')
+       ~ (' · 錯誤 ' ~ c['錯誤'] if c['錯誤'] else '') ~ (' · 警告 ' ~ c['警告'] if c['警告'] else '')
+       ~ (' · 代簽 ' ~ r.approver_name if r.approver_id and r.approver_id != current_user.id else ''), badge=False) }}
+    {% endfor %}
+  </ul>
+  <table class="list desk-only">
     <tr><th>日期</th><th>文件編號</th><th>撰寫人</th><th>核准人</th><th>檢查結果</th><th>送審時間</th><th></th></tr>
     {% for r in pending %}
     <tr>
@@ -25,9 +45,14 @@
 </section>
 {% endif %}
 {% if delivery_errors %}
-<section class="card">
+<section class="card" id="m-error">
   <h2 class="fail-text">發送中止，需要處理（{{ delivery_errors|length }}）</h2>
-  <table class="list">
+  <ul class="m-list m-only">
+    {% for r in delivery_errors %}{% set st = r.delivery.step_map() %}
+    {{ m_item(r, ((st.values()|selectattr('status', 'equalto', 'error')|map(attribute='message')|first) or '')[:80], href=url_for('views.detail', report_id=r.id) ~ '#flow', badge=False) }}
+    {% endfor %}
+  </ul>
+  <table class="list desk-only">
     <tr><th>日期</th><th>文件編號</th><th>中止的步驟</th><th></th></tr>
     {% for r in delivery_errors %}
     {% set st = r.delivery.step_map() %}
@@ -39,9 +64,14 @@
 </section>
 {% endif %}
 {% if to_close %}
-<section class="card">
-  <h2>待結案（已核准，確認預覽排版後結案）（{{ to_close|length }}）</h2>
-  <table class="list">
+<section class="card" id="m-close">
+  <h2>待結案<span class="desk-only-inline">（已核准，確認預覽排版後結案）</span>（{{ to_close|length }}）</h2>
+  <ul class="m-list m-only">
+    {% for r in to_close %}
+    {{ m_item(r, r.author_name ~ (' · 核准 ' ~ r.reviewed_by.name if r.reviewed_by else ''), badge=False) }}
+    {% endfor %}
+  </ul>
+  <table class="list desk-only">
     <tr><th>日期</th><th>文件編號</th><th>撰寫人</th><th>核准</th><th></th></tr>
     {% for r in to_close %}
     <tr><td>{{ r.report_date }}</td><td>{{ r.doc_no }}</td><td>{{ r.author_name }}</td>
@@ -57,7 +87,7 @@
   <div class="row-between">
     <h2>日報清單</h2>
     {% if can_create %}
-    <form method="post" action="{{ url_for('views.create') }}" class="inline new-report">
+    <form method="post" action="{{ url_for('views.create') }}" class="inline new-report desk-only">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="date" name="report_date" value="{{ today }}" required>
       <input type="hidden" name="copy_shown" value="1">
@@ -71,7 +101,10 @@
   <form method="get" class="inline">
     <label class="inline">月份 <input type="month" name="month" value="{{ month }}" onchange="this.form.submit()"></label>
   </form>
-  <table class="list">
+  <ul class="m-list m-only">
+    {% for r in reports %}{{ m_item(r, r.author_name) }}{% else %}<li class="hint">這個月還沒有日報。</li>{% endfor %}
+  </ul>
+  <table class="list desk-only">
     <tr><th>日期</th><th>文件編號</th><th>撰寫人</th><th>狀態</th><th>最後更新</th><th></th></tr>
     {% for r in reports %}
     <tr>
@@ -79,7 +112,7 @@
       <td><span class="badge {{ r.status }}">{{ r.status_label }}</span></td>
       <td>{{ r.updated_at.strftime('%m-%d %H:%M') if r.updated_at }}{% if r.updated_by %} {{ r.updated_by.name }}{% endif %}</td>
       <td>
-        {% if r.editable %}<a href="{{ url_for('editors.basic', report_id=r.id) }}">編輯</a> · {% endif %}
+        {% if r.editable %}<span class="desk-only"><a href="{{ url_for('editors.basic', report_id=r.id) }}">編輯</a> · </span>{% endif %}
         <a href="{{ url_for('views.detail', report_id=r.id) }}">檢視</a>
       </td>
     </tr>

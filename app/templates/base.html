@@ -6,21 +6,33 @@
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>{% block title %}CFXD 日報系統{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css') }}">
   {% block head %}{% endblock %}
 </head>
-<body>
-  <header class="topbar">
+<body class="{% block body_class %}{% endblock %}">
+  {% block topbar %}<header class="topbar">
     <a class="brand" href="{{ url_for('views.index') }}">CFXD SLA 日報系統</a>
     {% if current_user.is_authenticated %}
+    {% set nav = [] %}
+    {% if current_user.role != 'guest' %}{% set _ = nav.append((url_for('views.archive'), '正式文件')) %}{% endif %}
+    {% if current_user.role in ('admin', 'file_manager', 'second_line') %}
+      {% set _ = nav.append((url_for('views.delegations'), '代理設定')) %}{% set _ = nav.append((url_for('items.index'), '檢查項目')) %}{% endif %}
+    {% if current_user.role in ('admin', 'file_manager') or current_user.is_admin %}{% set _ = nav.append((url_for('imports.index'), '匯入歷史日報')) %}{% endif %}
+    {% if current_user.is_admin %}{% set _ = nav.append((url_for('settings.index'), '系統設定')) %}{% endif %}
       <span class="user">{{ current_user.name }}（{{ current_user.role_label }}{% if current_user.is_admin and not current_user.is_local_admin %}・系統管理員{% endif %}）
-        {% if current_user.role != 'guest' %}· <a href="{{ url_for('views.archive') }}">正式文件</a>{% endif %}
-        {% if current_user.role in ('admin', 'file_manager', 'second_line') %}· <a href="{{ url_for('views.delegations') }}">代理設定</a>
-          · <a href="{{ url_for('items.index') }}">檢查項目</a>{% endif %}
-        {% if current_user.role in ('admin', 'file_manager') or current_user.is_admin %}· <a href="{{ url_for('imports.index') }}">匯入歷史日報</a>{% endif %}
-        {% if current_user.is_admin %}· <a href="{{ url_for('settings.index') }}">系統設定</a>{% endif %}
+        {% for href, label in nav %}· <a href="{{ href }}">{{ label }}</a> {% endfor %}
         · <a href="{{ url_for('auth.logout') }}">登出</a></span>
+      <details class="m-menu">
+        <summary aria-label="選單"><span></span><span></span><span></span></summary>
+        <nav>
+          <div class="m-user">{{ current_user.name }}<small>{{ current_user.role_label }}{% if current_user.is_admin and not current_user.is_local_admin %}・系統管理員{% endif %}</small></div>
+          {% if current_user.role != "guest" %}<a href="{{ url_for('views.index') }}">日報清單</a>{% endif %}
+          {% for href, label in nav %}<a href="{{ href }}">{{ label }}</a>{% endfor %}
+          <a href="{{ url_for('auth.logout') }}" class="m-logout">登出</a>
+        </nav>
+      </details>
     {% endif %}
-  </header>
+  </header>{% endblock %}
   <main class="container">
     {% if health_alert and request.endpoint != 'settings.index' %}
       <div class="flash error">健康檢查有 {{ health_alert['items']|length }} 個需要處理的項目（{{ health_alert.at[5:16].replace('T', ' ') }}）：

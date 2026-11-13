@@ -1,0 +1,28 @@
+{# 登入頁共用版型：左邊系統介紹，右邊登入卡片（{% block card %}） #}
+{% extends "base.html" %}
+{% block body_class %}landing-page{% endblock %}
+{% block topbar %}{% endblock %}
+{% macro check() %}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endmacro %}
+{% block content %}
+<div class="landing">
+  <div class="landing-in">
+    <section class="intro">
+      <img class="intro-logo" src="{{ url_for('static', filename='logo.png') }}" alt="RallyTech 雷力科技股份有限公司" width="360" height="104">
+      <h1>CFXD SLA 日報系統</h1>
+      <p class="lead">SCADA 每日巡檢的撰寫、審核、結案與發送，一站完成。</p>
+      <ul class="points">
+        <li>{{ check() }}<span><b>截圖 OCR</b> 自動檢查日期</span></li>
+        <li>{{ check() }}<span><b>二線審核</b>與授權代簽</span></li>
+        <li>{{ check() }}<span><b>正式 PDF</b> 浮水印與 SHA-256</span></li>
+        <li>{{ check() }}<span>結案後<b>自動上傳與寄送</b></span></li>
+      </ul>
+      <ol class="flow" aria-label="日報流程">
+        {% for step in ['建立', '截圖辨識', '送審', '核准', '結案', '自動發送'] %}
+        <li><span class="n">{{ loop.index }}</span>{{ step }}</li>
+        {% endfor %}
+      </ol>
+    </section>
+    {% block card %}{% endblock %}
+  </div>
+</div>
+{% endblock %}

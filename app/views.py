@@ -904,6 +904,26 @@ def final_pdf(report_id):
                      download_name=d.pdf_name, max_age=0, etag=d.pdf_md5)
 
 
+@bp.route("/reports/<int:report_id>/view")
+def pdf_view(report_id):
+    """站內 PDF 檢視器（手機、平板也能清楚看）：?kind=final 正式 PDF，其餘為預覽。"""
+    report = get_report(report_id)
+    d = report.delivery
+    final = request.args.get("kind") == "final" or bool(d and d.pdf_md5)
+    if final and not (d and d.pdf_md5):
+        abort(404)
+    if final:
+        src, download, label = (url_for("views.final_pdf", report_id=report.id),
+                                url_for("views.final_pdf", report_id=report.id, download=1), "正式 PDF")
+    else:
+        src, download, label = (url_for("views.pdf", report_id=report.id),
+                                url_for("views.pdf", report_id=report.id, download=1), "預覽")
+    back = request.args.get("back", "")
+    if not back.startswith("/") or back.startswith("//"):
+        back = url_for("views.detail", report_id=report.id)
+    return render_template("pdf_view.html", report=report, src=src, download=download, label=label, back=back)
+
+
 @bp.route("/reports/<int:report_id>/original.xlsx")
 def original_xlsx(report_id):
     """Excel 匯入的日報：匯入時保存的原始檔案（逐位元相同，SHA-256 與匯入紀錄一致）。"""

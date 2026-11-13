@@ -1,0 +1,191 @@
+/* 手機、平板版面（寬度 900px 以下）：後台審核、結案、正式文件、系統設定用；撰寫與編輯日報只在電腦上做。
+   觸控裝置（含平板橫放）另外放大按鈕與輸入框。 */
+
+.m-only, .m-menu { display: none; }
+
+/* 觸控：按鈕、輸入框夠大；輸入框 16px 以上，iOS 才不會自動放大畫面 */
+@media (pointer: coarse) {
+  button, .button { min-height: 42px; padding: 10px 16px; }
+  input, select, textarea { font-size: 16px; min-height: 42px; }
+  input[type="checkbox"], input[type="radio"] { min-height: 0; transform: scale(1.25); }
+  .tabs a, .subtabs a { padding: 11px 14px; }
+}
+
+@media (max-width: 900px), (hover: none) and (pointer: coarse) {
+  .desk-only, .desk-only-block { display: none !important; }
+  .m-only { display: block; }
+  body { font-size: 15.5px; -webkit-text-size-adjust: 100%; }
+  .container { margin: 12px auto 96px; padding: 0 12px; }
+  .card { padding: 16px 14px; border-radius: 12px; margin-bottom: 12px; }
+  h1 { font-size: 20px; } h2 { font-size: 18px; margin: 0 0 10px; } h3 { font-size: 16px; }
+
+  /* 頂列：品牌 + 選單按鈕 */
+  .topbar { position: sticky; top: 0; z-index: 30; padding: 0 6px 0 14px; height: 52px;
+    padding-top: env(safe-area-inset-top); box-shadow: 0 2px 8px rgba(0, 0, 0, .12); }
+  .topbar .user { display: none; }
+  .m-menu { display: block; position: static; }
+  .m-menu > summary { list-style: none; width: 44px; height: 44px; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 5px; cursor: pointer; border-radius: 10px; }
+  .m-menu > summary::-webkit-details-marker { display: none; }
+  .m-menu > summary span { display: block; width: 22px; height: 2px; background: #fff; border-radius: 2px; transition: .2s; }
+  .m-menu[open] > summary { background: rgba(255, 255, 255, .15); }
+  .m-menu[open] > summary span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+  .m-menu[open] > summary span:nth-child(2) { opacity: 0; }
+  .m-menu[open] > summary span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+  .m-menu nav { position: absolute; left: 0; right: 0; top: 100%; background: #fff; box-shadow: 0 16px 32px rgba(15, 23, 42, .18);
+    padding: 6px 0 10px; max-height: calc(100vh - 60px); overflow: auto; }
+  .m-menu nav a { display: block; padding: 14px 20px; color: var(--text); text-decoration: none; font-size: 16px; border-bottom: 1px solid #eef1f3; }
+  .m-menu nav a:active { background: #e7f5ef; }
+  .m-menu .m-user { padding: 10px 20px 12px; color: var(--text); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .m-menu .m-user small { display: block; font-weight: 400; color: var(--muted); font-size: 13px; }
+  .m-menu .m-logout { color: var(--err) !important; }
+
+  /* 分頁列：一行，可左右滑 */
+  .tabs, .subtabs, .admin-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs a, .subtabs a { white-space: nowrap; flex: none; }
+
+  /* 表格 → 卡片（app.js 從表頭帶入每格的欄位名稱） */
+  table.list.cards, table.list.cards tbody { display: block; }
+  table.list.cards tr.thead-row { display: none; }
+  table.list.cards tr { display: block; border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; background: #fff; }
+  table.list.cards td { display: grid; grid-template-columns: 6.5em minmax(0, 1fr); gap: 8px; padding: 5px 0; border: 0; overflow-wrap: anywhere; }
+  table.list.cards td[data-label]::before { content: attr(data-label); color: var(--muted); font-size: 13px; }
+  table.list.cards td:not([data-label]) { display: block; }
+  table.list.cards td:empty { display: none; }
+  table.list.cards td[colspan] { display: block; }
+  table.list.cards tr.group { background: none; border: 0; padding: 4px 2px; margin: 14px 0 6px; font-weight: 700; }
+  table.list.cards td:last-child:not([data-label]) a, table.list.cards td[data-label=""] a { display: inline-block; padding: 6px 0; font-weight: 700; }
+  table.list.cards td[data-label=""]::before { content: none; }
+  table.list.cards td[data-label=""] { display: block; text-align: right; }
+  .table-scroll:has(> table.cards) { overflow: visible; }
+  .table-scroll > table.cards { min-width: 0 !important; table-layout: auto !important; }
+  .card { overflow-x: auto; } /* 保險：任何太寬的內容只在卡片內左右捲，不撐開整頁 */
+  .m-dock { overflow: visible; }
+  table.list th, table.list td { overflow-wrap: anywhere; }
+  table.list th.nw { white-space: normal; min-width: 5em; }
+  table.list.cards col { width: auto !important; }
+
+  /* 日報清單 */
+  .row-between { margin-bottom: 8px; }
+
+  /* 日報檢視：摘要卡、PDF 按鈕 */
+  .report-head { margin-bottom: 8px; }
+  .report-head .actions:empty { display: none; }
+  .m-summary .m-doc { font-size: 18px; font-weight: 800; letter-spacing: .3px; }
+  .m-summary .m-date { color: var(--muted); margin: 2px 0 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .m-summary dl { display: grid; grid-template-columns: 5em 1fr; gap: 6px 10px; margin: 0 0 14px; font-size: 15px; }
+  .m-summary dt { color: var(--muted); }
+  .m-summary dd { margin: 0; }
+  .button.m-big { display: block; text-align: center; font-size: 17px; padding: 14px; border-radius: 10px; font-weight: 700; }
+
+  /* 檢查結果：問題清單可捲動，不把整頁拉長 */
+  .checks table.issues { max-height: 60vh; overflow-y: auto; }
+  .checks .row-between > div { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  /* 截圖比對：今天兩欄，前一份改成可左右滑的縮圖列 */
+  .compare h4 { font-size: 15px; line-height: 1.5; }
+  .compare-row { gap: 10px; }
+  .compare-prev { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; align-items: flex-start; }
+  .compare-prev .hint { flex: none; writing-mode: vertical-rl; }
+  .compare-prev a { flex: none; }
+  .compare-prev img { height: 110px; width: auto; max-width: none; }
+  .shot-grid { display: grid !important; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .shot-grid figure { margin: 0; }
+  .shot-grid img { width: 100%; height: auto; }
+  .shot-grid figcaption { font-size: 12.5px; overflow-wrap: anywhere; }
+  .shot-grid .misplace { display: flex; margin-top: 6px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); }
+
+  /* 審核 / 結案：固定在畫面底部的操作列 */
+  .m-dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 25; margin: 0; border-radius: 16px 16px 0 0;
+    border: 0; box-shadow: 0 -8px 24px rgba(15, 23, 42, .16); padding: 10px 12px; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  .m-dock h3 { font-size: 14px; margin: 0 0 6px; color: var(--muted); }
+  .m-dock label { font-size: 0; gap: 0; }
+  .m-dock textarea { min-height: 44px; height: 44px; transition: height .15s; margin-bottom: 8px; }
+  .m-dock textarea:focus { height: 96px; }
+  .m-dock textarea.need { border-color: var(--err); box-shadow: 0 0 0 3px rgba(180, 35, 24, .15); }
+  .m-dock .actions { display: grid; grid-template-columns: 1fr 1.6fr; gap: 10px; }
+  .m-dock .actions button { width: 100%; min-height: 48px; font-size: 16px; font-weight: 700; border-radius: 10px; }
+  .close-card .actions { grid-template-columns: 1fr; }
+  .close-card .actions form { display: grid; grid-template-columns: 1fr auto; gap: 8px; width: 100%; }
+  .close-card .actions form:first-child { order: 2; grid-template-columns: 1fr; }
+  .close-card .actions form input { width: 100%; }
+  body:has(.m-dock) .container { margin-bottom: 190px; }
+
+  /* 流程、處理紀錄 */
+  .flow-list li { padding: 8px 0; }
+
+  /* 系統設定與其他表單：單欄 */
+  .form-grid, .form-grid.narrow { grid-template-columns: 1fr !important; }
+  .form-grid .wide { grid-column: auto; }
+  .actions { gap: 10px; }
+  .inline-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  form.inline { flex-wrap: wrap; }
+  code.wrap, td code { overflow-wrap: anywhere; word-break: break-all; }
+  .pdf-view { display: none; }
+  .site-footer { padding-bottom: 28px; }
+}
+
+/* 平板（601px 以上的觸控裝置）：內容置中、截圖三欄、操作列置中 */
+@media (min-width: 601px) and (max-width: 900px), (min-width: 601px) and (hover: none) and (pointer: coarse) {
+  .shot-grid { grid-template-columns: repeat(3, 1fr); }
+  .container { padding: 0 20px; }
+  .m-dock { left: 50%; right: auto; width: min(720px, 100%); transform: translateX(-50%); }
+}
+
+.desk-only-inline { display: inline; }
+@media (max-width: 900px), (hover: none) and (pointer: coarse) {
+  .desk-only-inline { display: none; }
+  /* 首頁：三個待辦數字，點了跳到該區 */
+  .m-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+  .m-tiles a { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px 6px; background: #fff;
+    border: 1px solid var(--border); border-radius: 12px; text-decoration: none; color: var(--muted); font-size: 13px; }
+  .m-tiles b { font-size: 26px; color: var(--text); line-height: 1.1; }
+  .m-tiles a.hot { border-color: var(--accent); background: #effaf8; }
+  .m-tiles a.hot b { color: var(--accent-dark); }
+  .m-tiles a.bad { border-color: var(--err); background: var(--fail-bg); }
+  .m-tiles a.bad b { color: var(--err); }
+  /* 清單：一列一份，整列可點 */
+  .m-list { list-style: none; margin: 0 -14px -6px; padding: 0; }
+  .m-list li > a { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-top: 1px solid #eef1f3;
+    text-decoration: none; color: var(--text); min-height: 64px; }
+  .m-list li > a:active { background: #f1f8f6; }
+  .m-list li.hint { padding: 12px 14px; }
+  .m-day { flex: none; width: 46px; text-align: center; display: flex; flex-direction: column; line-height: 1.15; }
+  .m-day b { font-size: 16px; }
+  .m-day small { color: var(--muted); font-size: 12px; }
+  .m-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .m-title { font-weight: 600; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .m-sub { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .m-list .badge { flex: none; }
+  .m-chev { flex: none; color: #9aa4ad; font-size: 22px; }
+  .card > h2:first-child { display: flex; align-items: baseline; gap: 4px; }
+
+  /* 檢查結果：精簡列，最多佔 60% 畫面高，內部捲動 */
+  table.issues { display: block; max-height: 60vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; }
+  table.issues tbody { display: block; }
+  table.issues tr:first-child { display: none; }
+  table.issues tr { display: block; padding: 8px 10px; border-bottom: 1px solid #eef1f3; }
+  table.issues td { display: inline; padding: 0; border: 0; font-size: 14px; }
+  table.issues td:nth-child(2) { color: var(--muted); font-size: 12.5px; margin-left: 4px; }
+  table.issues td:nth-child(3) { display: block; margin: 3px 0 2px; }
+  table.issues td:nth-child(4), table.issues td:nth-child(5) { color: var(--muted); font-size: 12.5px; margin-right: 6px; }
+  table.issues td:nth-child(6), table.issues td:nth-child(7) { display: block; color: var(--muted); font-size: 12.5px; }
+  table.issues td:nth-child(6):not(:empty)::before { content: "依據："; }
+  table.issues td:nth-child(7):not(:empty)::before { content: "實際："; }
+  table.list.cards td .badge, table.list.cards td .sev { justify-self: start; }
+  /* 流程：勾選框、步驟、訊息兩欄 */
+  section.flow .row-between h3 { margin: 0; }
+}
+/* 後台登入（手機）：logo、系統名稱在上，登入卡片，其餘介紹省略 */
+@media (max-width: 900px), (hover: none) and (pointer: coarse) {
+  body.admin-landing .landing-in { gap: 18px; }
+  body.admin-landing .login-card { order: 0; }
+  body.admin-landing .intro .lead, body.admin-landing .intro .points, body.admin-landing .intro .flow { display: none; }
+  body.admin-landing .intro-logo { width: 170px; margin-bottom: 10px; }
+  body.admin-landing .intro h1 { font-size: 24px; margin: 0; }
+}
+@media (min-width: 901px) and (hover: none) and (pointer: coarse) {
+  .container { max-width: 980px; }
+  .shot-grid { grid-template-columns: repeat(4, 1fr); }
+}

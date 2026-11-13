@@ -331,3 +331,110 @@ table.fs th, table.fs td:nth-child(n+3) { white-space: nowrap; }
 .input-suffix .suffix[hidden] { display: none; }
 .login-method { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; display: flex; gap: 18px; margin: 0; }
 .login-method legend { padding: 0 4px; color: var(--muted); font-size: .9em; }
+
+/* ---------- 前台登入頁（左：系統介紹，右：登入） ---------- */
+body.landing-page { min-height: 100vh; display: flex; flex-direction: column;
+  background:
+    radial-gradient(900px 520px at 8% -10%, rgba(11, 143, 135, .16), transparent 60%),
+    radial-gradient(760px 520px at 100% 0%, rgba(34, 211, 238, .13), transparent 58%),
+    radial-gradient(700px 520px at 85% 100%, rgba(99, 102, 241, .08), transparent 55%),
+    radial-gradient(640px 480px at 0% 100%, rgba(16, 185, 129, .08), transparent 55%),
+    var(--bg); }
+body.landing-page > main.container { flex: 1; display: flex; align-items: center; max-width: 1160px; width: 100%; box-sizing: border-box; }
+body.landing-page > main.container > .flash { display: none; } /* 訊息改顯示在登入卡片裡 */
+body.landing-page .site-footer { background: transparent; }
+.landing { width: 100%; }
+.landing-in { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(320px, 1fr); gap: 56px; align-items: center; padding: 32px 0; }
+.intro-logo { width: 300px; max-width: 70%; height: auto; display: block; margin-bottom: 26px; }
+.intro h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.15; margin: 0 0 14px; color: #0f172a; letter-spacing: .5px; }
+.intro .lead { font-size: 17px; color: var(--muted); margin: 0 0 26px; line-height: 1.8; }
+.points { list-style: none; padding: 0; margin: 0 0 30px; display: flex; flex-wrap: wrap; gap: 10px; }
+.points li { display: inline-flex; align-items: center; gap: 9px; background: #fff; border: 1px solid #e2e8e4;
+  border-radius: 999px; padding: 7px 15px 7px 8px; font-size: 14px; color: #1f2937; box-shadow: 0 2px 10px rgba(15, 23, 42, .06); }
+.points svg { width: 22px; height: 22px; padding: 4px; box-sizing: border-box; flex: none; color: #fff; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), #2cb5a8); box-shadow: 0 2px 6px rgba(11, 143, 135, .35); }
+.points b { font-weight: 700; color: #0f172a; }
+.intro .flow { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(6, 1fr); position: relative; }
+.intro .flow::before { content: ""; position: absolute; top: 15px; left: 8.33%; right: 8.33%; height: 2px;
+  background: linear-gradient(90deg, var(--accent), #22d3ee); opacity: .45; }
+.intro .flow li { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); text-align: center; }
+.intro .flow .n { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: #fff; border: 2px solid var(--accent); color: var(--accent-dark); font-weight: 700; font-size: 14px; z-index: 1; }
+.intro .flow li:last-child .n { background: var(--accent); color: #fff; }
+.login-card { background: rgba(255, 255, 255, .96); border: 1px solid #e2e8e4; border-radius: 16px; padding: 30px 30px 24px;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, .10), 0 2px 6px rgba(15, 23, 42, .05); display: flex; flex-direction: column; gap: 14px; }
+.login-card h2 { margin: 0; font-size: 24px; color: #0f172a; }
+.login-card .hint { margin: -6px 0 2px; }
+.login-card .hint.small { margin: 2px 0 0; font-size: 12.5px; text-align: center; }
+.login-card .flash { margin: 0; }
+.login-card label { display: flex; flex-direction: column; gap: 6px; font-weight: 600; font-size: 14px; }
+.login-card input { padding: 10px 12px; font-size: 15px; }
+.login-card .input-suffix .suffix { font-weight: 400; }
+.login-card button[type=submit] { padding: 11px; font-size: 16px; border-radius: 8px; margin-top: 4px;
+  box-shadow: 0 6px 16px rgba(11, 143, 135, .28); }
+@media (max-width: 900px) {
+  .landing-in { grid-template-columns: 1fr; gap: 28px; padding: 16px 0; }
+  .login-card { order: -1; }
+  .intro { text-align: center; }
+  .intro-logo { margin: 0 auto 18px; width: 220px; }
+  .points { justify-content: center; }
+}
+@media (max-width: 560px) {
+  .login-card { padding: 22px 18px 18px; }
+  .intro .flow { grid-template-columns: repeat(3, 1fr); row-gap: 16px; }
+  .intro .flow::before { display: none; }
+  .intro .lead { font-size: 15.5px; }
+}
+.mobile-only { display: none; }
+@media (max-width: 900px), (hover: none) and (pointer: coarse) { .mobile-only { display: block; } }
+.login-card h2 .tag { font-size: 12px; vertical-align: middle; background: #0f172a; color: #fff; border-radius: 999px; padding: 3px 10px; margin-left: 6px; letter-spacing: 1px; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; background: #eef2f1; border-radius: 10px; padding: 4px; gap: 4px; }
+.seg label { display: block; margin: 0; cursor: pointer; }
+.seg input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.seg span { display: block; text-align: center; padding: 8px 0; border-radius: 8px; font-weight: 600; font-size: 14px; color: var(--muted); }
+.seg input:checked + span { background: #fff; color: var(--accent-dark); box-shadow: 0 1px 4px rgba(15, 23, 42, .12); }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); }
+.admin-warn { margin: 2px 0 0; padding: 10px 12px; border-radius: 8px; background: #fff7e6; border: 1px solid #f0c36d; color: #6b4b00; font-size: 13px; line-height: 1.6; }
+
+/* ---------- 站內 PDF 檢視器 ---------- */
+body.pdfv-body { margin: 0; background: #525659; height: 100vh; height: 100dvh; overflow: hidden; }
+#pdfv { display: flex; flex-direction: column; height: 100%; }
+.pdfv-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; padding-top: max(8px, env(safe-area-inset-top));
+  background: var(--accent); color: #fff; flex: none; }
+.pdfv-back { color: #fff; text-decoration: none; font-size: 20px; padding: 4px 8px 4px 0; white-space: nowrap; }
+.pdfv-back span { font-size: 15px; }
+.pdfv-title { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.pdfv-title strong { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pdfv-title span { font-size: 12px; opacity: .85; }
+.pdfv-btn { min-width: 40px; height: 40px; border-radius: 8px; border: 0; background: rgba(255,255,255,.14); color: inherit;
+  font-size: 20px; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; padding: 0 8px; cursor: pointer; }
+.pdfv-btn.wide { min-width: 64px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.pdfv-main { flex: 1; min-height: 0; display: flex; position: relative; }
+.pdfv-scroll { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y; position: relative; }
+.pdfv-pages { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 10px 6px 24px; width: max-content; min-width: 100%; box-sizing: border-box; }
+.pdfv-page { background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.35); position: relative; flex: none; }
+.pdfv-page:not(.done)::after { content: attr(data-n); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #bbb; font-size: 28px; }
+.pdfv-page canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.pdfv-status { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,.7); color: #fff; padding: 12px 18px; border-radius: 10px; font-size: 15px; max-width: 80%; text-align: center; }
+.pdfv-status.err { background: #b42318; }
+.pdfv-toc { width: 300px; max-width: 85vw; background: #fff; overflow: auto; flex: none; border-right: 1px solid #333; }
+.pdfv-toc-head { position: sticky; top: 0; background: #fff; padding: 12px 14px; font-weight: 700; border-bottom: 1px solid var(--border); }
+.pdfv-toc ul { list-style: none; margin: 0; padding: 0; }
+.pdfv-toc ul ul { padding-left: 14px; }
+.pdfv-toc button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 10px 14px; font-size: 14px; color: var(--text); border-bottom: 1px solid #f0f0f0; cursor: pointer; font-family: inherit; }
+.pdfv-toc button:active, .pdfv-toc button:hover { background: #e7f5ef; }
+.pdfv-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px;
+  padding-bottom: max(8px, env(safe-area-inset-bottom)); background: #2f3133; color: #fff; flex: none; }
+.pdfv-pg, .pdfv-zoom { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+.pdfv-pg input { width: 3.4em; height: 36px; text-align: center; padding: 0 4px; font-size: 15px; border-radius: 6px; border: 0; }
+@media (max-width: 900px) { .pdfv-toc { position: absolute; z-index: 5; top: 0; bottom: 0; left: 0; box-shadow: 4px 0 18px rgba(0,0,0,.4); } }
+@media (max-width: 380px) { .pdfv-back span { display: none; } .pdfv-btn { min-width: 36px; } }
+#pdfv, .pdfv-main, .pdfv-scroll { min-width: 0; width: 100%; }
+.pdfv-main { overflow: hidden; }
+@media (max-width: 440px) {
+  .pdfv-tools { gap: 4px; padding-left: 6px; padding-right: 6px; }
+  .pdfv-tools [data-act=prev], .pdfv-tools [data-act=next] { display: none; }
+  .pdfv-btn { min-width: 38px; height: 38px; }
+  .pdfv-btn.wide { min-width: 58px; }
+}
+.pdfv-btn:hover, .pdfv-btn:focus { background: rgba(255,255,255,.24); color: #fff; }

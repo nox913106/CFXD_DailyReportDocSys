@@ -40,6 +40,50 @@
     });
   });
 
+  // ---------- 手機、平板 ----------
+  // 表格在窄螢幕改成卡片：每格前面顯示欄位名稱（從表頭自動帶入，不用逐頁改模板）
+  document.querySelectorAll("table.list:not(.kv):not(.no-cards)").forEach(function (t) {
+    var head = null;
+    Array.prototype.forEach.call(t.rows, function (tr) {
+      var cells = tr.cells;
+      if (!cells.length) return;
+      if (cells[0].tagName === "TH" && Array.prototype.every.call(cells, function (c) { return c.tagName === "TH"; })) {
+        head = Array.prototype.map.call(cells, function (c) { return c.textContent.trim(); });
+        tr.classList.add("thead-row");
+        return;
+      }
+      if (!head) return;
+      var col = 0;
+      Array.prototype.forEach.call(cells, function (c) {
+        if (head[col] && !c.hasAttribute("data-label") && (c.colSpan || 1) === 1) c.setAttribute("data-label", head[col]);
+        col += c.colSpan || 1;
+      });
+    });
+    if (head) t.classList.add("cards");
+  });
+  // 核准前確認、退回必填原因（手機上避免誤觸）
+  document.querySelectorAll("button[data-confirm], button[data-need-comment]").forEach(function (b) {
+    b.addEventListener("click", function (e) {
+      var need = b.getAttribute("data-need-comment");
+      if (need && b.form) {
+        var ta = b.form.querySelector("textarea[name=comment]");
+        if (ta && !ta.value.trim()) { e.preventDefault(); ta.focus(); ta.setAttribute("placeholder", need); ta.classList.add("need"); return; }
+      }
+      var msg = b.getAttribute("data-confirm");
+      if (msg && !window.confirm(msg)) e.preventDefault();
+    });
+  });
+  // 觸控裝置（平板橫放仍是電腦版面）：內嵌的 PDF 改用站內檢視器，iPad 的內建 PDF 只能看第一頁
+  if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) {
+    document.querySelectorAll("iframe[data-viewer]").forEach(function (f) { f.src = f.getAttribute("data-viewer"); });
+  }
+  // 選單：點外面或選了項目就收起
+  document.addEventListener("click", function (e) {
+    document.querySelectorAll("details.m-menu[open]").forEach(function (d) {
+      if (!d.contains(e.target) || e.target.tagName === "A") d.removeAttribute("open");
+    });
+  });
+
   // ---------- 可增減的記錄 / 表格列 ----------
 
   function cloneTemplate(tpl, container, index) {

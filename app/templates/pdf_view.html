@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>{{ report.doc_no }} {{ label }} - CFXD</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="pdfv-body">
+<div id="pdfv" data-src="{{ src }}" data-base="{{ url_for('static', filename='vendor/pdfjs/') }}">
+  {% if not request.args.get('embed') %}<header class="pdfv-bar">
+    <a class="pdfv-back" href="{{ back }}" aria-label="返回">‹ <span>返回</span></a>
+    <div class="pdfv-title"><strong>{{ report.doc_no }}</strong><span>{{ report.report_date }} · {{ label }}</span></div>
+    <a class="pdfv-btn" href="{{ download }}" aria-label="下載" title="下載">⤓</a>
+  </header>{% endif %}
+  <div class="pdfv-main">
+    <nav class="pdfv-toc" hidden><div class="pdfv-toc-head">目錄</div><div class="pdfv-toc-list"></div></nav>
+    <div class="pdfv-scroll"><div class="pdfv-pages"></div><div class="pdfv-status" hidden></div></div>
+  </div>
+  <footer class="pdfv-tools">
+    <button type="button" class="pdfv-btn" data-act="toc" aria-expanded="false" title="目錄">☰</button>
+    <span class="pdfv-pg">
+      <button type="button" class="pdfv-btn" data-act="prev" aria-label="上一頁">‹</button>
+      <input type="number" inputmode="numeric" min="1" value="1" data-page-now aria-label="頁碼"> / <span data-page-total>…</span>
+      <button type="button" class="pdfv-btn" data-act="next" aria-label="下一頁">›</button>
+    </span>
+    <span class="pdfv-zoom">
+      <button type="button" class="pdfv-btn" data-act="out" aria-label="縮小">−</button>
+      <button type="button" class="pdfv-btn wide" data-act="fit" title="符合寬度"><span data-zoom>100%</span></button>
+      <button type="button" class="pdfv-btn" data-act="in" aria-label="放大">＋</button>
+    </span>
+  </footer>
+</div>
+<script type="module" src="{{ url_for('static', filename='pdfview.js') }}"></script>
+</body>
+</html>

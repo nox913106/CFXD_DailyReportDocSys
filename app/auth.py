@@ -278,13 +278,25 @@ def login():
     return render_template("login.html", suffix=suffix)
 
 
+def _backoffice_ok(user):
+    from .models import REVIEWER_ROLES
+
+    return bool(user.is_admin or user.role in REVIEWER_ROLES)
+
+
+def _backoffice_home(user):
+    """本機緊急帳號 → 系統設定；其他管理員 → 日報清單（待審核在最上面）。"""
+    return url_for("settings.index") if user.role == "admin" else url_for("views.index")
+
+
 @bp.route("/admin", methods=["GET", "POST"], strict_slashes=False)
 def admin_login():
-    """後台登入：可選 AD 帳號或本機帳號；只有系統管理員能登入，登入後進入系統設定。"""
+    """後台登入：可選 AD 帳號或本機帳號；只限二線管理員以上（含檔案管理員、系統管理員）。
+    後台＝審核、結案、正式文件、系統設定等（手機、平板可操作）；撰寫日報在前台（電腦）。"""
     from flask_login import current_user
 
-    if request.method == "GET" and current_user.is_authenticated and current_user.is_admin:
-        return redirect(_next_url(default=url_for("settings.index")))
+    if request.method == "GET" and current_user.is_authenticated and _backoffice_ok(current_user):
+        return redirect(_next_url(default=_backoffice_home(current_user)))
     suffix = sysconf.login_suffix()
     method = request.form.get("method") or request.args.get("method") or "ad"
     if method not in ("ad", "local"):
@@ -295,13 +307,13 @@ def admin_login():
         user = None
         if username:
             user = _local_login(username, password) if method == "local" else _ad_login(username, password)
-        if user and user.is_admin:
+        if user and _backoffice_ok(user):
             _finish(user)
-            return redirect(_next_url(default=url_for("settings.index")))
-        if user:  # 帳密正確但不是系統管理員：不登入
+            return redirect(_next_url(default=_backoffice_home(user)))
+        if user:  # 帳密正確但不是二線以上：不登入
             db.session.rollback()
-            _fail_audit(username, f"後台登入（{'本機' if method == 'local' else 'AD'}）：沒有系統管理員權限")
-            flash("這個帳號沒有系統管理員權限，請由前台登入。", "error")
+            _fail_audit(username, f"後台登入（{'本機' if method == 'local' else 'AD'}）：不是管理員")
+            flash("後台只限管理員（二線管理員、檔案管理員、系統管理員）使用，請離開或改由前台登入。", "error")
         else:
             if username:
                 _fail_audit(username, f"後台登入（{'本機' if method == 'local' else 'AD'}）失敗")

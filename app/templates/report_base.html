@@ -34,5 +34,6 @@
   {% endfor %}
 </nav>
 {% if not report.editable %}<div class="flash">此日報為「{{ report.status_label }}」，僅供檢視。</div>{% endif %}
-{% block tab %}{% endblock %}
+<div class="m-only flash">手機、平板版不提供撰寫與編輯日報，請使用電腦。<a href="{{ url_for('views.detail', report_id=report.id) }}">檢視這份日報</a></div>
+<div class="desk-only-block">{% block tab %}{% endblock %}</div>
 {% endblock %}

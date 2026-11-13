@@ -10,9 +10,9 @@
     <span class="badge {{ report.status }}">{{ report.status_label }}</span>
   </div>
   <div class="actions">
-    {% if can.edit %}<a class="button secondary" href="{{ url_for('editors.basic', report_id=report.id) }}">編輯</a>{% endif %}
+    {% if can.edit %}<a class="button secondary desk-only" href="{{ url_for('editors.basic', report_id=report.id) }}">編輯</a>{% endif %}
     {% if can.submit %}
-    <form method="post" action="{{ url_for('views.submit', report_id=report.id) }}" class="inline"
+    <form method="post" action="{{ url_for('views.submit', report_id=report.id) }}" class="inline desk-only"
           onsubmit="return confirm('確定送出審核？送出後不能再修改。')">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit">送出審核</button>
@@ -20,19 +20,36 @@
     {% endif %}
     {% set fin = report.delivery if report.delivery and report.delivery.pdf_md5 else None %}
     {% if fin %}
-    <a class="button" href="{{ url_for('views.final_pdf', report_id=report.id, download=1) }}">下載正式 PDF</a>
+    <a class="button desk-only" href="{{ url_for('views.final_pdf', report_id=report.id, download=1) }}">下載正式 PDF</a>
     {% elif report.imported and report.original_xlsx %}
-    <a class="button secondary" href="{{ url_for('views.pdf', report_id=report.id) }}" target="_blank">開啟預覽</a>
+    <a class="button secondary desk-only" href="{{ url_for('views.pdf', report_id=report.id) }}" target="_blank">開啟預覽</a>
     <span class="hint">正式 PDF 產生中</span>
     {% elif report.imported %}
     <span class="hint">舊版匯入沒有保存原始 Excel，無法產生 PDF</span>
     {% elif report.status == 'closed' %}
     <span class="hint">正式 PDF 產生中</span>
     {% else %}
-    <a class="button secondary" href="{{ url_for('views.pdf', report_id=report.id) }}" target="_blank">開啟預覽</a>
+    <a class="button secondary desk-only" href="{{ url_for('views.pdf', report_id=report.id) }}" target="_blank">開啟預覽</a>
     {% endif %}
   </div>
 </div>
+{% set fin = report.delivery if report.delivery and report.delivery.pdf_md5 else None %}
+{% set has_preview = not fin and ((report.imported and report.original_xlsx) or (not report.imported and report.status != 'closed')) %}
+<section class="card m-summary m-only">
+  <div class="m-doc">{{ report.doc_no }}</div>
+  <div class="m-date">{{ report.report_date }}（{{ ['一','二','三','四','五','六','日'][report.report_date.weekday()] }}）
+    <span class="badge {{ report.status }}">{{ report.status_label }}</span></div>
+  <dl>
+    <dt>撰寫人</dt><dd>{{ report.author_name }}</dd>
+    <dt>核准人</dt><dd>{{ report.approver_name or '（未指定）' }}</dd>
+    {% if report.submitted_at %}<dt>送審</dt><dd>{{ report.submitted_at.strftime('%m-%d %H:%M') }}</dd>{% endif %}
+  </dl>
+  {% if fin %}
+  <a class="button m-big" href="{{ url_for('views.pdf_view', report_id=report.id, kind='final') }}">檢視正式 PDF</a>
+  {% elif has_preview %}
+  <a class="button m-big" href="{{ url_for('views.pdf_view', report_id=report.id) }}">檢視 PDF 預覽</a>
+  {% elif report.status == 'closed' %}<p class="hint">正式 PDF 產生中。</p>{% endif %}
+</section>
 {% if fin %}
 <div class="card no-print">正式 PDF：<strong>{{ fin.pdf_name }}</strong>（{{ '%.1f'|format(fin.pdf_size / 1e6) }} MB）
   <div class="hint">MD5 <code>{{ fin.pdf_md5 }}</code> · SHA-256 <code>{{ fin.pdf_sha256 }}</code></div></div>
@@ -94,24 +111,24 @@
 </details>
 {% endif %}
 {% if can_review %}
-<form method="post" action="{{ url_for('views.review', report_id=report.id) }}" class="card review no-print" id="review-form">
+<form method="post" action="{{ url_for('views.review', report_id=report.id) }}" class="card review no-print m-dock" id="review-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <h3>審核{% if principal %}（代 {{ principal.name }} 簽核）{% endif %}</h3>
   {% if principal %}
-  <p class="flash">您是 {{ principal.name }} 的代簽人。核准後文件上的 Approval / Document Approved 會顯示
+  <p class="flash desk-only">您是 {{ principal.name }} 的代簽人。核准後文件上的 Approval / Document Approved 會顯示
     <strong>{{ principal.name }}</strong>，系統另外記錄由您代簽。</p>
   {% endif %}
-  <label>意見（退回時必填）<textarea name="comment" rows="2"></textarea></label>
+  <label>意見（退回時必填）<textarea name="comment" rows="2" placeholder="意見（退回時必填）"></textarea></label>
   <div class="actions">
-    <button type="submit" name="action" value="approve">{{ '代簽核准' if principal else '核准' }}</button>
-    <button type="submit" name="action" value="reject" class="danger">退回</button>
+    <button type="submit" name="action" value="reject" class="danger" data-need-comment="退回請填寫原因">退回</button>
+    <button type="submit" name="action" value="approve" data-confirm="確定{{ '代 ' ~ principal.name ~ ' 簽核' if principal else '' }}核准 {{ report.doc_no }}？">{{ '代簽核准' if principal else '核准' }}</button>
   </div>
 </form>
 {% endif %}
 {% if can.close or can.return %}
-<div class="card no-print">
+<div class="card no-print m-dock close-card">
   <h3>結案</h3>
-  <p>已核准。請在下方預覽確認內容與排版沒有異常，再按「結案」。結案後立即鎖檔，
+  <p class="desk-only">已核准。請在下方預覽確認內容與排版沒有異常，再按「結案」。結案後立即鎖檔，
     1 分鐘後產生正式 PDF（只產生這一次）、上傳 SharePoint 並寄出日報 Mail；之後只有檔案管理員能在發送開始前取消。</p>
   <div class="actions">
     {% if can.close %}
@@ -187,13 +204,15 @@
 {% endif %}
 
 {% if fin %}
-<p class="hint no-print">{% if report.imported %}以下為正式 PDF（封面 + 原始 Excel 的 CheckList，匯入後產生一次並凍結）。{% else %}以下為正式 PDF（結案後產生，與上傳 SharePoint、寄出的日報 Mail 附的是同一份檔案）。{% endif %}</p>
-<iframe class="pdf-view" src="{{ url_for('views.final_pdf', report_id=report.id) }}" title="{{ report.doc_no }} PDF"></iframe>
+<p class="hint no-print desk-only">{% if report.imported %}以下為正式 PDF（封面 + 原始 Excel 的 CheckList，匯入後產生一次並凍結）。{% else %}以下為正式 PDF（結案後產生，與上傳 SharePoint、寄出的日報 Mail 附的是同一份檔案）。{% endif %}</p>
+<p class="desk-only"><a href="{{ url_for('views.pdf_view', report_id=report.id, kind='final') }}">全螢幕檢視</a></p>
+<iframe class="pdf-view desk-only" src="{{ url_for('views.final_pdf', report_id=report.id) }}" data-viewer="{{ url_for('views.pdf_view', report_id=report.id, kind='final', embed=1) }}" title="{{ report.doc_no }} PDF"></iframe>
 {% elif report.imported and report.original_xlsx %}
 <p class="hint no-print">正式 PDF（封面 + 原始 Excel 的 CheckList）由維護服務產生中，完成後會顯示在這裡；這段時間可以按上方「開啟預覽」先看（有 PREVIEW 浮水印）。</p>
 {% elif report.status != 'closed' %}
-<p class="hint no-print">以下為預覽（每頁有 PREVIEW 浮水印，內容即時產生，首次約需 20 秒）。正式 PDF 只在結案後產生。</p>
-<iframe class="pdf-view" src="{{ url_for('views.pdf', report_id=report.id) }}" title="{{ report.doc_no }} 預覽"></iframe>
+<p class="hint no-print desk-only">以下為預覽（每頁有 PREVIEW 浮水印，內容即時產生，首次約需 20 秒）。正式 PDF 只在結案後產生。</p>
+<p class="desk-only"><a href="{{ url_for('views.pdf_view', report_id=report.id) }}">全螢幕檢視</a></p>
+<iframe class="pdf-view desk-only" src="{{ url_for('views.pdf', report_id=report.id) }}" data-viewer="{{ url_for('views.pdf_view', report_id=report.id, embed=1) }}" title="{{ report.doc_no }} 預覽"></iframe>
 {% endif %}
 
 <section class="card no-print flow" id="flow">

@@ -92,7 +92,7 @@
 <section class="card">
   <h3>權限說明</h3>
   <div class="tablewrap">
-  <div class="table-scroll"><table class="list perm-matrix">
+  <div class="table-scroll"><table class="list perm-matrix no-cards">
     <tr><th>動作</th>{% for key, label in matrix_roles %}<th class="center">{{ label }}</th>{% endfor %}</tr>
     {% for group, rows in matrix %}
     <tr class="group"><td colspan="{{ matrix_roles|length + 1 }}">{{ group }}</td></tr>
