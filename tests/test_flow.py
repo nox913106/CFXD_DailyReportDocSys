@@ -524,8 +524,17 @@ def test_local_admin(app):
 
     b = Browser(app)
     b.get("/login")
-    assert "帳號或密碼錯誤" in b.post("/login", {"username": "sysadmin", "password": "wrong"})  # dev 模式也要驗證本機密碼
-    html = b.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
+    # 前台不接受本機帳號（密碼正確也一樣），並記稽核
+    assert "帳號或密碼錯誤" in b.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
+    assert "/admin/settings" not in b.c.get("/").headers.get("Location", "")
+    # 後台：選錯方式（AD）不能用本機帳號；密碼錯誤也不行（dev 模式也要驗證本機密碼）
+    assert "帳號或密碼錯誤" in b.post("/admin", {"method": "ad", "username": "sysadmin", "password": "a-very-long-pass"})
+    assert "帳號或密碼錯誤" in b.post("/admin", {"method": "local", "username": "sysadmin", "password": "wrong"})
+    with app.app_context():
+        from app.models import AuditLog
+
+        assert AuditLog.query.filter_by(action="login_fail").count() == 3
+    html = b.post("/admin", {"method": "local", "username": "sysadmin", "password": "a-very-long-pass"})
     assert "系統管理員" in html and "系統設定" in html
 
     other = Browser(app)
@@ -626,7 +635,7 @@ def test_create_admin_rename_from(app):
     # 已登入過的帳號不能被改名
     b = Browser(app)
     b.get("/login")
-    b.post("/login", {"username": "ops.admin", "password": "my-own-password"})
+    b.post("/admin", {"method": "local", "username": "ops.admin", "password": "my-own-password"})
     res = runner.invoke(args=["create-admin", "--username", "third", "--rename-from", "ops.admin", "--password", "my-own-password"])
     assert res.exit_code != 0 and "不能改名" in res.output
 
@@ -1031,7 +1040,7 @@ def test_settings_page_and_admin_assignment(app):
     assert runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "a-very-long-pass"]).exit_code == 0
     root, bob, carl = Browser(app), Browser(app), Browser(app)
     root.get("/login")
-    root.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
+    root.post("/admin", {"method": "local", "username": "sysadmin", "password": "a-very-long-pass"})
     bob.login("bob")
     carl.login("carl")
     bob.get("/admin/settings/", status=403)
@@ -1118,7 +1127,7 @@ def _admin_browser(app):
     assert runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "a-very-long-pass"]).exit_code == 0
     b = Browser(app)
     b.get("/login")
-    b.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
+    b.post("/admin", {"method": "local", "username": "sysadmin", "password": "a-very-long-pass"})
     return b
 
 
@@ -1277,7 +1286,7 @@ def test_admin_ldap_and_local_accounts(app):
     assert "已更新 breakglass" in b.post(f"/admin/settings/local/{bg}/password", {"password": "q" * 13, "password2": "q" * 13})
     nb = Browser(app)
     nb.get("/login")
-    assert "系統設定" in nb.post("/login", {"username": "breakglass", "password": "q" * 13})
+    assert "系統設定" in nb.post("/admin", {"method": "local", "username": "breakglass", "password": "q" * 13})
     assert "不能停用自己" in b.post(f"/admin/settings/local/{me}/disable")
     assert "已停用 breakglass" in b.post(f"/admin/settings/local/{bg}/disable")
     with app.app_context():
@@ -2123,7 +2132,7 @@ def test_permission_matrix_matches_code(app):
     runner = app.test_cli_runner()
     runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "a-very-long-pass"])
     root.get("/login")
-    root.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
+    root.post("/admin", {"method": "local", "username": "sysadmin", "password": "a-very-long-pass"})
     html = root.get("/admin/users")
     assert "perm-matrix" in html and html.count("✔") > 20 and "✔*" in html and "不受職責分離限制" in html
 
@@ -2174,7 +2183,7 @@ def test_admin_manages_delegations(app):
     runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "a-very-long-pass"])
     root, boss, sl = Browser(app), Browser(app), Browser(app)
     root.get("/login")
-    root.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
+    root.post("/admin", {"method": "local", "username": "sysadmin", "password": "a-very-long-pass"})
     boss.login("boss")
     sl.login("sam")
     boss_id = set_role(app, "boss", "file_manager")
@@ -2244,7 +2253,7 @@ def test_internal_teams_and_customer_mail_templates(app, monkeypatch):
     runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "a-very-long-pass"])
     root = Browser(app)
     root.get("/login")
-    root.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
+    root.post("/admin", {"method": "local", "username": "sysadmin", "password": "a-very-long-pass"})
     html = root.get("/admin/settings/delivery")
     assert "內部通知（Microsoft Teams）" in html and "日報 Mail（正式寄送）" in html
     assert "reminder_sender" not in html and "logic.azure.com/…（已設定）" in html
@@ -2356,7 +2365,7 @@ def test_status_change_and_health_push_to_teams(app, monkeypatch):
     runner.invoke(args=["create-admin", "--username", "sysadmin", "--password", "a-very-long-pass"])
     root = Browser(app)
     root.get("/login")
-    root.post("/login", {"username": "sysadmin", "password": "a-very-long-pass"})
+    root.post("/admin", {"method": "local", "username": "sysadmin", "password": "a-very-long-pass"})
     html = root.get("/admin/settings/")
     assert "需要處理的項目" in html and "sev-alert" in html and "91.0%" in html
     assert "需要處理的項目（" in root.get("/") or "告警 磁碟" in root.get("/")
@@ -2460,3 +2469,57 @@ def test_sysinfo_page(app):
     assert data["hardware"] and data["os"] and "all_system_packages" in data
     with app.app_context():
         assert AuditLog.query.filter_by(action="sysinfo_export").count() == 1
+
+
+def test_login_suffix_and_admin_login(app):
+    """前台帳號欄顯示 @後綴、輸入完整帳號自動去掉；/admin 後台登入可選 AD 或本機，只限系統管理員；
+    未登入開 /admin/... 會到後台登入頁。"""
+    from app import db, sysconf
+    from app.models import User
+
+    with app.app_context():
+        sysconf.put("ad_domain", "corp.example.tw")
+        db.session.commit()
+    b = Browser(app)
+    html = b.get("/login")
+    assert "@corp.example.tw" in html and "data-strip-domain" in html
+    with app.app_context():
+        sysconf.put("login_suffix", "@RallyTech.com.tw")
+        db.session.commit()
+        assert sysconf.login_suffix() == "rallytech.com.tw"
+    assert "@rallytech.com.tw" in b.get("/login")
+    b.post("/login", {"username": "  Mike.Lin@rallytech.com.tw ", "password": "x"})
+    with app.app_context():
+        assert User.query.filter_by(username="mike.lin").one()
+    b.c.get("/logout")
+    b.get("/login")
+    b.post("/login", {"username": "RALLY\\mike.lin", "password": "x"})
+    with app.app_context():
+        assert User.query.filter(User.username.like("%mike%")).count() == 1
+
+    # 未登入開後台頁面 -> 後台登入頁（帶 next）
+    anon = Browser(app)
+    r = anon.c.get("/admin/settings/sysinfo")
+    assert r.status_code == 302 and "/admin?next=" in r.headers["Location"]
+    assert "/login" in anon.c.get("/reports/1").headers["Location"]
+    html = anon.get("/admin")
+    assert "後台登入" in html and 'value="local"' in html and 'value="ad"' in html
+
+    # 非系統管理員的 AD 帳號不能進後台，也不會被登入
+    nb = Browser(app)
+    nb.get("/admin")
+    assert "沒有系統管理員權限" in nb.post("/admin", {"method": "ad", "username": "nina", "password": "x"})
+    assert nb.c.get("/").status_code == 302
+    # 被指派系統管理員的 AD 帳號可以用 AD 方式登入後台，回到 next
+    with app.app_context():
+        u = User(username="opsad", display_name="Ops")
+        u.set_role("second_line")
+        u.sys_admin = True
+        db.session.add(u)
+        db.session.commit()
+    ad = Browser(app)
+    ad.get("/admin")
+    r = ad.c.post("/admin?next=/admin/settings/sysinfo", data={"csrf_token": ad.tok, "method": "ad",
+                                                               "username": "opsad@rallytech.com.tw", "password": "x"})
+    assert r.status_code == 302 and r.headers["Location"].endswith("/admin/settings/sysinfo")
+    assert ad.c.get("/admin").headers["Location"].endswith("/admin/settings/")

@@ -85,6 +85,17 @@ def create_app():
     csrf.init_app(app)
     login_manager.init_app(app)
 
+    @login_manager.unauthorized_handler
+    def _unauthorized():
+        # 後台（/admin/...）未登入時到後台登入頁，其餘到前台登入頁
+        from flask import flash, redirect, request, url_for
+
+        target = "auth.admin_login" if request.path.startswith("/admin") else "auth.login"
+        if target == "auth.login":
+            flash(login_manager.login_message, login_manager.login_message_category)
+        nxt = request.full_path.rstrip("?") if request.method == "GET" else None
+        return redirect(url_for(target, next=nxt) if nxt else url_for(target))
+
     from . import models
     from .auth import bp as auth_bp
     from .editors import bp as editors_bp

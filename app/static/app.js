@@ -15,6 +15,31 @@
     });
   }
 
+  // ---------- 登入：帳號欄只留帳號（輸入 user@網域、DOMAIN\user 時自動去掉網域）；後台登入方式切換提示 ----------
+  function stripDomain(v) {
+    v = v.replace(/^.*\\/, "");
+    var at = v.indexOf("@");
+    return at >= 0 ? v.slice(0, at) : v;
+  }
+  document.querySelectorAll("input[data-strip-domain]").forEach(function (inp) {
+    function fix() {
+      var v = stripDomain(inp.value);
+      if (v !== inp.value) inp.value = v;
+    }
+    inp.addEventListener("input", function () { if (/[@\\]/.test(inp.value)) fix(); });
+    inp.addEventListener("blur", fix);
+    if (inp.form) inp.form.addEventListener("submit", fix);
+  });
+  document.querySelectorAll("input[data-login-method]").forEach(function (r) {
+    r.addEventListener("change", function () {
+      document.querySelectorAll("[data-method-hint]").forEach(function (h) {
+        h.hidden = h.getAttribute("data-method-hint") !== r.value;
+      });
+      var sfx = document.querySelector(".input-suffix .suffix");
+      if (sfx) sfx.hidden = r.value === "local";
+    });
+  });
+
   // ---------- 可增減的記錄 / 表格列 ----------
 
   function cloneTemplate(tpl, container, index) {

@@ -1,0 +1,8 @@
+{# 帳號欄：後面固定顯示 @後綴；輸入 user@網域 或 DOMAIN\user 時自動只留帳號 #}
+<label>帳號
+  <span class="input-suffix">
+    <input name="username" autocomplete="username" required autofocus autocapitalize="none" spellcheck="false"
+           data-strip-domain value="{{ request.form.get('username', '') }}">
+    {% if suffix %}<span class="suffix" {{ 'hidden' if method == 'local' }}>@{{ suffix }}</span>{% endif %}
+  </span>
+</label>

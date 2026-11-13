@@ -69,7 +69,7 @@
     {% endif %}
     <tr><td>{{ l.created_at.strftime('%H:%M:%S') }}</td>
       <td>{{ audit_labels.get(l.action, l.action) }}</td>
-      <td>{{ l.actor.name if l.actor else '指令' }}</td><td>{{ l.target }}</td><td>{{ l.detail }}</td></tr>
+      <td>{{ l.actor.name if l.actor else ('（未登入）' if l.action == 'login_fail' else '指令') }}</td><td>{{ l.target }}</td><td>{{ l.detail }}</td></tr>
     {% else %}<tr><td colspan="5" class="hint">這個條件沒有稽核紀錄。</td></tr>{% endfor %}
   </table></div>
   {% if pages > 1 %}

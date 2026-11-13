@@ -90,6 +90,7 @@ def _ldap_from_form():
     for k in ("ldap_required_group",):
         c[k] = "\n".join(sysconf.group_list(f.get(k, "")))
     c["ldap_timeout"] = _int("ldap_timeout", 1, 60, 5)
+    c["login_suffix"] = f.get("login_suffix", "").strip().lstrip("@").lower()
     pem = f.get("ldap_ca_pem", "").strip()
     if f.get("clear_ca") == "1":
         pem = ""
@@ -103,6 +104,8 @@ def _ldap_from_form():
 
 
 def _check_ldap(c):
+    if c.get("login_suffix") and not re.match(r"^[a-z0-9.-]+\.[a-z]{2,}$", c["login_suffix"]):
+        return f"登入頁帳號後綴「{c['login_suffix']}」格式不對，例如 corp.com.tw"
     for url in sysconf.url_list(c["ldap_url"]):
         if not re.match(r"^ldaps?://[^/\s]+$", url, re.I):
             return f"伺服器網址「{url}」格式應為 ldaps://dc01.corp.local:636（多台時一行一台）"
@@ -533,7 +536,7 @@ AUDIT_LABELS = {"delete_report": "刪除日報", "set_role": "變更角色", "se
                 "ai_provider_add": "新增 AI 服務", "ai_provider_edit": "修改 AI 服務", "ai_provider_delete": "刪除 AI 服務",
                 "sys_settings": "系統設定", "local_account": "本機緊急帳號", "backup": "備份", "restore": "還原",
                 "delegation": "代理權限", "checklist_items": "檢查項目", "import_report": "匯入歷史日報",
-                "delete_auth_fail": "刪除身分確認失敗",
+                "delete_auth_fail": "刪除身分確認失敗", "login_fail": "登入失敗",
                 "audit_export": "匯出稽核紀錄", "sysinfo_export": "下載系統資訊", "audit_retention": "稽核保存天數", "audit_purge": "清除過期稽核紀錄"}
 
 

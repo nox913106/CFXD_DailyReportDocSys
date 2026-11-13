@@ -315,13 +315,13 @@ def python_packages():
     req = _requirements()
     rows, seen = [], set()
     for dist in md.distributions():
-        name = dist.metadata["Name"] or "?"
+        name = dist.metadata.get("Name") or "?"
         key = _norm(name)
         if key in seen:
             continue
         seen.add(key)
         want = req.get(key)
-        rows.append({"name": name, "version": dist.version, "summary": (dist.metadata["Summary"] or "")[:120],
+        rows.append({"name": name, "version": dist.version, "summary": (dist.metadata.get("Summary") or "")[:120],
                      "license": _license(dist), "direct": key in req, "required": want,
                      "mismatch": bool(want and want != dist.version)})
     for key, want in req.items():

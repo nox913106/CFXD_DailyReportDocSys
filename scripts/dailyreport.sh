@@ -240,7 +240,7 @@ apply_options() {  # install 帶入的 AD 選項寫進資料庫（與系統設�
   done
   (( n )) && info "AD 設定已寫入系統設定（$n 項）"
   if [[ "$(flask_app config-get ldap_url 2>/dev/null | tail -n1)" == "" ]]; then
-    warn "尚未設定 AD：AD 帳號暫時無法登入。用本機緊急帳號登入後，在「系統設定 → AD 驗證」設定。"
+    warn "尚未設定 AD：AD 帳號暫時無法登入。用本機緊急帳號從 https://主機/admin 登入後，在「系統設定 → AD 驗證」設定。"
   fi
   return 0
 }
@@ -497,6 +497,7 @@ cmd_install() {
   echo
   echo "${G}${B}安裝完成${N}（$(( SECONDS - t0 )) 秒）"
   echo "  網址：${B}$scheme://$HOST/${N}$([[ "$TLS" == self-signed ]] && echo "（自簽憑證，瀏覽器第一次會警告）")"
+  echo "  後台：${B}$scheme://$HOST/admin${N}（本機緊急帳號只能從這裡登入）"
   if [[ -n "${ADMIN_PW:-}" ]]; then
     echo "  本機緊急帳號：${B}$ADMIN_USER${N}  密碼：${B}$ADMIN_PW${N}"
     echo "  ${D}（只顯示這一次；也存在 $ETC/.admin-initial-password，記下後可刪除）${N}"

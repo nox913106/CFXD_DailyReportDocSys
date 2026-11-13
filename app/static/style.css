@@ -321,3 +321,13 @@ table.list.compact td { padding-top: 2px; padding-bottom: 2px; }
 .sysinfo-ok, span.ok { color: var(--ok); font-weight: bold; }
 span.bad { color: var(--err); font-weight: bold; }
 table.fs th, table.fs td:nth-child(n+3) { white-space: nowrap; }
+
+/* 登入：帳號欄後綴、後台登入方式 */
+.input-suffix { display: flex; align-items: stretch; }
+.input-suffix input { flex: 1 1 auto; min-width: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.input-suffix .suffix { display: flex; align-items: center; padding: 0 10px; border: 1px solid var(--border); border-left: 0;
+  border-radius: 0 6px 6px 0; background: var(--bg); color: var(--muted); white-space: nowrap; font-size: .95em; }
+.input-suffix input:only-child, .input-suffix:has(.suffix[hidden]) input { border-radius: 6px; }
+.input-suffix .suffix[hidden] { display: none; }
+.login-method { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; display: flex; gap: 18px; margin: 0; }
+.login-method legend { padding: 0 4px; color: var(--muted); font-size: .9em; }

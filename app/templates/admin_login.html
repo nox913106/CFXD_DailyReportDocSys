@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}後台登入 - CFXD 日報系統{% endblock %}
+{% block content %}
+<form method="post" class="card login" action="{{ url_for('auth.admin_login', next=request.args.get('next')) if request.args.get('next') else url_for('auth.admin_login') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <h1>後台登入</h1>
+  <p class="hint">只有系統管理員可以登入後台。</p>
+  <fieldset class="login-method">
+    <legend>登入方式</legend>
+    <label class="inline"><input type="radio" name="method" value="ad" {{ 'checked' if method == 'ad' }} data-login-method> AD 帳號</label>
+    <label class="inline"><input type="radio" name="method" value="local" {{ 'checked' if method == 'local' }} data-login-method> 本機帳號</label>
+  </fieldset>
+  {% include "_login_user.html" %}
+  <label>密碼<input name="password" type="password" autocomplete="current-password" required></label>
+  <button type="submit">登入後台</button>
+  <p class="hint" data-method-hint="ad" {{ 'hidden' if method != 'ad' }}>被指派系統管理員權限的 AD 帳號。</p>
+  <p class="hint" data-method-hint="local" {{ 'hidden' if method != 'local' }}>本機緊急帳號：AD 無法使用時仍可登入；不能從前台登入。</p>
+  <p class="hint"><a href="{{ url_for('auth.login') }}">← 前台登入</a></p>
+</form>
+{% endblock %}

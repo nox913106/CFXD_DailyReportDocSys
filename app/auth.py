@@ -184,7 +184,7 @@ def _tls_hint(e):
 def verify_password(username, password):
     """重新確認身分（刪除正式文件等高風險操作）：本機帳號比對本機密碼，其他用 AD 驗證。
     回傳 User 或 None。不登入、不改 session。"""
-    username = (username or "").strip().split("\\")[-1].split("@")[0].lower()
+    username = clean_username(username)
     if not username or not password:
         return None
     user = User.query.filter_by(username=username).first()
@@ -197,62 +197,123 @@ def verify_password(username, password):
     return user if ad_authenticate(username, password) else None
 
 
-def _next_url():
+def _next_url(default=None):
     next_url = request.args.get("next", "")
     # 只允許站內相對路徑，避免開放式重新導向
-    if not next_url.startswith("/") or next_url.startswith("//"):
-        next_url = url_for("views.index")
+    if not next_url.startswith("/") or next_url.startswith("//") or next_url.startswith("/\\"):
+        next_url = default or url_for("views.index")
     return next_url
+
+
+def clean_username(raw):
+    """接受 user、user@網域、DOMAIN\\user，統一成 sAMAccountName（小寫）。"""
+    return (raw or "").strip().split("\\")[-1].split("@")[0].strip().lower()
+
+
+def _fail_audit(username, why):
+    from .models import AuditLog
+
+    db.session.add(AuditLog(action="login_fail", actor_id=None, target=username[:128],
+                            detail=f"{why}；來源 {request.remote_addr or '?'}"[:500]))
+    db.session.commit()
+
+
+def _local_login(username, password):
+    """本機帳號（系統管理員緊急帳號）：不經 AD，只比對本機密碼。只能從後台登入頁使用。"""
+    user = User.query.filter_by(username=username).first()
+    if user is None or not user.password_hash or not password or not check_password_hash(user.password_hash, password):
+        return None
+    current_app.logger.warning("本機帳號 %s 登入（後台）", username)
+    return user
+
+
+def _ad_login(username, password):
+    """AD 帳號：以本人帳密 bind AD；首次登入建立帳號（訪客）。本機帳號不接受 AD 登入。"""
+    existing = User.query.filter_by(username=username).first()
+    if existing is not None and existing.password_hash:
+        return None
+    if current_app.config["AUTH_MODE"] == "dev":
+        result = (username, None) if username and password else None
+    else:
+        result = ad_authenticate(username, password)
+    if not result:
+        return None
+    display_name, email = result
+    user = existing
+    if not user:
+        # 首次登入：AD 帳號一律為訪客（只能看歡迎頁，等系統管理員在「帳號管理」設定角色）。
+        # 開發模式沿用一線使用者。之後角色一律由系統管理員設定，登入時不再變更。
+        user = User(username=username)
+        user.set_role("first_line" if current_app.config["AUTH_MODE"] == "dev" else "guest")
+        db.session.add(user)
+    user.display_name = display_name
+    user.email = email
+    return user
+
+
+def _finish(user):
+    user.last_login = datetime.now()
+    db.session.commit()
+    login_user(user)
+
+
+FAIL = "帳號或密碼錯誤，或您沒有使用此系統的權限。"
 
 
 @bp.route("/login", methods=["GET", "POST"])
 def login():
+    """前台登入：只接受公司 AD 帳號；本機帳號一律拒絕（請由後台 /admin 登入）。"""
+    suffix = sysconf.login_suffix()
     if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        # 接受 DOMAIN\user 或 user@domain，統一成 sAMAccountName
-        username = username.split("\\")[-1].split("@")[0].lower()
-        password = request.form.get("password", "")
-
-        local = User.query.filter_by(username=username).first()
-        if local is not None and local.password_hash:
-            # 本機帳號（系統管理員）：不經 AD，只比對本機密碼
-            if password and check_password_hash(local.password_hash, password):
-                local.last_login = datetime.now()
-                db.session.commit()
-                login_user(local)
-                current_app.logger.warning("本機帳號 %s 登入", username)
-                return redirect(_next_url())
-            flash("帳號或密碼錯誤，或您沒有使用此系統的權限。", "error")
-            return render_template("login.html")
-
-        if current_app.config["AUTH_MODE"] == "dev":
-            result = (username, None) if username else None
-        else:
-            result = ad_authenticate(username, password)
-
-        if result:
-            display_name, email = result
-            user = User.query.filter_by(username=username).first()
-            if not user:
-                # 首次登入：AD 帳號一律為訪客（只能看歡迎頁，等系統管理員在「帳號管理」設定角色）。
-                # 開發模式沿用一線使用者。之後角色一律由系統管理員設定，登入時不再變更。
-                user = User(username=username)
-                user.set_role("first_line" if current_app.config["AUTH_MODE"] == "dev" else "guest")
-                db.session.add(user)
-            user.display_name = display_name
-            user.email = email
-            user.last_login = datetime.now()
-            db.session.commit()
-            login_user(user)
+        username = clean_username(request.form.get("username"))
+        user = _ad_login(username, request.form.get("password", "")) if username else None
+        if user:
+            _finish(user)
             return redirect(_next_url())
+        local = User.query.filter_by(username=username).first() if username else None
+        if local is not None and local.password_hash:
+            current_app.logger.warning("本機帳號 %s 嘗試從前台登入，已拒絕", username)
+            _fail_audit(username, "本機帳號不能從前台登入")
+        flash(FAIL, "error")
+    return render_template("login.html", suffix=suffix)
 
-        flash("帳號或密碼錯誤，或您沒有使用此系統的權限。", "error")
 
-    return render_template("login.html")
+@bp.route("/admin", methods=["GET", "POST"], strict_slashes=False)
+def admin_login():
+    """後台登入：可選 AD 帳號或本機帳號；只有系統管理員能登入，登入後進入系統設定。"""
+    from flask_login import current_user
+
+    if request.method == "GET" and current_user.is_authenticated and current_user.is_admin:
+        return redirect(_next_url(default=url_for("settings.index")))
+    suffix = sysconf.login_suffix()
+    method = request.form.get("method") or request.args.get("method") or "ad"
+    if method not in ("ad", "local"):
+        method = "ad"
+    if request.method == "POST":
+        username = clean_username(request.form.get("username"))
+        password = request.form.get("password", "")
+        user = None
+        if username:
+            user = _local_login(username, password) if method == "local" else _ad_login(username, password)
+        if user and user.is_admin:
+            _finish(user)
+            return redirect(_next_url(default=url_for("settings.index")))
+        if user:  # 帳密正確但不是系統管理員：不登入
+            db.session.rollback()
+            _fail_audit(username, f"後台登入（{'本機' if method == 'local' else 'AD'}）：沒有系統管理員權限")
+            flash("這個帳號沒有系統管理員權限，請由前台登入。", "error")
+        else:
+            if username:
+                _fail_audit(username, f"後台登入（{'本機' if method == 'local' else 'AD'}）失敗")
+            flash("帳號或密碼錯誤。", "error")
+    return render_template("admin_login.html", suffix=suffix, method=method)
 
 
 @bp.route("/logout")
 @login_required
 def logout():
+    from flask_login import current_user
+
+    local = bool(current_user.password_hash)
     logout_user()
-    return redirect(url_for("auth.login"))
+    return redirect(url_for("auth.admin_login" if local else "auth.login"))
