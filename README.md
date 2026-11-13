@@ -239,6 +239,7 @@ sudo -u dailyreport /opt/dailyreport/.venv/bin/flask --app wsgi create-admin --u
 | HTTPS 憑證 | 目前憑證與到期日；上傳公司 CA 憑證（檢查格式、配對、期限後由主機套用到 nginx，失敗自動還原）；改回自簽 |
 | 發送與通知 | 結案後自動發送的開關；Microsoft 365 應用程式（租用戶 ID、應用程式 ID、用戶端密碼，加密保存）；SharePoint 網站、文件庫、資料夾（`{yyyy}/{mm}/{dd}`）與分享連結類型；**日報 Mail**（寄件信箱、收件人、副本、今日紀錄及狀態追蹤檔的檔名、網站、文件庫與資料夾（檔名可用 `{month_range}`，模版用 `{tracking_link}` / `{tracking_name}`）、主旨與 HTML 內容模版（字型與段距用 inline style，Graph 寄出的信不套 Outlook 預設樣式），可用範例資料寄測試信）；**Teams 內部通知**（Workflow 網址，加密保存；每日提醒時間、期限、是否 @ 二線；每日提醒、發送中止、發送完成三種事件的開關與標題 / 內容模版，可發測試訊息）。「預覽模版」用範例資料顯示日報 Mail與 Teams 訊息 |
 | AI 建議 | 見下方 |
+| 系統資訊 | 每次開頁即時從主機讀取（不是固定資料）：硬體（CPU 型號、核心數、指令集、時脈、負載、記憶體、Swap、主機型號、虛擬化、磁碟）、程式 / 資料 / 上傳 / 根目錄所在檔案系統的容量；作業系統（版本、核心、主機名稱、開機時間、時區、時間同步、語系）；執行環境（程式版本、Python、虛擬環境、網站程序、OpenSSL、SQLite 與資料庫大小、nginx / git / curl / systemd 等工具版本）；服務（狀態、開機啟動、PID、啟動時間、記憶體、重啟次數）；系統套件（安裝腳本裝的套件與實際版本，可列出全部已安裝套件）；Python 套件（全部套件與版本、授權、直接 / 間接相依，與 requirements.txt 不一致時標紅）；PDF 實際使用的字型檔與 OCR 模型。可下載 JSON（記入稽核紀錄） |
 
 **Microsoft 365 需要先申請**：由公司 M365 管理員在 Entra ID 註冊應用程式，授予「應用程式」權限 `Sites.Selected`（再授權指定的網站寫入）
 與 `Mail.Send`（建議用 Application Access Policy 限制只能用日報 Mail 的寄件信箱），產生用戶端密碼後填入設定頁；主機要能連到

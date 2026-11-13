@@ -68,6 +68,32 @@ def versions():
                            commit=(version() or "")[:7], counts=counts, type_labels=TYPE_LABELS)
 
 
+@bp.route("/sysinfo")
+def sysinfo():
+    """系統資訊：硬體、作業系統、執行環境、服務、系統套件、Python 套件、字型、OCR 模型（每次即時讀取）。"""
+    from . import sysinfo as si
+
+    show_all = request.args.get("all") == "1"
+    return render_template("admin_sysinfo.html", tab="sysinfo", info=si.collect(),
+                           all_packages=si.all_system_packages() if show_all else None)
+
+
+@bp.route("/sysinfo.json")
+def sysinfo_json():
+    """同一份資訊下載成 JSON（例如附在問題回報、資產盤點）。"""
+    from flask import Response
+
+    from . import sysinfo as si
+
+    info = si.collect()
+    info["all_system_packages"] = [{"name": n, "version": v} for n, v in si.all_system_packages()]
+    _audit("sysinfo_export", "系統資訊", "下載 JSON")
+    db.session.commit()
+    body = json.dumps(info, ensure_ascii=False, indent=2, default=str)
+    name = f"dailyreport-sysinfo-{datetime.now():%Y%m%d-%H%M}.json"
+    return Response(body, mimetype="application/json", headers={"Content-Disposition": f"attachment; filename={name}"})
+
+
 @bp.route("/ai", methods=["GET"])
 def ai():
     providers = AIProvider.query.order_by(AIProvider.priority, AIProvider.id).all()

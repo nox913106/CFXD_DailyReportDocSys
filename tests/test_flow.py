@@ -2434,3 +2434,29 @@ def test_sysadmin_second_line_approval_shows_file_manager(app):
     boss.post(f"/reports/{rid}/close/cancel", {"reason": "x"})
     with app.app_context():
         assert db.session.get(Report, rid).status == "closed"
+
+
+def test_sysinfo_page(app):
+    """系統資訊頁：只有系統管理員、即時讀取硬體 / 系統 / 套件版本，可下載 JSON（記稽核）。"""
+    import importlib.metadata as md
+    import json
+    import platform
+
+    from app.models import AuditLog
+
+    alice = Browser(app)
+    alice.login("alice")
+    alice.get("/admin/settings/sysinfo", status=403)
+    root = _admin_browser(app)
+    html = root.get("/admin/settings/sysinfo")
+    for s in ("硬體", "作業系統", "Python 套件", "系統套件", "PDF 字型", platform.python_version(),
+              md.version("Flask"), md.version("reportlab"), "直接相依"):
+        assert s in html, s
+    assert "版本都與 requirements.txt 一致" in html or "requirements.txt 不同" in html
+    r = root.c.get("/admin/settings/sysinfo.json")
+    assert r.status_code == 200 and "attachment" in r.headers["Content-Disposition"]
+    data = json.loads(r.data)
+    assert any(p["name"].lower() == "flask" and p["direct"] for p in data["python_packages"])
+    assert data["hardware"] and data["os"] and "all_system_packages" in data
+    with app.app_context():
+        assert AuditLog.query.filter_by(action="sysinfo_export").count() == 1

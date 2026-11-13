@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}系統資訊 - CFXD{% endblock %}
+{% macro kv(rows) %}
+<table class="list kv">
+  {% for label, value, note in rows %}
+  <tr><th>{{ label }}</th><td>{{ value }}{% if note %}<div class="hint">{{ note }}</div>{% endif %}</td></tr>
+  {% endfor %}
+</table>
+{% endmacro %}
+{% block content %}
+<p><a href="{{ url_for('views.index') }}">← 日報清單</a></p>
+{% include "_admin_nav.html" %}
+<section class="card">
+  <div class="row-between">
+    <h3>系統資訊</h3>
+    <span class="actions">
+      <a class="button secondary" href="{{ url_for('settings.sysinfo') }}">重新整理</a>
+      <a class="button secondary" href="{{ url_for('settings.sysinfo_json') }}">下載 JSON</a>
+    </span>
+  </div>
+  <p class="hint">每次開這頁都即時從主機讀取（{{ info.generated }}，費時 {{ info.elapsed }} 秒），不是固定資料。
+    以網站服務帳號讀取，少數需要 root 的項目可能顯示「無法取得」。
+    跳到：<a href="#hw">硬體</a> · <a href="#os">作業系統</a> · <a href="#rt">執行環境</a> · <a href="#svc">服務</a> ·
+    <a href="#apt">系統套件</a> · <a href="#py">Python 套件</a> · <a href="#font">字型與 OCR 模型</a></p>
+</section>
+
+<section class="card" id="hw">
+  <h3>硬體</h3>
+  {{ kv(info.hardware) }}
+  {% if info.filesystems and info.filesystems[0] is mapping %}
+  <h4>儲存空間</h4>
+  <div class="table-scroll"><table class="list fs">
+    <tr><th>用途</th><th>路徑</th><th>掛載點</th><th>裝置 / 格式</th><th>容量</th><th>可用</th><th>已用</th></tr>
+    {% for f in info.filesystems %}
+    <tr><td>{{ f.label }}</td><td><code class="wrap">{{ f.path }}</code></td><td>{{ f.mount }}</td>
+      <td>{{ f.device }} / {{ f.fstype }}</td>
+      {% if f.dup %}<td colspan="3" class="hint">與上方同一個檔案系統</td>
+      {% else %}<td>{{ f.total }}</td><td>{{ f.free }}</td>
+      <td><span class="{{ 'bad' if f.used_pct >= 90 else ('warn' if f.used_pct >= 80) }}">{{ f.used_pct }}%</span></td>{% endif %}</tr>
+    {% endfor %}
+  </table></div>
+  {% else %}{{ kv(info.filesystems) }}{% endif %}
+</section>
+
+<section class="card" id="os">
+  <h3>作業系統</h3>
+  {{ kv(info.os) }}
+</section>
+
+<section class="card" id="rt">
+  <h3>執行環境與工具</h3>
+  {{ kv(info.runtime) }}
+</section>
+
+<section class="card" id="svc">
+  <h3>服務</h3>
+  {% if info.services and info.services[0] is mapping %}
+  <div class="table-scroll"><table class="list">
+    <tr><th>服務</th><th>狀態</th><th>開機啟動</th><th>PID</th><th>啟動時間</th><th>記憶體</th><th>重啟次數</th></tr>
+    {% for s in info.services %}
+    <tr><td><code>{{ s.unit }}</code></td>
+      <td><span class="{{ 'ok' if s.ok else ('bad' if s.ok is false) }}">{{ s.state }}</span></td>
+      <td>{{ s.enabled }}</td><td>{{ s.pid }}</td><td>{{ s.since }}</td><td>{{ s.memory }}</td><td>{{ s.restarts }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% else %}{{ kv(info.services) }}{% endif %}
+</section>
+
+<section class="card" id="apt">
+  <h3>系統套件</h3>
+  {% if info.system_packages is none %}
+  <p class="hint">無法查詢（這台主機沒有 dpkg）。</p>
+  {% else %}
+  <p class="hint">安裝腳本裝的系統套件與實際安裝的版本；這台主機總共安裝了 {{ info.system_packages_total }} 個套件
+    {% if all_packages is none %}（<a href="{{ url_for('settings.sysinfo', all=1) }}#apt-all">列出全部</a>）{% endif %}。</p>
+  <div class="table-scroll"><table class="list">
+    <tr><th>套件</th><th>版本</th><th>說明</th></tr>
+    {% for p in info.system_packages %}
+    <tr><td><code>{{ p.name }}</code></td><td>{% if p.installed %}{{ p.version }}{% else %}<span class="bad">未安裝</span>{% endif %}</td><td>{{ p.summary }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% if all_packages is not none %}
+  <details open id="apt-all"><summary>全部已安裝的系統套件（{{ all_packages|length }}）</summary>
+    <div class="table-scroll"><table class="list compact">
+      <tr><th>套件</th><th>版本</th></tr>
+      {% for n, v in all_packages %}<tr><td><code>{{ n }}</code></td><td>{{ v }}</td></tr>{% endfor %}
+    </table></div>
+  </details>
+  {% endif %}
+  {% endif %}
+</section>
+
+<section class="card" id="py">
+  {% set py = info.python_packages %}
+  {% if py and py[0] is mapping %}
+  {% set direct = py|selectattr('direct')|list %}
+  {% set bad = py|selectattr('mismatch')|list %}
+  <h3>Python 套件（{{ py|length }}，其中直接相依 {{ direct|length }}）</h3>
+  <p class="hint">「直接相依」是 requirements.txt 指定的套件，其餘是它們帶進來的間接相依。
+    {% if bad %}<span class="bad">有 {{ bad|length }} 個套件的版本與 requirements.txt 不同，請重新執行升級。</span>{% else %}版本都與 requirements.txt 一致。{% endif %}</p>
+  <div class="table-scroll"><table class="list">
+    <tr><th>套件</th><th>版本</th><th>類別</th><th>授權</th><th>說明</th></tr>
+    {% for p in py %}
+    <tr><td><code>{{ p.name }}</code></td>
+      <td>{% if p.mismatch %}<span class="bad">{{ p.version }}</span><div class="hint">應為 {{ p.required }}</div>{% else %}{{ p.version }}{% endif %}</td>
+      <td>{{ '直接相依' if p.direct else '間接相依' }}</td><td>{{ p.license }}</td><td>{{ p.summary }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<h3>Python 套件</h3>{{ kv(py) }}{% endif %}
+</section>
+
+<section class="card" id="font">
+  <h3>PDF 字型</h3>
+  {% if info.fonts and info.fonts[0] is mapping %}
+  <div class="table-scroll"><table class="list fs">
+    <tr><th>用途</th><th>實際使用的字型檔</th><th>來源</th></tr>
+    {% for f in info.fonts %}
+    <tr><td>{{ f.family }}</td><td>{% if f.ok %}<code class="wrap">{{ f.path }}</code>{% else %}<span class="bad">{{ f.file }}</span>{% endif %}</td><td>{{ f.source }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% else %}{{ kv(info.fonts) }}{% endif %}
+  <h4>OCR 模型</h4>
+  {% if info.ocr_models and info.ocr_models[0] is mapping %}
+  <div class="table-scroll"><table class="list"><tr><th>模型檔</th><th>大小</th></tr>
+    {% for m in info.ocr_models %}<tr><td><code class="wrap">{{ m.name }}</code></td><td>{{ m.size }}</td></tr>{% endfor %}
+  </table></div>
+  {% elif info.ocr_models %}{{ kv(info.ocr_models) }}
+  {% else %}<p class="hint">找不到 OCR 模型檔（rapidocr 未安裝，或模型尚未下載）。</p>{% endif %}
+</section>
+{% endblock %}

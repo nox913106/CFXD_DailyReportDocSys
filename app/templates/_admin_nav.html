@@ -11,6 +11,7 @@
       ('tls', 'settings.tls', 'HTTPS 憑證'),
       ('delivery', 'settings.delivery', '發送與通知'),
       ('ai', 'settings.ai', 'AI 建議'),
+      ('sysinfo', 'settings.sysinfo', '系統資訊'),
       ('versions', 'settings.versions', '版本紀錄')] %}
   <a href="{{ url_for(endpoint) }}" class="{{ 'active' if tab == key }}">{{ label }}</a>
   {% endfor %}

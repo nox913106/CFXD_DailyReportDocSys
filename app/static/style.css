@@ -311,3 +311,13 @@ code.wrap { overflow-wrap: anywhere; word-break: break-all; }
 .del-official h3 { margin-top: 0; }
 .del-official:not(.active) { opacity: .75; }
 .flash.warn-box { background: #fff7e6; border-color: #f0c36d; color: #6b4b00; }
+
+/* 系統資訊 */
+table.kv { width: 100%; }
+table.kv th { width: 11em; text-align: left; vertical-align: top; white-space: nowrap; }
+table.kv td { overflow-wrap: anywhere; }
+table.list.compact td { padding-top: 2px; padding-bottom: 2px; }
+#apt-all summary { cursor: pointer; margin: .5em 0; }
+.sysinfo-ok, span.ok { color: var(--ok); font-weight: bold; }
+span.bad { color: var(--err); font-weight: bold; }
+table.fs th, table.fs td:nth-child(n+3) { white-space: nowrap; }
