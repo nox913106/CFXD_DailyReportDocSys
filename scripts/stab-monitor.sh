@@ -26,6 +26,19 @@ BIN=/usr/local/sbin/stab-monitor
 info() { echo -e "\e[32m✓\e[0m $*"; }
 warn() { echo -e "\e[33m!\e[0m $*"; }
 die() { echo -e "\e[31m✗\e[0m $*" >&2; exit 1; }
+step() { echo -e "\e[36m→\e[0m $*"; }
+LOG=/var/log/stab-monitor-install.log
+export DEBIAN_FRONTEND=noninteractive
+# apt 不互動、不讀 stdin（curl | bash 時 stdin 是腳本本身），等待其他 apt 最多 5 分鐘，輸出寫到 $LOG
+apt_q() { apt-get -y -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@" </dev/null >>"$LOG" 2>&1; }
+# 長時間指令：背景執行並每 10 秒顯示經過時間
+wait_run() {
+  local msg=$1; shift
+  "$@" </dev/null >>"$LOG" 2>&1 & local pid=$! n=0
+  while kill -0 $pid 2>/dev/null; do sleep 1; n=$((n + 1)); [ $((n % 10)) = 0 ] && echo "   …$msg，已 ${n} 秒"; done
+  wait $pid
+}
+trap 'rc=$?; [ $rc -ne 0 ] && echo -e "\n中斷（代碼 $rc），詳細記錄在 $LOG。修正後可直接重跑同一行指令。" >&2' EXIT
 [ "$(id -u)" = 0 ] || die "請用 sudo 執行"
 
 app_port() {
@@ -50,7 +63,9 @@ EOF
 }
 
 install_sysstat() {
-  apt-get install -y -qq sysstat >/dev/null
+  step "安裝 sysstat…"
+  echo "sysstat sysstat/enable boolean true" | debconf-set-selections 2>/dev/null || true
+  wait_run "安裝 sysstat" apt_q install sysstat || die "sysstat 安裝失敗，記錄在 $LOG"
   grep -q sysstat_was_enabled "$STATE" || echo "sysstat_was_enabled=$(grep -q '^ENABLED="true"' /etc/default/sysstat && echo 1 || echo 0)" >>"$STATE"
   sed -i 's/^ENABLED=.*/ENABLED="true"/' /etc/default/sysstat
   sed -i 's/^HISTORY=.*/HISTORY=31/' /etc/sysstat/sysstat
@@ -63,6 +78,7 @@ install_sysstat() {
 
 install_journal() {
   if [ -d /var/log/journal ]; then info "journal 已經是永久保存"; return; fi
+  step "journal 改為永久保存…"
   mkdir -p /var/log/journal
   systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
   systemctl restart systemd-journald
@@ -73,10 +89,11 @@ install_netdata() {
   if command -v netdata >/dev/null 2>&1; then
     info "Netdata 已安裝，只更新設定"
   else
-    echo "安裝 Netdata（官方腳本，關閉遙測、不連雲端）…"
-    curl -fsSL https://get.netdata.cloud/kickstart.sh -o /tmp/netdata-kickstart.sh
-    sh /tmp/netdata-kickstart.sh --non-interactive --stable-channel --disable-telemetry >/tmp/netdata-install.log 2>&1 \
-      || die "Netdata 安裝失敗，記錄在 /tmp/netdata-install.log（可改用 install --no-netdata）"
+    step "安裝 Netdata（官方腳本，關閉遙測、不連雲端，約 1–5 分鐘）…"
+    curl -fsSL -m 60 https://get.netdata.cloud/kickstart.sh -o /tmp/netdata-kickstart.sh \
+      || die "下載 Netdata 安裝程式失敗（主機可能不能連 get.netdata.cloud），可改用 install --no-netdata"
+    wait_run "安裝 Netdata" sh /tmp/netdata-kickstart.sh --non-interactive --stable-channel --disable-telemetry \
+      || die "Netdata 安裝失敗，記錄在 $LOG（其他部分已裝好；可改用 install --no-netdata）"
     echo "netdata_installed_by_us=1" >>"$STATE"
   fi
   local conf=/etc/netdata
@@ -108,6 +125,7 @@ EOF
   if [ -n "$crt" ] && [ -f "$crt" ]; then
     printf 'jobs:\n  - name: dailyreport_tls\n    source: file://%s\n' "$crt" >$conf/go.d/x509check.conf
   fi
+  step "套用 Netdata 設定…"
   systemctl restart netdata
   info "Netdata：服務狀態、/healthz、各服務資源${crt:+、HTTPS 憑證到期}，只聽 127.0.0.1:19999"
 }
@@ -118,10 +136,13 @@ cmd_install() {
   command -v systemctl >/dev/null || die "需要 systemd"
   mkdir -p "$LIB"
   if [ -f "$STATE" ]; then info "已經安裝過，更新程式與設定"; else echo "installed_at=$(date '+%F %T')" >"$STATE"; fi
-  apt-get update -qq >/dev/null || warn "apt-get update 失敗，繼續嘗試安裝"
+  echo "主機穩定性驗證工具：開始安裝（詳細記錄 $LOG）"
+  step "更新套件清單（apt-get update）…"
+  wait_run "更新套件清單" apt_q update || warn "apt-get update 失敗，繼續嘗試安裝"
   install_sysstat
   install_journal
-  command -v python3 >/dev/null || apt-get install -y -qq python3 >/dev/null
+  command -v python3 >/dev/null || wait_run "安裝 python3" apt_q install python3
+  step "建立服務探測與報告排程…"
   write_files
   if curl -fsSL "$URL" -o "$BIN.tmp" 2>/dev/null && bash -n "$BIN.tmp"; then mv "$BIN.tmp" "$BIN"; chmod +x "$BIN"; else rm -f "$BIN.tmp"; fi
   cat >"$CRON" <<EOF
@@ -129,7 +150,7 @@ cmd_install() {
 * * * * * root $LIB/probe.sh
 7 * * * * root python3 $LIB/report.py -o $REPORT >/dev/null 2>&1
 EOF
-  "$LIB/probe.sh"
+  "$LIB/probe.sh" || true
   info "服務探測：每分鐘寫入 $CSV（/healthz 用 port $(app_port)）"
   info "網頁報告：每小時更新 $REPORT，也可隨時執行 report"
   if [ $netdata = 1 ]; then install_netdata; fi
@@ -170,7 +191,7 @@ cmd_uninstall() {
   systemctl daemon-reload
   if grep -q 'sysstat_was_enabled=0' "$STATE" 2>/dev/null; then
     systemctl disable --now sysstat sysstat-collect.timer >/dev/null 2>&1 || true
-    apt-get purge -y -qq sysstat >/dev/null 2>&1 || true
+    apt_q purge sysstat || true
     [ $keep = 0 ] && rm -rf /var/log/sysstat
     info "已移除 sysstat"
   else
@@ -178,8 +199,8 @@ cmd_uninstall() {
   fi
   if grep -q 'netdata_installed_by_us=1' "$STATE" 2>/dev/null; then
     curl -fsSL https://get.netdata.cloud/kickstart.sh -o /tmp/netdata-kickstart.sh \
-      && sh /tmp/netdata-kickstart.sh --uninstall --non-interactive >/tmp/netdata-uninstall.log 2>&1 \
-      && info "已移除 Netdata" || warn "Netdata 移除失敗，記錄在 /tmp/netdata-uninstall.log"
+      && wait_run "移除 Netdata" sh /tmp/netdata-kickstart.sh --uninstall --non-interactive \
+      && info "已移除 Netdata" || warn "Netdata 移除失敗，記錄在 $LOG"
   elif command -v netdata >/dev/null 2>&1; then
     rm -f /etc/netdata/go.d/systemdunits.conf /etc/netdata/go.d/httpcheck.conf /etc/netdata/go.d/x509check.conf
     info "Netdata 安裝前就有，只移除本工具加的設定"
