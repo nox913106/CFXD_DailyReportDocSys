@@ -702,9 +702,9 @@ PYEOF
 }
 
 case "${1:-install}" in
-  install) shift; cmd_install "$@" ;;
+  install) cmd_install "${@:2}" ;;
   status) cmd_status ;;
-  report) shift; cmd_report "$@" ;;
-  uninstall) shift; cmd_uninstall "$@" ;;
+  report) cmd_report "${@:2}" ;;
+  uninstall) cmd_uninstall "${@:2}" ;;
   *) echo "用法：install [--no-netdata] | status | report [檔名.html] | uninstall [--keep-data]"; exit 1 ;;
 esac
