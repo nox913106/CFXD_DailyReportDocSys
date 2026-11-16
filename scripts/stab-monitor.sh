@@ -38,7 +38,6 @@ wait_run() {
   while kill -0 $pid 2>/dev/null; do sleep 1; n=$((n + 1)); [ $((n % 10)) = 0 ] && echo "   …$msg，已 ${n} 秒"; done
   wait $pid
 }
-trap 'rc=$?; [ $rc -ne 0 ] && echo -e "\n中斷（代碼 $rc），詳細記錄在 $LOG。修正後可直接重跑同一行指令。" >&2' EXIT
 [ "$(id -u)" = 0 ] || die "請用 sudo 執行"
 
 app_port() {
@@ -131,6 +130,7 @@ EOF
 }
 
 cmd_install() {
+  trap 'rc=$?; [ $rc -ne 0 ] && echo -e "\n中斷（代碼 $rc），詳細記錄在 $LOG。修正後可直接重跑同一行指令。" >&2' EXIT
   local netdata=1
   [ "${1:-}" = "--no-netdata" ] && netdata=0
   command -v systemctl >/dev/null || die "需要 systemd"
