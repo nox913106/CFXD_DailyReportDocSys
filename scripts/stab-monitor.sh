@@ -10,6 +10,8 @@
 #     curl -fsSL .../stab-monitor.sh | sudo bash -s -- status
 #     curl -fsSL .../stab-monitor.sh | sudo bash -s -- report
 #     curl -fsSL .../stab-monitor.sh | sudo bash -s -- uninstall
+#   Netdata 開放內網直接連 http://主機IP:19999（沒有密碼，只允許內網來源）/ 關閉：
+#     sudo stab-monitor netdata-open     sudo stab-monitor netdata-close
 #   安裝後也可以直接用：sudo stab-monitor status | report | uninstall
 set -euo pipefail
 
@@ -96,14 +98,9 @@ install_netdata() {
     echo "netdata_installed_by_us=1" >>"$STATE"
   fi
   local conf=/etc/netdata
-  # 只聽本機，用 SSH 通道看
-  touch $conf/netdata.conf
-  if grep -q '^\[web\]' $conf/netdata.conf; then
-    sed -i '/^\s*bind to\s*=/d' $conf/netdata.conf
-    sed -i 's/^\[web\]/[web]\n    bind to = 127.0.0.1/' $conf/netdata.conf
-  else
-    printf '\n[web]\n    bind to = 127.0.0.1\n' >>$conf/netdata.conf
-  fi
+  # 預設只聽本機；執行過 netdata-open 的保持開放
+  local open; open=$(sed -n 's/^netdata_open=//p' "$STATE" | tail -1)
+  if [ -n "$open" ]; then netdata_web "*" "localhost $open"; else netdata_web 127.0.0.1 localhost; fi
   mkdir -p $conf/go.d
   printf 'enabled: yes\ndefault_run: yes\nmodules:\n  systemdunits: yes\n' >$conf/go.d.conf
   cat >$conf/go.d/systemdunits.conf <<'EOF'
@@ -126,7 +123,52 @@ EOF
   fi
   step "套用 Netdata 設定…"
   systemctl restart netdata
-  info "Netdata：服務狀態、/healthz、各服務資源${crt:+、HTTPS 憑證到期}，只聽 127.0.0.1:19999"
+  info "Netdata：服務狀態、/healthz、各服務資源${crt:+、HTTPS 憑證到期}，$(netdata_where)"
+}
+
+# 設定 Netdata 網頁聽哪裡、允許哪些來源
+netdata_web() {
+  local f=/etc/netdata/netdata.conf
+  touch $f
+  sed -i '/^\s*\(bind to\|allow connections from\|allow dashboard from\)\s*=/d' $f
+  grep -q '^\[web\]' $f || printf '\n[web]\n' >>$f
+  sed -i "s/^\[web\]\$/[web]\\n    bind to = $1\\n    allow connections from = $2\\n    allow dashboard from = $2/" $f
+}
+netdata_where() {
+  local open; open=$(sed -n 's/^netdata_open=//p' "$STATE" 2>/dev/null | tail -1)
+  if [ -n "$open" ]; then echo "開放 http://$(hostname -I | awk '{print $1}'):19999（允許來源：$open）"; else echo "只聽 127.0.0.1:19999（用 SSH 通道看，或執行 netdata-open）"; fi
+}
+
+# 開放外部連線：預設只允許內網（10.* 172.* 192.168.*），也可指定來源，例如 netdata-open "192.168.10.*"
+cmd_netdata_open() {
+  command -v netdata >/dev/null 2>&1 || die "沒有安裝 Netdata"
+  local allow="${*:-10.* 172.* 192.168.*}"
+  case "$allow" in */*) die "來源請用萬用字元寫法，例如 192.168.10.*（不支援 /24 這種寫法）" ;; esac
+  sed -i '/^netdata_open=/d' "$STATE"; echo "netdata_open=$allow" >>"$STATE"
+  netdata_web "*" "localhost $allow"
+  systemctl restart netdata
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    ufw allow 19999/tcp >/dev/null && echo "ufw_opened=1" >>"$STATE" && info "防火牆 ufw 已開放 19999/tcp"
+  fi
+  info "Netdata $(netdata_where)"
+  warn "Netdata 網頁沒有帳號密碼，驗證結束請執行 netdata-close 或 uninstall"
+}
+
+cmd_netdata_close() {
+  command -v netdata >/dev/null 2>&1 || die "沒有安裝 Netdata"
+  sed -i '/^netdata_open=/d' "$STATE"
+  netdata_web 127.0.0.1 localhost
+  systemctl restart netdata
+  close_ufw
+  info "Netdata $(netdata_where)"
+}
+
+close_ufw() {
+  if grep -q '^ufw_opened=1' "$STATE" 2>/dev/null; then
+    ufw delete allow 19999/tcp >/dev/null 2>&1 || true
+    sed -i '/^ufw_opened=/d' "$STATE"
+    info "防火牆 ufw 已關閉 19999/tcp"
+  fi
 }
 
 cmd_install() {
@@ -158,7 +200,10 @@ EOF
   echo "安裝完成。之後："
   echo "  看狀態     sudo stab-monitor status"
   echo "  產生報告   sudo stab-monitor report   → 下載 $REPORT 用瀏覽器開"
-  if [ $netdata = 1 ]; then echo "  看 Netdata 在自己電腦執行  ssh -L 19999:127.0.0.1:19999 帳號@這台主機，再開 http://localhost:19999"; fi
+  if [ $netdata = 1 ]; then
+    echo "  看 Netdata   $(netdata_where)"
+    echo "               開放內網直接連線：sudo stab-monitor netdata-open；關閉：sudo stab-monitor netdata-close"
+  fi
   echo "  驗證結束   sudo stab-monitor uninstall"
 }
 
@@ -171,7 +216,7 @@ cmd_status() {
   systemctl is-active --quiet sysstat-collect.timer && info "sysstat 記錄中" || warn "sysstat 沒有在記錄"
   [ -d /var/log/journal ] && info "journal 永久保存" || warn "journal 沒有永久保存"
   if command -v netdata >/dev/null 2>&1; then
-    systemctl is-active --quiet netdata && info "Netdata 運作中（127.0.0.1:19999）" || warn "Netdata 沒有運作"
+    systemctl is-active --quiet netdata && info "Netdata 運作中，$(netdata_where)" || warn "Netdata 沒有運作"
   fi
   [ -f "$REPORT" ] && echo "最近一次報告：$REPORT（$(date -r "$REPORT" '+%F %T')）"
   echo "佔用空間：探測 $(du -sh "$CSV" 2>/dev/null | cut -f1)、sysstat $(du -sh /var/log/sysstat 2>/dev/null | cut -f1)、journal $(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.]+[KMGT]' | head -1)"
@@ -186,6 +231,7 @@ cmd_report() {
 cmd_uninstall() {
   local keep=0; [ "${1:-}" = "--keep-data" ] && keep=1
   [ -f "$STATE" ] || warn "沒有安裝紀錄，仍嘗試清除"
+  close_ufw
   rm -f "$CRON"
   rm -f "$TIMER_DROPIN"; rmdir "$(dirname "$TIMER_DROPIN")" 2>/dev/null || true
   systemctl daemon-reload
@@ -706,5 +752,7 @@ case "${1:-install}" in
   status) cmd_status ;;
   report) cmd_report "${@:2}" ;;
   uninstall) cmd_uninstall "${@:2}" ;;
-  *) echo "用法：install [--no-netdata] | status | report [檔名.html] | uninstall [--keep-data]"; exit 1 ;;
+  netdata-open) cmd_netdata_open "${@:2}" ;;
+  netdata-close) cmd_netdata_close ;;
+  *) echo "用法：install [--no-netdata] | status | report [檔名.html] | netdata-open [來源…] | netdata-close | uninstall [--keep-data]"; exit 1 ;;
 esac
