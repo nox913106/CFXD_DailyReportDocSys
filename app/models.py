@@ -340,6 +340,9 @@ class ChecklistResult(db.Model):
     item = db.relationship("ChecklistItem")
     result = db.Column(db.String(1))  # N / W / F；None 表示尚未勾選
     note = db.Column(db.Text, default="")
+    # 只用於填寫與戰情室（不影響 PDF）：設備尚未正式上線、異常已通報（處理中、待料）
+    not_launched = db.Column(db.Boolean)
+    reported = db.Column(db.Boolean)
 
     __table_args__ = (db.UniqueConstraint("report_id", "item_id"),)
 

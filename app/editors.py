@@ -308,6 +308,8 @@ def checklist(report_id, sheet):
             value = request.form.get(f"r_{res.id}")
             res.result = value if value in ("N", "W", "F") else None
             res.note = request.form.get(f"n_{res.id}", "").strip()
+            res.not_launched = request.form.get(f"nl_{res.id}") == "1"
+            res.reported = request.form.get(f"rp_{res.id}") == "1"
         _touch(report)
         db.session.commit()
         missing = sum(1 for res in results if res.result is None)

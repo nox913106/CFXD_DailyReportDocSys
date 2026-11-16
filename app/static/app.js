@@ -91,7 +91,9 @@
       document.querySelectorAll("[data-wr-filter]").forEach(function (b) { b.classList.toggle("on", b === btn); });
       var shown = 0;
       document.querySelectorAll(".wr-events > li").forEach(function (li) {
-        var ok = !f || (f === "long" ? li.getAttribute("data-long") === "1" : li.getAttribute("data-type") === f);
+        var ok = !f || (f === "long" ? li.getAttribute("data-long") === "1"
+          : f === "unreported" ? li.getAttribute("data-unreported") === "1"
+          : (" " + li.getAttribute("data-type") + " ").indexOf(" " + f + " ") >= 0);
         li.hidden = !ok;
         if (ok) shown++;
       });

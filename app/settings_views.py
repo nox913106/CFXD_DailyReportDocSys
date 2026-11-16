@@ -84,16 +84,23 @@ def warroom():
         except ValueError:
             flash("天數請填數字。", "error")
             return redirect(url_for("settings.warroom"))
+        words = []
+        for w in request.form.get("known_keywords", "").splitlines():
+            w = w.strip()
+            if w and w.lower() not in {x.lower() for x in words}:
+                words.append(w[:80])
+        sysconf.put("warroom_known_keywords", words[:50], current_user)
         sysconf.put("warroom_types", types, current_user)
         sysconf.put("warroom_warn_days", warn, current_user)
         sysconf.put("warroom_alert_days", alert, current_user)
-        _audit("sys_settings", "戰情室", f"類型 {'、'.join(wr.TYPES[t][0] for t in types)}；{warn} 天標橘、超過 {alert} 天標紅")
+        _audit("sys_settings", "戰情室", f"類型 {'、'.join(wr.TYPES[t][0] for t in types)}；{warn} 天標橘、超過 {alert} 天標紅；"
+                                        f"已知狀態關鍵字 {'、'.join(words) or '（無）'}")
         db.session.commit()
         flash("已儲存戰情室設定。", "success")
         return redirect(url_for("settings.warroom"))
     warn, alert = wr.thresholds()
     return render_template("admin_warroom.html", tab="warroom", types=wr.TYPES, enabled=wr.enabled_types(),
-                           warn=warn, alert=alert)
+                           warn=warn, alert=alert, keywords=wr.known_keywords())
 
 
 @bp.route("/sysinfo")

@@ -2676,3 +2676,68 @@ def test_warroom(app):
         assert "issue" not in data["types"] and all(e.type != "issue" for e in data["events"])
         assert data["counts"]["long"] == 1  # PI-01 7 天 > 5
     assert "至少要保留一種" in root.post("/admin/settings/warroom", {"warn_days": "2", "alert_days": "5"})
+
+
+def test_checklist_flags_and_warroom_states(app):
+    """檢查表「未上線 / 已通報」：只在填寫頁、新日報沿用、不影響 PDF 內容雜湊；
+    戰情室：告警與檢查表同一項合併、未上線與關鍵字列為已知狀態、已通報標示、Down date 起算、延續到最早標 ≥。"""
+    from app import db, warroom
+    from app.checks import ALARM_CATEGORY
+    from app.models import AlarmSummaryRow, ChecklistItem, ChecklistResult, Report
+    from app.pdf.report_pdf import content_fingerprint
+
+    alice = Browser(app)
+    alice.login("alice")
+    boss = Browser(app)
+    boss.login("boss")
+    set_role(app, "boss", "file_manager")
+    rid = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-01"}))
+    with app.app_context():
+        items = ChecklistItem.query.filter_by(sheet="physical", active=True).order_by(ChecklistItem.order).all()[:4]
+        res = {r.item_id: r for r in ChecklistResult.query.filter_by(report_id=rid)}
+        ids = [res[i.id].id for i in items]
+    form = {f"r_{x}": "N" for x in ids}
+    form.update({f"r_{ids[0]}": "F", f"n_{ids[0]}": "Down date: 2026/04/16 Down", f"nl_{ids[0]}": "1",
+                 f"r_{ids[1]}": "F", f"n_{ids[1]}": "vendor repair", f"rp_{ids[1]}": "1",
+                 f"r_{ids[2]}": "W", f"n_{ids[2]}": "Certificate Error: no paid cert",
+                 f"r_{ids[3]}": "F", f"n_{ids[3]}": "Down date: 2026/08/16 Device Down"})
+    html = alice.get(f"/reports/{rid}/checklist/physical")
+    assert 'name="nl_' in html and 'name="rp_' in html and "不會出現在 PDF" in html
+    alice.post(f"/reports/{rid}/checklist/physical", form)
+    with app.app_context():
+        r = db.session.get(Report, rid)
+        fp = content_fingerprint(r)
+        x = db.session.get(ChecklistResult, ids[2])
+        x.reported = True
+        db.session.commit()
+        assert content_fingerprint(r) == fp  # 旗標不影響 PDF 內容雜湊
+        x.reported = None
+        for n, it in enumerate(items):
+            rr = res[it.id]
+            db.session.add(AlarmSummaryRow(report_id=rid, order=n, category=ALARM_CATEGORY[it.sheet], item=it.item_no,
+                                           device_name=it.device_name, description=it.status_type,
+                                           reason=db.session.get(ChecklistResult, rr.id).note))
+        r.status = "closed"
+        db.session.commit()
+    # 新日報沿用旗標
+    rid2 = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-02"}))
+    with app.app_context():
+        r2 = {c.item_id: c for c in ChecklistResult.query.filter_by(report_id=rid2)}
+        assert r2[items[0].id].not_launched and r2[items[1].id].reported and not r2[items[2].id].not_launched
+        for it in items:
+            db.session.add(AlarmSummaryRow(report_id=rid2, category=ALARM_CATEGORY[it.sheet], item=it.item_no,
+                                           device_name=it.device_name, description=it.status_type,
+                                           reason=r2[it.id].note))
+        db.session.get(Report, rid2).status = "closed"
+        db.session.commit()
+        data = warroom.build()
+        ev = {e.key: e for e in data["events"] + data["known"]}
+        e0, e1, e2, e3 = (ev[("check", i.id)] for i in items)
+        assert len(data["events"]) + len(data["known"]) == 4  # 告警與檢查表合併，不重複
+        assert e0.sources == ["alarm", "check"] and e0.state == "not_launched" and e0 in data["known"]
+        assert e2.state == "known" and e2.known_by.lower() == "certificate error"
+        assert e1.state == "reported" and e1 in data["events"] and e1.at_least and e1.days == 2
+        assert e3.state == "" and e3.first == date(2026, 8, 16) and not e3.at_least
+        assert data["counts"]["unreported"] == 1 and data["counts"]["reported"] == 1 and data["counts"]["known"] == 2
+    html = boss.get("/")
+    assert "已知狀態，不列入異常（2）" in html and "已通報" in html and "≥2" in html

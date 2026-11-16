@@ -112,7 +112,9 @@ def content_fingerprint(report):
         "issues": rows(report.issues), "onsite": rows(report.onsite_records),
         "updates": rows(report.system_updates), "true_alarms": rows(report.true_alarms),
         "alarm_rows": rows(report.alarm_rows),
-        "results": sorted(rows(report.results), key=lambda r: r["item_id"]),
+        # 未上線 / 已通報只用於填寫與戰情室，不屬於 PDF 內容，不列入雜湊（加欄位前後同一份日報的值不變）
+        "results": sorted(rows(report.results, skip=("id", "report_id", "not_launched", "reported")),
+                          key=lambda r: r["item_id"]),
         "images": [{"kind": i.kind, "section_id": i.section_id, "order": i.order,
                     "sha256": file_sha(_image_path(report, i))} for i in images],
         "template": file_sha(current_app.config.get("PDF_TEMPLATE_XLSX") or "") if not report.imported else None,

@@ -192,7 +192,8 @@
 
 /* 戰情室（手機、平板） */
 @media (max-width: 900px), (hover: none) and (pointer: coarse) {
-  .wr-kpis { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .wr-kpis { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .wr-kpis .kpi { font-size: 12px; padding: 10px 4px; text-align: center; }
   .wr-todo { gap: 10px; }
   .wr-todo b, .wr-kpis b { font-size: 24px; }
   .wr-steps li { font-size: 11px; }
@@ -208,7 +209,7 @@
   .wr-trend small { font-size: 9px; }
 }
 @media (min-width: 700px) and (max-width: 900px), (min-width: 700px) and (hover: none) and (pointer: coarse) {
-  .wr-kpis { grid-template-columns: repeat(4, 1fr); }
+  .wr-kpis { grid-template-columns: repeat(6, 1fr); }
   .wr-side { width: auto; flex-direction: column; padding-left: 0; }
   .wr-main { flex-basis: 0; }
   .wr-events summary { flex-wrap: nowrap; }

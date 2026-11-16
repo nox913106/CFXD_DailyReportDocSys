@@ -11,6 +11,8 @@
     <h3>{{ sheet_title }}</h3>
     <span class="progress" data-checklist-progress>已勾選 0 / 0</span>
   </div>
+  <p class="hint">「未上線」（Not officially launched）與「已通報」（Reported：處理中、待料）只用於填寫與戰情室，
+    不會出現在 PDF，也不影響檢查結果；新增日報時跟著備註沿用前一份。</p>
   <div class="table-scroll">
   <table class="grid-table">
     <thead>
@@ -20,6 +22,8 @@
         <th>Status Type / Description</th>
         <th class="result-col">Normal</th><th class="result-col">Warning</th><th class="result-col">Failed</th>
         <th>Note</th>
+        <th class="flag-col" title="設備尚未正式上線（Not officially launched）：戰情室不列為異常。只用於填寫，不影響 PDF">未上線</th>
+        <th class="flag-col" title="異常已通報（Reported：處理中、待料）：戰情室標示已通報。只用於填寫，不影響 PDF">已通報</th>
       </tr>
     </thead>
     {% for no, rows in groups %}
@@ -41,6 +45,10 @@
         </td>
         {% endfor %}
         <td><textarea name="n_{{ res.id }}" rows="1" {{ 'disabled' if not report.editable }}>{{ res.note }}</textarea></td>
+        <td class="flag-col"><input type="checkbox" name="nl_{{ res.id }}" value="1" {{ 'checked' if res.not_launched }}
+          {{ 'disabled' if not report.editable }} aria-label="{{ it.item_no }} 未上線"></td>
+        <td class="flag-col"><input type="checkbox" name="rp_{{ res.id }}" value="1" {{ 'checked' if res.reported }}
+          {{ 'disabled' if not report.editable }} aria-label="{{ it.item_no }} 已通報"></td>
       </tr>
       {% endfor %}
     </tbody>

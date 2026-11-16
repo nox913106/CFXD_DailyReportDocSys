@@ -52,7 +52,9 @@
 <section class="card"><p class="hint">還沒有正式或審核中的日報，等第一份日報送審後就會出現事件。</p></section>
 {% else %}
 <section class="wr-kpis">
-  <div class="kpi"><b>{{ c.active }}</b><span>進行中事件</span></div>
+  <div class="kpi"><b>{{ c.active }}</b><span>進行中異常</span></div>
+  <div class="kpi {{ 'alert' if c.unreported }}"><b>{{ c.unreported }}</b><span>未通報</span></div>
+  <div class="kpi"><b>{{ c.reported }}</b><span>已通報（處理中）</span></div>
   <div class="kpi {{ 'up' if c.new }}"><b>{{ c.new }}</b><span>今日新增</span></div>
   <div class="kpi {{ 'down' if c.resolved }}"><b>{{ c.resolved }}</b><span>今日解除</span></div>
   <div class="kpi {{ 'alert' if c.long }}"><b>{{ c.long }}</b><span>持續超過 {{ w.alert }} 天</span></div>
@@ -60,9 +62,10 @@
 
 <section class="card">
   <div class="row-between">
-    <h3>持續發生的事件（{{ c.active }}）</h3>
+    <h3>持續發生的異常（{{ c.active }}）</h3>
     <div class="wr-filter" role="group" aria-label="依類型篩選">
       <button type="button" class="chip on" data-wr-filter="">全部</button>
+      <button type="button" class="chip" data-wr-filter="unreported">未通報 {{ c.unreported }}</button>
       {% for t in w.types %}<button type="button" class="chip" data-wr-filter="{{ t }}">{{ TYPES[t][0] }} {{ c.by_type[t] }}</button>{% endfor %}
       <button type="button" class="chip" data-wr-filter="long">超過 {{ w.alert }} 天</button>
     </div>
@@ -70,12 +73,13 @@
   {% if w.events %}
   <ul class="wr-events">
     {% for e in w.events %}
-    <li class="lv{{ e.level }}" data-type="{{ e.type }}" data-long="{{ 1 if e.days > w.alert else 0 }}">
+    <li class="lv{{ e.level }} {{ 'st-reported' if e.state == 'reported' }}" data-type="{{ e.sources|join(' ') }}" data-long="{{ 1 if e.days > w.alert else 0 }}" data-unreported="{{ 0 if e.state == 'reported' else 1 }}">
       <details>
         <summary>
-          <span class="wr-days"><b>{{ e.days }}</b><small>天</small></span>
+          <span class="wr-days" title="{% if e.at_least %}延續到系統最早的日報 {{ e.first }}，實際可能更久{% elif e.down_since and e.down_since == e.first %}依說明中的 Down date {{ e.down_since }} 起算{% endif %}"><b>{{ '≥' if e.at_least }}{{ e.days }}</b><small>天</small></span>
           <span class="wr-main">
-            <span class="wr-title"><span class="wr-type t-{{ e.type }}">{{ e.type_label }}</span>
+            <span class="wr-title">{% for t in e.sources %}<span class="wr-type t-{{ t }}">{{ TYPES[t][0] }}</span>{% endfor %}
+              {% if e.state == 'reported' %}<span class="wr-state reported">已通報</span>{% endif %}
               {% if e.severity == 'F' %}<span class="sev sev-err">Failed</span>{% elif e.severity == 'W' %}<span class="sev sev-warn">Warning</span>{% endif %}
               {% if e.new %}<span class="wr-new">今日新增</span>{% endif %}
               {% if e.provisional %}<span class="badge submitted">審核中</span>{% endif %}
@@ -91,9 +95,9 @@
         <div class="wr-hist">
           <table class="list no-cards">
             <tr><th>日報</th><th>原因 / 狀態 / 備註</th></tr>
-            {% for d, rid, st, note in e.history %}
+            {% for d, rid, st, note, st2 in e.history %}
             <tr><td class="nowrap">{% if viewer %}{{ d }}{% else %}<a href="{{ url_for('views.detail', report_id=rid) }}">{{ d }}</a>{% endif %}{% if st == 'submitted' %} <span class="badge submitted">審核中</span>{% endif %}</td>
-              <td class="pre">{{ note or '—' }}</td></tr>
+              <td class="pre">{% if st2 %}<span class="wr-state {{ st2 }}">{{ w.STATE_LABELS[st2] }}</span> {% endif %}{{ note or '—' }}</td></tr>
             {% endfor %}
           </table>
         </div>
@@ -105,11 +109,22 @@
   {% else %}<p class="hint">目前沒有持續發生的事件。</p>{% endif %}
 </section>
 
+{% if w.known %}
+<details class="card wr-known">
+  <summary><h3 class="inline">已知狀態，不列入異常（{{ w.known|length }}）</h3>
+    <span class="hint">檢查表勾「未上線」，或內容含 {{ w.keywords|join('、') }}</span></summary>
+  <ul class="wr-resolved">
+    {% for e in w.known %}<li>{% for t in e.sources %}<span class="wr-type t-{{ t }}">{{ TYPES[t][0] }}</span> {% endfor %}
+      <span class="wr-state {{ e.state }}">{{ '未上線' if e.state == 'not_launched' else '已知：' ~ e.known_by }}</span>
+      <strong>{{ e.title }}</strong> <span class="hint">{{ e.detail }}{% if e.note %} · {{ e.note }}{% endif %} · {{ '≥' if e.at_least }}{{ e.days }} 天</span></li>{% endfor %}
+  </ul>
+</details>
+{% endif %}
 {% if w.resolved %}
 <details class="card">
   <summary><h3 class="inline">今日解除（{{ w.resolved|length }}）</h3> <span class="hint">{{ w.prev.report_date }} 有、{{ latest.report_date }} 沒有</span></summary>
   <ul class="wr-resolved">
-    {% for e in w.resolved %}<li><span class="wr-type t-{{ e.type }}">{{ e.type_label }}</span> <strong>{{ e.title }}</strong> <span class="hint">{{ e.detail }}</span></li>{% endfor %}
+    {% for e in w.resolved %}<li>{% for t in e.sources %}<span class="wr-type t-{{ t }}">{{ TYPES[t][0] }}</span> {% endfor %} <strong>{{ e.title }}</strong> <span class="hint">{{ e.detail }}</span></li>{% endfor %}
   </ul>
 </details>
 {% endif %}
@@ -134,5 +149,6 @@
 {% endif %}
 <p class="hint">事件依日報內容自動整理：{% for t in w.types %}{{ TYPES[t][0] }}（{{ TYPES[t][1] }}）{{ '、' if not loop.last }}{% endfor %}。
   {% if viewer %}只列已核准、已結案的正式日報。{% else %}依據已核准、已結案的日報；最新一份待審核時也列入並標示「審核中」，草稿與退回不算。{% endif %}
-  日報不再出現就視為解除。持續 {{ w.warn }} 天以上標橘、超過 {{ w.alert }} 天標紅。</p>
+  告警與檢查表同一項目合併為一件；檢查表勾「未上線」或內容含已知狀態關鍵字的列在「已知狀態」，勾「已通報」的標示已通報。
+  日報不再出現就視為解除；延續到系統最早日報的天數標「≥」，說明寫了 Down date 時從那天起算。持續 {{ w.warn }} 天以上標橘、超過 {{ w.alert }} 天標紅。</p>
 {% endblock %}

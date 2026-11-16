@@ -205,12 +205,15 @@ def create():
 
     prev_results = {}
     if prev:
-        q = db.session.query(ChecklistResult.item_id, ChecklistResult.result, ChecklistResult.note).filter(
+        q = db.session.query(ChecklistResult.item_id, ChecklistResult.result, ChecklistResult.note,
+                             ChecklistResult.not_launched, ChecklistResult.reported).filter(
             ChecklistResult.report_id == prev.id)
-        prev_results = {i: (res if official else None, note or "") for i, res, note in q}
+        # 未上線 / 已通報是設備狀態，和備註一樣沿用前一份
+        prev_results = {i: (res if official else None, note or "", nl, rp) for i, res, note, nl, rp in q}
     for (item_id,) in db.session.query(ChecklistItem.id).filter_by(active=True):
-        res, note = prev_results.get(item_id, (None, ""))
-        db.session.add(ChecklistResult(report_id=report.id, item_id=item_id, result=res, note=note))
+        res, note, nl, rp = prev_results.get(item_id, (None, "", None, None))
+        db.session.add(ChecklistResult(report_id=report.id, item_id=item_id, result=res, note=note,
+                                       not_launched=nl, reported=rp))
     if official:
         _copy_photos(report, official)
     teams.status_changed(report, "new", "create", current_user)

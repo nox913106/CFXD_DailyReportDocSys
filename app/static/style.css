@@ -504,3 +504,11 @@ body.pdfv-body { margin: 0; background: #525659; height: 100vh; height: 100dvh; 
 .wr-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; margin: 10px 0 0; align-items: center; }
 .wr-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 .check-row { display: flex; padding: 8px 0; border-bottom: 1px solid #eef1f3; color: var(--text); font-size: 14px; }
+.checklist .flag-col { text-align: center; width: 56px; font-size: 12px; } .checklist .flag-col input { transform: scale(1.2); }
+.wr-kpis { grid-template-columns: repeat(6, 1fr); }
+.wr-state { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; white-space: nowrap; border: 1px solid; }
+.wr-state.reported { color: #1849a9; border-color: #b2ccff; background: #eef4ff; }
+.wr-state.not_launched { color: #475467; border-color: #d0d5dd; background: #f2f4f7; }
+.wr-state.known { color: #6b4b00; border-color: #f0c36d; background: #fff7e6; }
+.wr-events > li.st-reported { background: #fbfcff; }
+.wr-known summary { cursor: pointer; }

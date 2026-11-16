@@ -29,7 +29,9 @@ DEFAULTS = {
     # 戰情室
     "warroom_types": ["alarm", "check", "issue", "true_alarm", "onsite"],
     "warroom_warn_days": 3,  # 持續達這個天數標橘
-    "warroom_alert_days": 7,  # 持續超過這個天數標紅  # 登入頁帳號欄後面顯示的 @後綴；空白 = 網域（ad_domain）
+    "warroom_alert_days": 7,  # 持續超過這個天數標紅
+    # 說明 / 原因 / 備註含這些字的事件列為「已知狀態」，不算異常（不分大小寫；英數字要完整的字）
+    "warroom_known_keywords": ["Not officially launched", "end-of-life", "EOL", "Certificate Error"],  # 登入頁帳號欄後面顯示的 @後綴；空白 = 網域（ad_domain）
     # 上傳
     "max_upload_mb": 20,
     # 備份

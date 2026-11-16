@@ -17,6 +17,11 @@
     <label>超過幾天標紅<input type="number" name="alert_days" min="2" max="365" value="{{ alert }}"></label>
   </div>
   <p class="hint">「超過標紅的天數」也是戰情室上方「持續超過 N 天」的 N。</p>
-  <button type="submit">儲存</button>
+  <h3 style="margin-top:20px">已知狀態關鍵字</h3>
+  <p class="hint">事件的說明、原因或備註含有這些字時，列在戰情室下方的「已知狀態」，不算異常、不計入數字（例如憑證未購買、停產）。
+    一行一個，不分大小寫；英數字要是完整的字（EOL 不會比對到 geolocation）。
+    設備尚未正式上線請在檢查表勾「未上線」，這裡的 <code>Not officially launched</code> 是給沒有勾選欄位的舊日報與匯入的日報用。</p>
+  <label>關鍵字<textarea name="known_keywords" rows="5" spellcheck="false">{{ keywords|join('\n') }}</textarea></label>
+  <button type="submit" style="margin-top:12px">儲存</button>
 </form>
 {% endblock %}
