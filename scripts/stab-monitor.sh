@@ -12,6 +12,7 @@
 #     curl -fsSL .../stab-monitor.sh | sudo bash -s -- uninstall
 #   Netdata 開放內網直接連 http://主機IP:19999（沒有密碼，只允許內網來源）/ 關閉：
 #     sudo stab-monitor netdata-open     sudo stab-monitor netdata-close
+#   服務報告（服務狀態、重啟、網站回應、錯誤訊息）每 10 分鐘更新，Netdata 網址後面加 /stab-report.html
 #   安裝後也可以直接用：sudo stab-monitor status | report | uninstall
 set -euo pipefail
 
@@ -187,24 +188,46 @@ cmd_install() {
   step "建立服務探測與報告排程…"
   write_files
   if curl -fsSL "$URL" -o "$BIN.tmp" 2>/dev/null && bash -n "$BIN.tmp"; then mv "$BIN.tmp" "$BIN"; chmod +x "$BIN"; else rm -f "$BIN.tmp"; fi
-  cat >"$CRON" <<EOF
-# stab-monitor：每分鐘探測服務，每小時產生報告
-* * * * * root $LIB/probe.sh
-7 * * * * root python3 $LIB/report.py -o $REPORT >/dev/null 2>&1
-EOF
   "$LIB/probe.sh" || true
   info "服務探測：每分鐘寫入 $CSV（/healthz 用 port $(app_port)）"
-  info "網頁報告：每小時更新 $REPORT，也可隨時執行 report"
   if [ $netdata = 1 ]; then install_netdata; fi
+  write_cron
+  { python3 "$LIB/report.py" -o "$REPORT" >/dev/null 2>&1 && publish_report; } || true
+  if netdata_webdir >/dev/null; then info "服務報告：每 10 分鐘更新，Netdata 網址後面加 /stab-report.html 就能看"
+  else info "服務報告：每 10 分鐘更新 $REPORT"; fi
   echo
   echo "安裝完成。之後："
   echo "  看狀態     sudo stab-monitor status"
   echo "  產生報告   sudo stab-monitor report   → 下載 $REPORT 用瀏覽器開"
   if [ $netdata = 1 ]; then
     echo "  看 Netdata   $(netdata_where)"
+    echo "  服務報告     Netdata 網址後面加 /stab-report.html"
     echo "               開放內網直接連線：sudo stab-monitor netdata-open；關閉：sudo stab-monitor netdata-close"
   fi
   echo "  驗證結束   sudo stab-monitor uninstall"
+}
+
+# Netdata 的網頁目錄：服務報告放這裡，跟 Netdata 同一個網址、同樣的來源限制
+netdata_webdir() {
+  local d
+  for d in /usr/share/netdata/web /opt/netdata/usr/share/netdata/web; do
+    if [ -d "$d" ]; then echo "$d"; return 0; fi
+  done
+  return 1
+}
+publish_report() {
+  local w
+  w=$(netdata_webdir) || return 0
+  install -m 644 "$REPORT" "$w/stab-report.html"
+}
+write_cron() {
+  local pub="" w
+  if w=$(netdata_webdir); then pub=" && install -m 644 $REPORT $w/stab-report.html"; fi
+  {
+    echo "# stab-monitor：每分鐘探測服務，每 10 分鐘產生服務報告"
+    echo "* * * * * root $LIB/probe.sh"
+    echo "*/10 * * * * root python3 $LIB/report.py -o $REPORT >/dev/null 2>&1$pub"
+  } >"$CRON"
 }
 
 cmd_status() {
@@ -217,6 +240,12 @@ cmd_status() {
   [ -d /var/log/journal ] && info "journal 永久保存" || warn "journal 沒有永久保存"
   if command -v netdata >/dev/null 2>&1; then
     systemctl is-active --quiet netdata && info "Netdata 運作中，$(netdata_where)" || warn "Netdata 沒有運作"
+    local charts
+    charts=$(curl -s -m 5 http://127.0.0.1:19999/api/v1/charts 2>/dev/null || true)
+    if grep -q 'systemdunits' <<<"$charts"; then info "Netdata 服務狀態（systemd units）收集中"
+    else warn "Netdata 沒有服務狀態資料（systemdunits 模組沒有啟動）"; fi
+    if grep -q 'httpcheck' <<<"$charts"; then info "Netdata 網站檢查（/healthz）收集中"
+    else warn "Netdata 沒有網站檢查資料（httpcheck 模組沒有啟動）"; fi
   fi
   [ -f "$REPORT" ] && echo "最近一次報告：$REPORT（$(date -r "$REPORT" '+%F %T')）"
   echo "佔用空間：探測 $(du -sh "$CSV" 2>/dev/null | cut -f1)、sysstat $(du -sh /var/log/sysstat 2>/dev/null | cut -f1)、journal $(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.]+[KMGT]' | head -1)"
@@ -226,6 +255,7 @@ cmd_report() {
   [ -f "$STATE" ] || die "尚未安裝"
   write_report_py  # 用最新版的報告程式
   python3 "$LIB/report.py" -o "${1:-$REPORT}"
+  if [ -z "${1:-}" ]; then publish_report; fi
 }
 
 cmd_uninstall() {
@@ -257,6 +287,8 @@ cmd_uninstall() {
     info "資料保留在 /root/stab-monitor-data"
   fi
   rm -f "$CSV" "$REPORT"
+  local w
+  if w=$(netdata_webdir); then rm -f "$w/stab-report.html"; fi
   rm -rf "$LIB" "$BIN"
   info "移除完成（journal 永久保存保留，之後追問題用得到）"
 }
