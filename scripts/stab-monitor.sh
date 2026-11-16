@@ -61,6 +61,21 @@ cleanup_old() {
   info "已清除舊版（sysstat / Netdata / 排程報告）"
 }
 
+# 19999 被其他程式佔用（通常是前一版裝的 Netdata）時先停掉
+free_port() {
+  systemctl stop $NAME 2>/dev/null || true
+  local who
+  who=$(ss -ltnpH "sport = :$WEB_PORT" 2>/dev/null | grep -oE 'users:\(\("[^"]+' | head -1 | sed 's/.*"//' || true)
+  [ -z "$who" ] && return 0
+  if [ "$who" = netdata ] || systemctl is-active --quiet netdata 2>/dev/null; then
+    systemctl disable --now netdata >/dev/null 2>&1 || true
+    info "停用前一版的 Netdata（它佔用 $WEB_PORT）"
+    sleep 1
+  else
+    die "port $WEB_PORT 被 $who 佔用"
+  fi
+}
+
 cmd_install() {
   echo "主機穩定性驗證：安裝"
   cleanup_old
@@ -84,6 +99,7 @@ WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
   systemctl enable -q $NAME
+  free_port
   systemctl restart $NAME
   # journal 永久保存：重開機後服務訊息與錯誤不會消失
   if [ ! -d /var/log/journal ]; then
@@ -96,7 +112,10 @@ EOF
     ufw allow $WEB_PORT/tcp >/dev/null && touch $LIB/ufw_opened && info "防火牆 ufw 開放 $WEB_PORT/tcp"
   fi
   sleep 2
-  systemctl is-active --quiet $NAME || die "服務沒有啟動：journalctl -u $NAME -n 30"
+  if ! systemctl is-active --quiet $NAME; then
+    echo; journalctl -u $NAME -n 15 --no-pager -o cat 2>/dev/null || true
+    die "服務沒有啟動，請把上面的訊息給開發者"
+  fi
   echo
   info "安裝完成，每分鐘記錄一次，保留 31 天"
   echo "  網頁：http://$(host_ip):$WEB_PORT （只允許內網；連不到請檢查主機前面的防火牆）"
@@ -105,7 +124,8 @@ EOF
 
 cmd_status() {
   [ -f $UNIT ] || die "尚未安裝"
-  systemctl is-active --quiet $NAME && info "運作中：http://$(host_ip):$WEB_PORT" || warn "沒有運作：journalctl -u $NAME -n 30"
+  if systemctl is-active --quiet $NAME; then info "運作中：http://$(host_ip):$WEB_PORT"
+  else warn "沒有運作，最近的訊息："; journalctl -u $NAME -n 15 --no-pager -o cat 2>/dev/null || true; fi
   if [ -s $DATA/samples.jsonl ]; then
     echo "已記錄 $(wc -l <$DATA/samples.jsonl) 筆（$(du -h $DATA/samples.jsonl | cut -f1)）"
   fi
