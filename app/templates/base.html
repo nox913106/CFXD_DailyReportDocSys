@@ -34,6 +34,10 @@
     {% endif %}
   </header>{% endblock %}
   <main class="container">
+    {% if g.front_real_role %}
+      <div class="flash warn front-limited">您的帳號是 {{ g.front_real_role }}，但這次從一般登入頁登入，權限限制為<b>一線使用者</b>。
+        要審核、結案或使用管理功能，請 <a href="{{ url_for('auth.logout', to='admin') }}">登出並改由後台登入</a>。</div>
+    {% endif %}
     {% if health_alert and request.endpoint != 'settings.index' %}
       <div class="flash error">健康檢查有 {{ health_alert['items']|length }} 個需要處理的項目（{{ health_alert.at[5:16].replace('T', ' ') }}）：
         {% for it in health_alert['items'] %}{{ LEVEL_LABELS.get(it.status, '失敗') }} {{ it.name }}{{ '、' if not loop.last }}{% endfor %}。

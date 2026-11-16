@@ -251,10 +251,19 @@ def _ad_login(username, password):
     return user
 
 
-def _finish(user):
+def _finish(user, front=False):
+    """登入。front=True（前台）：管理員帳號這次登入只有一線使用者權限（session 旗標，見 models.load_user）。"""
+    from flask import session
+
+    from .models import FRONT_ONLY, REVIEWER_ROLES
+
+    manager = user.is_admin or user.role in REVIEWER_ROLES
     user.last_login = datetime.now()
     db.session.commit()
     login_user(user)
+    session[FRONT_ONLY] = bool(front)
+    if front and manager:  # 每一頁上方另有提醒（base.html）
+        current_app.logger.info("管理員帳號 %s 從前台登入，權限限制為一線使用者", user.username)
 
 
 FAIL = "帳號或密碼錯誤，或您沒有使用此系統的權限。"
@@ -268,7 +277,7 @@ def login():
         username = clean_username(request.form.get("username"))
         user = _ad_login(username, request.form.get("password", "")) if username else None
         if user:
-            _finish(user)
+            _finish(user, front=True)
             return redirect(_next_url())
         local = User.query.filter_by(username=username).first() if username else None
         if local is not None and local.password_hash:
@@ -295,7 +304,12 @@ def admin_login():
     後台＝審核、結案、正式文件、系統設定等（手機、平板可操作）；撰寫日報在前台（電腦）。"""
     from flask_login import current_user
 
-    if request.method == "GET" and current_user.is_authenticated and _backoffice_ok(current_user):
+    from flask import session
+
+    from .models import FRONT_ONLY
+
+    if (request.method == "GET" and current_user.is_authenticated and not session.get(FRONT_ONLY)
+            and _backoffice_ok(current_user)):
         return redirect(_next_url(default=_backoffice_home(current_user)))
     suffix = sysconf.login_suffix()
     method = request.form.get("method") or request.args.get("method") or "ad"
@@ -326,6 +340,11 @@ def admin_login():
 def logout():
     from flask_login import current_user
 
+    from flask import session
+
+    from .models import FRONT_ONLY
+
     local = bool(current_user.password_hash)
     logout_user()
-    return redirect(url_for("auth.admin_login" if local else "auth.login"))
+    session.pop(FRONT_ONLY, None)
+    return redirect(url_for("auth.admin_login" if local or request.args.get("to") == "admin" else "auth.login"))

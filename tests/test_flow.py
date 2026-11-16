@@ -60,9 +60,15 @@ class Browser:
             self.tok = token(html)
         return html
 
-    def login(self, username):
+    def login(self, username, front=False):
+        """dev 模式登入。測試裡角色常在登入後才設定，所以預設清掉「前台登入」旗標，
+        等同從後台登入（完整權限）；front=True 保留旗標，測試前台登入的管理員降級。"""
         self.get("/login")
-        return self.post("/login", {"username": username, "password": "x"})
+        html = self.post("/login", {"username": username, "password": "x"})
+        if not front:
+            with self.c.session_transaction() as sess:
+                sess.pop("front_only", None)
+        return html
 
 
 def report_id_from(html):
@@ -2154,6 +2160,9 @@ def test_ad_first_login_is_guest(app, monkeypatch):
         a.set_role("file_manager")
         a.sys_admin = True
         db.session.commit()
+    adm.c.get("/logout")  # 管理員要從後台登入才有完整權限
+    adm.get("/admin")
+    adm.post("/admin", {"method": "ad", "username": "anna", "password": "pw"})
 
     g = Browser(app)
     g.get("/login")
@@ -2562,3 +2571,43 @@ def test_mobile_backoffice_markup_and_pdf_viewer(app):
     for f in ("pdfview.js", "mobile.css", "logo.png", "vendor/pdfjs/pdf.min.js", "vendor/pdfjs/pdf.worker.min.js"):
         assert os.path.isfile(os.path.join(static, f)), f
     assert "手機、平板版不提供撰寫" in alice.get(f"/reports/{rid}/basic")
+
+
+def test_front_login_limits_managers_to_first_line(app):
+    """管理員帳號從前台登入：這次登入只有一線使用者權限（不能審核、看不到管理選單、不能進系統設定），
+    每頁上方提醒；資料庫裡的角色不變；改由後台登入即恢復。"""
+    from app import db
+    from app.models import User
+
+    alice = Browser(app)
+    alice.login("alice")
+    rid = submitted_report(app, alice, "2026-11-04")
+    finish_ocr(app, rid)
+    set_role(app, "alice", "first_line")
+    b = Browser(app)
+    b.login("boss", front=True)
+    set_role(app, "boss", "file_manager")
+    with app.app_context():
+        u = User.query.filter_by(username="boss").one()
+        u.sys_admin = True
+        db.session.commit()
+    html = b.get("/")
+    assert "權限限制為<b>一線使用者</b>" in html and "檔案管理員" in html and "登出並改由後台登入" in html
+    assert "系統設定" not in html.split("</header>")[0] and "待我審核" not in html
+    b.get("/admin/settings/", status=403)
+    b.get(f"/reports/{rid}")
+    b.post(f"/reports/{rid}/review", {"action": "approve"}, status=403)
+    # 前台登入期間有寫入（commit）也不會把降級存進資料庫
+    b.get("/")
+    with app.app_context():
+        u = User.query.filter_by(username="boss").one()
+        assert u.role == "file_manager" and u.sys_admin
+    # 登出並改由後台登入：恢復完整權限
+    r = b.c.get("/logout?to=admin")
+    assert r.headers["Location"].endswith("/admin")
+    b.get("/admin")
+    r = b.c.post("/admin", data={"csrf_token": b.tok, "method": "ad", "username": "boss", "password": "x"})
+    assert r.status_code == 302
+    html = b.get("/")
+    assert "一線使用者</b>" not in html and "待我審核" in html
+    b.get("/admin/settings/")

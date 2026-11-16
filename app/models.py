@@ -69,9 +69,39 @@ class User(UserMixin, db.Model):
         return self.role == "second_line"
 
 
+FRONT_ONLY = "front_only"  # session 旗標：從前台 /login 登入（管理員帳號也只有一線使用者權限）
+
+
+def _apply_front_downgrade(user):
+    """只改這次請求載入的物件，不寫回資料庫（set_committed_value 不留下變更紀錄，commit 時不會存）。"""
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    set_committed_value(user, "role", "first_line")
+    set_committed_value(user, "sys_admin", False)
+
+
 @login_manager.user_loader
 def load_user(user_id):
-    return db.session.get(User, int(user_id))
+    """前台登入的管理員帳號（二線、檔案管理員、被指派的系統管理員）這次登入期間一律當成一線使用者。
+    真正的角色留在 g.front_real_role，供頁面提醒。"""
+    from flask import g, has_request_context, session
+
+    user = db.session.get(User, int(user_id))
+    if user is not None and has_request_context() and session.get(FRONT_ONLY):
+        if user.role in ("file_manager", "second_line") or user.is_admin:
+            g.front_real_role = user.role_label + ("・系統管理員" if user.is_admin and user.role != "admin" else "")
+            g.front_user_id = user.id
+            _apply_front_downgrade(user)
+    return user
+
+
+@db.event.listens_for(User, "refresh")
+def _keep_front_downgrade(user, context, attrs):
+    """commit 後物件會過期重新載入：同一次請求內維持降級，不會半途恢復管理員權限。"""
+    from flask import g, has_request_context
+
+    if has_request_context() and getattr(g, "front_user_id", None) == user.id:
+        _apply_front_downgrade(user)
 
 
 # ---------- 主檔（由 app/seed 匯入） ----------
