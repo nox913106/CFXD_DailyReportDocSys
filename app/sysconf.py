@@ -25,7 +25,11 @@ DEFAULTS = {
     "ldap_required_group": "",  # 群組 DN，可多個（一行一個；.env / 指令可用 ; 分隔）
     "ldap_ca_pem": "",  # LDAPS 驗證用的公司 CA 憑證（PEM）；空白 = 系統預設 CA
     "ldap_timeout": 5,
-    "login_suffix": "",  # 登入頁帳號欄後面顯示的 @後綴；空白 = 網域（ad_domain）
+    "login_suffix": "",
+    # 戰情室
+    "warroom_types": ["alarm", "check", "issue", "true_alarm", "onsite"],
+    "warroom_warn_days": 3,  # 持續達這個天數標橘
+    "warroom_alert_days": 7,  # 持續超過這個天數標紅  # 登入頁帳號欄後面顯示的 @後綴；空白 = 網域（ad_domain）
     # 上傳
     "max_upload_mb": 20,
     # 備份

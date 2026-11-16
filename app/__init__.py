@@ -131,10 +131,10 @@ def create_app():
             if request.method == "GET":
                 return redirect(url_for("views.welcome"))
             abort(403)
-        if ep in ("static", "views.archive", "views.final_pdf") or ep.startswith("auth."):
+        if ep in ("static", "views.archive", "views.final_pdf", "views.warroom") or ep.startswith("auth."):
             return None
         if ep == "views.index":
-            return redirect(url_for("views.archive"))
+            return redirect(url_for("views.warroom"))
         abort(403)
 
     @app.after_request

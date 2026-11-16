@@ -84,6 +84,22 @@
     });
   });
 
+  // ---------- 戰情室：依類型篩選 ----------
+  document.querySelectorAll("[data-wr-filter]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var f = btn.getAttribute("data-wr-filter");
+      document.querySelectorAll("[data-wr-filter]").forEach(function (b) { b.classList.toggle("on", b === btn); });
+      var shown = 0;
+      document.querySelectorAll(".wr-events > li").forEach(function (li) {
+        var ok = !f || (f === "long" ? li.getAttribute("data-long") === "1" : li.getAttribute("data-type") === f);
+        li.hidden = !ok;
+        if (ok) shown++;
+      });
+      var empty = document.querySelector(".wr-empty-filter");
+      if (empty) empty.hidden = shown > 0;
+    });
+  });
+
   // ---------- 可增減的記錄 / 表格列 ----------
 
   function cloneTemplate(tpl, container, index) {

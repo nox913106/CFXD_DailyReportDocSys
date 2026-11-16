@@ -189,3 +189,33 @@
   .container { max-width: 980px; }
   .shot-grid { grid-template-columns: repeat(4, 1fr); }
 }
+
+/* 戰情室（手機、平板） */
+@media (max-width: 900px), (hover: none) and (pointer: coarse) {
+  .wr-kpis { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .wr-todo { gap: 10px; }
+  .wr-todo b, .wr-kpis b { font-size: 24px; }
+  .wr-steps li { font-size: 11px; }
+  .wr-steps .lbl { max-width: 4.5em; }
+  .wr-filter { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 4px; width: 100%; }
+  .chip { flex: none; min-height: 36px; padding: 6px 14px; }
+  .wr-events summary { flex-wrap: wrap; gap: 6px 12px; padding: 12px; }
+  .wr-days { width: 44px; }
+  .wr-main { flex-basis: calc(100% - 60px); }
+  .wr-side { width: 100%; flex-direction: row; justify-content: space-between; align-items: center; padding-left: 56px; }
+  .wr-hist { padding: 0 12px 10px; }
+  .wr-trend { height: 110px; gap: 2px; }
+  .wr-trend small { font-size: 9px; }
+}
+@media (min-width: 700px) and (max-width: 900px), (min-width: 700px) and (hover: none) and (pointer: coarse) {
+  .wr-kpis { grid-template-columns: repeat(4, 1fr); }
+  .wr-side { width: auto; flex-direction: column; padding-left: 0; }
+  .wr-main { flex-basis: 0; }
+  .wr-events summary { flex-wrap: nowrap; }
+}
+@media (max-width: 699px) {
+  .wr-steps .lbl { display: none; }
+  .wr-step-now { display: block; margin: 10px 0 0; font-size: 14px; color: var(--muted); }
+  .wr-step-now b { color: var(--text); }
+  .wr-side .hint { max-width: 55%; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}

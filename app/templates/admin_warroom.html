@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}戰情室設定 - CFXD{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('views.warroom') }}">← 戰情室</a></p>
+{% include "_admin_nav.html" %}
+<form method="post" class="card">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <h3>事件類型</h3>
+  <p class="hint">戰情室依日報內容自動整理持續發生的事件，不需要另外輸入。取消勾選的類型不列入戰情室（日報內容不受影響）。</p>
+  {% for t, (label, desc) in types.items() %}
+  <label class="inline check-row"><input type="checkbox" name="type_{{ t }}" value="1" {{ 'checked' if t in enabled }}>
+    <span><b>{{ label }}</b> <span class="hint">{{ desc }}</span></span></label>
+  {% endfor %}
+  <h3 style="margin-top:20px">持續天數標色</h3>
+  <div class="form-grid narrow">
+    <label>持續達幾天標橘<input type="number" name="warn_days" min="1" max="60" value="{{ warn }}"></label>
+    <label>超過幾天標紅<input type="number" name="alert_days" min="2" max="365" value="{{ alert }}"></label>
+  </div>
+  <p class="hint">「超過標紅的天數」也是戰情室上方「持續超過 N 天」的 N。</p>
+  <button type="submit">儲存</button>
+</form>
+{% endblock %}

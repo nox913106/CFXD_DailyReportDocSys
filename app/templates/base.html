@@ -11,9 +11,10 @@
 </head>
 <body class="{% block body_class %}{% endblock %}">
   {% block topbar %}<header class="topbar">
-    <a class="brand" href="{{ url_for('views.index') }}">CFXD SLA 日報系統</a>
+    <a class="brand" href="{{ url_for('views.warroom') if current_user.is_authenticated and current_user.role != 'guest' else url_for('auth.login') }}">CFXD SLA 日報系統</a>
     {% if current_user.is_authenticated %}
     {% set nav = [] %}
+    {% if current_user.role not in ('guest', 'viewer') %}{% set _ = nav.append((url_for('views.index'), '日報清單')) %}{% endif %}
     {% if current_user.role != 'guest' %}{% set _ = nav.append((url_for('views.archive'), '正式文件')) %}{% endif %}
     {% if current_user.role in ('admin', 'file_manager', 'second_line') %}
       {% set _ = nav.append((url_for('views.delegations'), '代理設定')) %}{% set _ = nav.append((url_for('items.index'), '檢查項目')) %}{% endif %}
@@ -26,7 +27,7 @@
         <summary aria-label="選單"><span></span><span></span><span></span></summary>
         <nav>
           <div class="m-user">{{ current_user.name }}<small>{{ current_user.role_label }}{% if current_user.is_admin and not current_user.is_local_admin %}・系統管理員{% endif %}</small></div>
-          {% if current_user.role != "guest" %}<a href="{{ url_for('views.index') }}">日報清單</a>{% endif %}
+          {% if current_user.role != "guest" %}<a href="{{ url_for('views.warroom') }}">戰情室</a>{% endif %}
           {% for href, label in nav %}<a href="{{ href }}">{{ label }}</a>{% endfor %}
           <a href="{{ url_for('auth.logout') }}" class="m-logout">登出</a>
         </nav>

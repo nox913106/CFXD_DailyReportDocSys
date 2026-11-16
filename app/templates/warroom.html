@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}戰情室 - CFXD{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="60">{% endblock %}
+{% block content %}
+{% set wd = ['一','二','三','四','五','六','日'] %}
+{% set c = w.counts %}
+{% set latest = w.latest %}
+<div class="wr-head">
+  <div>
+    <h1>戰情室</h1>
+    {% if latest %}
+    <p class="hint">依據 <a href="{{ url_for('views.detail', report_id=latest.id) if not viewer else '#' }}">{{ latest.report_date }}（{{ wd[latest.report_date.weekday()] }}）{{ latest.doc_no }}</a>
+      {% if latest.status == 'submitted' %}<span class="badge submitted">審核中，尚未核准</span>{% else %}<span class="badge {{ latest.status }}">正式</span>{% endif %}
+      {% if w.prev %}· 與 {{ w.prev.report_date }} 比對{% endif %} · 每分鐘自動更新</p>
+    {% endif %}
+  </div>
+</div>
+
+{% if guests %}
+<div class="flash">有 {{ guests }} 個 AD 帳號以訪客身分登入、等待開通權限。
+  <a href="{{ url_for('views.users') }}#guests">前往帳號管理設定角色</a></div>
+{% endif %}
+{% if reviewer %}
+<nav class="wr-todo">
+  <a href="{{ url_for('views.index') }}#m-pending" class="{{ 'hot' if pending }}"><b>{{ pending|length }}</b>待我審核</a>
+  <a href="{{ url_for('views.index') }}#m-close" class="{{ 'hot' if to_close }}"><b>{{ to_close|length }}</b>待結案</a>
+  <a href="{{ url_for('views.index') }}#m-error" class="{{ 'bad' if delivery_errors }}"><b>{{ delivery_errors|length }}</b>發送中止</a>
+</nav>
+{% endif %}
+
+{% if timeline %}
+<section class="card wr-today">
+  <div class="row-between">
+    <h3>今日日報 <a href="{{ url_for('views.detail', report_id=today_report.id) }}">{{ today_report.doc_no }}</a>
+      <span class="badge {{ today_report.status }}">{{ today_report.status_label }}</span></h3>
+  </div>
+  <ol class="wr-steps">
+    {% for st, label, msg in timeline %}
+    <li class="st-{{ st }}" title="{{ msg }}"><span class="dot"></span><span class="lbl">{{ label.split('（')[0] }}</span></li>
+    {% endfor %}
+  </ol>
+  {% set done = timeline|selectattr(0, 'equalto', 'done')|list %}
+  {% set nxt = timeline|rejectattr(0, 'in', ['done', 'skipped'])|first %}
+  <p class="wr-step-now m-only">已完成 {{ done|length }} / {{ timeline|length }} 步{% if done %}：{{ done[-1][1].split('（')[0] }}{% endif %}
+    {% if nxt %} · 下一步：<b class="{{ 'fail' if nxt[0] == 'error' }}">{{ nxt[1].split('（')[0] }}</b>{% endif %}</p>
+</section>
+{% elif not viewer %}
+<section class="card wr-today"><p class="hint" style="margin:0">今天（{{ today }}）還沒有建立日報。</p></section>
+{% endif %}
+
+{% if not latest %}
+<section class="card"><p class="hint">還沒有正式或審核中的日報，等第一份日報送審後就會出現事件。</p></section>
+{% else %}
+<section class="wr-kpis">
+  <div class="kpi"><b>{{ c.active }}</b><span>進行中事件</span></div>
+  <div class="kpi {{ 'up' if c.new }}"><b>{{ c.new }}</b><span>今日新增</span></div>
+  <div class="kpi {{ 'down' if c.resolved }}"><b>{{ c.resolved }}</b><span>今日解除</span></div>
+  <div class="kpi {{ 'alert' if c.long }}"><b>{{ c.long }}</b><span>持續超過 {{ w.alert }} 天</span></div>
+</section>
+
+<section class="card">
+  <div class="row-between">
+    <h3>持續發生的事件（{{ c.active }}）</h3>
+    <div class="wr-filter" role="group" aria-label="依類型篩選">
+      <button type="button" class="chip on" data-wr-filter="">全部</button>
+      {% for t in w.types %}<button type="button" class="chip" data-wr-filter="{{ t }}">{{ TYPES[t][0] }} {{ c.by_type[t] }}</button>{% endfor %}
+      <button type="button" class="chip" data-wr-filter="long">超過 {{ w.alert }} 天</button>
+    </div>
+  </div>
+  {% if w.events %}
+  <ul class="wr-events">
+    {% for e in w.events %}
+    <li class="lv{{ e.level }}" data-type="{{ e.type }}" data-long="{{ 1 if e.days > w.alert else 0 }}">
+      <details>
+        <summary>
+          <span class="wr-days"><b>{{ e.days }}</b><small>天</small></span>
+          <span class="wr-main">
+            <span class="wr-title"><span class="wr-type t-{{ e.type }}">{{ e.type_label }}</span>
+              {% if e.severity == 'F' %}<span class="sev sev-err">Failed</span>{% elif e.severity == 'W' %}<span class="sev sev-warn">Warning</span>{% endif %}
+              {% if e.new %}<span class="wr-new">今日新增</span>{% endif %}
+              {% if e.provisional %}<span class="badge submitted">審核中</span>{% endif %}
+              <strong>{{ e.title }}</strong></span>
+            <span class="wr-detail">{{ e.detail }}</span>
+            {% if e.note %}<span class="wr-note">{{ e.note }}</span>{% endif %}
+          </span>
+          <span class="wr-side">
+            <span class="wr-strip" aria-label="最近 14 天">{% for st, d in e.strip %}<i class="{{ st }}" title="{{ d }} {{ {'on': '有', 'off': '沒有', 'none': '無日報'}[st] }}"></i>{% endfor %}</span>
+            <span class="hint">自 {{ e.first.strftime('%m/%d') }}{% if e.jira %} · {{ e.jira }}{% endif %}{% if e.category %} · {{ e.category }}{% endif %}</span>
+          </span>
+        </summary>
+        <div class="wr-hist">
+          <table class="list no-cards">
+            <tr><th>日報</th><th>原因 / 狀態 / 備註</th></tr>
+            {% for d, rid, st, note in e.history %}
+            <tr><td class="nowrap">{% if viewer %}{{ d }}{% else %}<a href="{{ url_for('views.detail', report_id=rid) }}">{{ d }}</a>{% endif %}{% if st == 'submitted' %} <span class="badge submitted">審核中</span>{% endif %}</td>
+              <td class="pre">{{ note or '—' }}</td></tr>
+            {% endfor %}
+          </table>
+        </div>
+      </details>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="hint wr-empty-filter" hidden>這個條件沒有事件。</p>
+  {% else %}<p class="hint">目前沒有持續發生的事件。</p>{% endif %}
+</section>
+
+{% if w.resolved %}
+<details class="card">
+  <summary><h3 class="inline">今日解除（{{ w.resolved|length }}）</h3> <span class="hint">{{ w.prev.report_date }} 有、{{ latest.report_date }} 沒有</span></summary>
+  <ul class="wr-resolved">
+    {% for e in w.resolved %}<li><span class="wr-type t-{{ e.type }}">{{ e.type_label }}</span> <strong>{{ e.title }}</strong> <span class="hint">{{ e.detail }}</span></li>{% endfor %}
+  </ul>
+</details>
+{% endif %}
+
+{% if w.trend|length > 1 %}
+<section class="card">
+  <h3>近 {{ w.trend|length }} 份日報的事件數</h3>
+  <div class="wr-trend" role="img" aria-label="每日事件數長條圖">
+    {% for t in w.trend %}
+    <div class="bar" title="{{ t.date }}：{% for k in w.types %}{{ TYPES[k][0] }} {{ t.counts[k] }}{{ '、' if not loop.last }}{% endfor %}（共 {{ t.total }}）">
+      <div class="stack" style="height:{{ (t.total / w.trend_max * 100)|round(1) }}%">
+        {% for k in w.types %}{% if t.counts[k] %}<span class="t-{{ k }}" style="flex:{{ t.counts[k] }}"></span>{% endif %}{% endfor %}
+      </div>
+      <small>{{ t.date.strftime('%d') }}</small>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="wr-legend">{% for k in w.types %}<span><i class="t-{{ k }}"></i>{{ TYPES[k][0] }}</span>{% endfor %}
+    <span class="hint">最高 {{ w.trend_max }} 件</span></p>
+</section>
+{% endif %}
+{% endif %}
+<p class="hint">事件依日報內容自動整理：{% for t in w.types %}{{ TYPES[t][0] }}（{{ TYPES[t][1] }}）{{ '、' if not loop.last }}{% endfor %}。
+  {% if viewer %}只列已核准、已結案的正式日報。{% else %}依據已核准、已結案的日報；最新一份待審核時也列入並標示「審核中」，草稿與退回不算。{% endif %}
+  日報不再出現就視為解除。持續 {{ w.warn }} 天以上標橘、超過 {{ w.alert }} 天標紅。</p>
+{% endblock %}

@@ -50,14 +50,35 @@ def _require_login():
 def welcome():
     """訪客（AD 首次登入、尚未開通）唯一能看到的頁面：請系統管理員設定權限。"""
     if current_user.role != "guest":
-        return redirect(url_for("views.index"))
+        return redirect(url_for("views.warroom"))
     admins = [u for u in User.query.order_by(User.display_name, User.username) if u.is_admin and not u.is_local_admin
               and "#" not in u.username]
     return render_template("welcome.html", admins=admins)
 
 
 @bp.route("/")
+def warroom():
+    """戰情室（所有角色的首頁）：持續發生的事件、今日日報進度、待辦數字。"""
+    from . import delivery, warroom as wr
+    from .models import REVIEWER_ROLES
+
+    viewer = current_user.role == "viewer"
+    data = wr.build(official_only=viewer)
+    today = Report.query.filter_by(report_date=date.today()).first()
+    reviewer = current_user.is_admin or current_user.role in REVIEWER_ROLES
+    return render_template(
+        "warroom.html", w=data, viewer=viewer, reviewer=reviewer, TYPES=wr.TYPES,
+        today_report=today, today=date.today(),
+        guests=User.query.filter_by(role="guest").count() if current_user.is_admin else 0,
+        timeline=delivery.timeline(today) if today and not viewer else [],
+        pending=pending_for(current_user) if reviewer else [], **(_desk() if reviewer else
+                                                                  {"to_close": [], "delivery_errors": []}),
+    )
+
+
+@bp.route("/reports")
 def index():
+    """日報清單（含待我審核、待結案、發送中止）。"""
     month = request.args.get("month") or date.today().strftime("%Y-%m")
     try:
         first = datetime.strptime(month, "%Y-%m").date()

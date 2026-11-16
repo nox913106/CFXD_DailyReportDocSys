@@ -201,7 +201,7 @@ def _next_url(default=None):
     next_url = request.args.get("next", "")
     # 只允許站內相對路徑，避免開放式重新導向
     if not next_url.startswith("/") or next_url.startswith("//") or next_url.startswith("/\\"):
-        next_url = default or url_for("views.index")
+        next_url = default or url_for("views.warroom")
     return next_url
 
 
@@ -295,7 +295,7 @@ def _backoffice_ok(user):
 
 def _backoffice_home(user):
     """本機緊急帳號 → 系統設定；其他管理員 → 日報清單（待審核在最上面）。"""
-    return url_for("settings.index") if user.role == "admin" else url_for("views.index")
+    return url_for("settings.index") if user.role == "admin" else url_for("views.warroom")
 
 
 @bp.route("/admin", methods=["GET", "POST"], strict_slashes=False)

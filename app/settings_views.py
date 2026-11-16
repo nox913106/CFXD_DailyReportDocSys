@@ -68,6 +68,34 @@ def versions():
                            commit=(version() or "")[:7], counts=counts, type_labels=TYPE_LABELS)
 
 
+@bp.route("/warroom", methods=["GET", "POST"])
+def warroom():
+    """戰情室設定：要列入哪些事件類型、持續天數的標色門檻。"""
+    from . import sysconf, warroom as wr
+
+    if request.method == "POST":
+        types = [t for t in wr.TYPES if request.form.get(f"type_{t}") == "1"]
+        if not types:
+            flash("至少要保留一種事件類型。", "error")
+            return redirect(url_for("settings.warroom"))
+        try:
+            warn = max(1, min(60, int(request.form.get("warn_days", 3))))
+            alert = max(warn + 1, min(365, int(request.form.get("alert_days", 7))))
+        except ValueError:
+            flash("天數請填數字。", "error")
+            return redirect(url_for("settings.warroom"))
+        sysconf.put("warroom_types", types, current_user)
+        sysconf.put("warroom_warn_days", warn, current_user)
+        sysconf.put("warroom_alert_days", alert, current_user)
+        _audit("sys_settings", "戰情室", f"類型 {'、'.join(wr.TYPES[t][0] for t in types)}；{warn} 天標橘、超過 {alert} 天標紅")
+        db.session.commit()
+        flash("已儲存戰情室設定。", "success")
+        return redirect(url_for("settings.warroom"))
+    warn, alert = wr.thresholds()
+    return render_template("admin_warroom.html", tab="warroom", types=wr.TYPES, enabled=wr.enabled_types(),
+                           warn=warn, alert=alert)
+
+
 @bp.route("/sysinfo")
 def sysinfo():
     """系統資訊：硬體、作業系統、執行環境、服務、系統套件、Python 套件、字型、OCR 模型（每次即時讀取）。"""

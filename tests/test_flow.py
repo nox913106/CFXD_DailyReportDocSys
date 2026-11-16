@@ -308,10 +308,10 @@ def test_full_flow(app):
         assert r2.doc_no == "CFXD-SCA-RLY-DPR-000896" and r2.status == "draft" and r2.revision == 0
 
     # 首頁、月份切換、所有頁面都能開
-    for url in ["/", "/?month=2026-11", f"/reports/{rid2}", f"/reports/{rid2}/basic", f"/reports/{rid2}/records",
+    for url in ["/", "/reports?month=2026-11", "/reports", f"/reports/{rid2}", f"/reports/{rid2}/basic", f"/reports/{rid2}/records",
                 f"/reports/{rid2}/alarms", f"/reports/{rid2}/checklist", f"/reports/{rid2}/screenshots"]:
         alice.get(url)
-    alice.get("/?month=bad", status=400)
+    alice.get("/reports?month=bad", status=400)
     alice.get("/reports/9999", status=404)
     alice.get(f"/reports/{rid2}/checklist/nope", status=404)
 
@@ -392,7 +392,7 @@ def test_delegated_approval(app):
     set_role(app, "boss2", "file_manager")
 
     # 未授權前：二線看不到、不能審；另一位檔案管理員也不能審指定給 boss 的日報
-    assert "待我審核" not in carol.get("/")
+    assert "待我審核" not in carol.get("/reports")
     carol.get(f"/reports/{rid}")
     carol.post(f"/reports/{rid}/review", {"action": "approve"}, status=403)
     boss2.get(f"/reports/{rid}")
@@ -409,7 +409,7 @@ def test_delegated_approval(app):
 
     # 有效授權：carol 代簽核准，文件仍顯示 boss
     assert "已授權" in boss.post("/delegations", {"delegate_id": str(carol_id), "start_date": "2020-01-01", "note": "出差"})
-    html = carol.get("/")
+    html = carol.get("/reports")
     assert "待我審核" in html and "代簽" in html
     assert "代 boss 簽核" in carol.get(f"/reports/{rid}")
     html = carol.post(f"/reports/{rid}/review", {"action": "approve"})
@@ -774,7 +774,7 @@ def test_report_checks(app):
     # 畫面：送審後審核者在日報頁與待審清單看到檢查結果
     alice.get(f"/reports/{rid2}")
     alice.post(f"/reports/{rid2}/submit")
-    html = boss.get("/")
+    html = boss.get("/reports")
     assert "檢查結果" in html and ("無誤" in html or "警告" in html)
     html = boss.get(f"/reports/{rid2}")
     assert "檢查結果" in html and "告警差異：新增 1" in html and "2026-11-01" in html
@@ -1557,7 +1557,7 @@ def test_new_report_copy_option(app):
 
     alice = Browser(app)
     alice.login("alice")
-    assert 'name="copy_prev" value="1" checked' in alice.get("/")
+    assert 'name="copy_prev" value="1" checked' in alice.get("/reports")
     r1 = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-01"}))
     alice.post(f"/reports/{r1}/basic", {"revision": "2", "issue_purpose": "IFI - Issue for Information", "inspection_time": "09:30 AM",
                                          "first_line_officer": "Alice", "second_line_support": "Bob"})
@@ -1776,7 +1776,7 @@ def test_close_and_delivery(app, monkeypatch):
         assert fake.links == [{"type": "view", "scope": "organization"}] * 2
 
     # 中止時首頁與日報頁都看得到；一線不能重試，二線可以，從寄信那一步繼續
-    assert "發送中止" in carol.get("/") and "mailbox unavailable" in carol.get(f"/reports/{rid}")
+    assert "發送中止" in carol.get("/reports") and "mailbox unavailable" in carol.get(f"/reports/{rid}")
     assert "只有二線管理員以上可以重試" in alice.post(f"/reports/{rid}/delivery/retry")
     assert "已排入重試" in carol.post(f"/reports/{rid}/delivery/retry")
     with app.app_context():
@@ -1809,7 +1809,8 @@ def test_close_and_delivery(app, monkeypatch):
     assert carol.c.get(f"/reports/{rid}/pdf").data == pdf_bytes
 
     # 檢視者：只能看正式文件頁、下載已結案 PDF
-    html = vic.get("/")
+    assert "戰情室" in vic.get("/")  # 檢視者首頁是戰情室（只看正式日報）
+    html = vic.get("/archive")
     assert "正式文件" in html and d.pdf_md5 in html
     assert vic.c.get(f"/reports/{rid}/final.pdf").data == pdf_bytes
     for url in (f"/reports/{rid}", f"/reports/{rid}/pdf", f"/reports/{rid}/basic", "/delegations", "/admin/users"):
@@ -2557,9 +2558,9 @@ def test_mobile_backoffice_markup_and_pdf_viewer(app):
     boss.login("boss")
     set_role(app, "boss", "file_manager")
     finish_ocr(app, rid)
-    html = boss.get("/")
+    html = boss.get("/reports")
     assert 'class="m-only m-tiles"' in html and 'class="m-list m-only"' in html
-    assert "new-report desk-only" in alice.get("/")
+    assert "new-report desk-only" in alice.get("/reports")
     html = boss.get(f"/reports/{rid}")
     assert "m-summary" in html and f"/reports/{rid}/view" in html and "m-dock" in html
     assert 'data-need-comment' in html and 'data-confirm' in html
@@ -2611,3 +2612,67 @@ def test_front_login_limits_managers_to_first_line(app):
     html = b.get("/")
     assert "一線使用者</b>" not in html and "待我審核" in html
     b.get("/admin/settings/")
+
+
+def test_warroom(app):
+    """戰情室：依日報內容算持續天數、今日新增 / 解除；最新一份待審核標「審核中」，草稿不算；
+    檢視者只看正式日報；後台可關閉事件類型與調整門檻；日報清單移到 /reports。"""
+    from datetime import timedelta
+
+    from app import db, docno, warroom
+    from app.models import AlarmSummaryRow, IssueRecord, Report, User
+
+    alice = Browser(app)
+    alice.login("alice")
+    with app.app_context():
+        w = User.query.filter_by(username="alice").one()
+        d0 = date(2026, 10, 1)
+
+        def rep(i, status):
+            d = d0 + timedelta(days=i)
+            r = Report(report_date=d, doc_no=docno.doc_no(d), contractor_doc_no=docno.contractor_doc_no(d),
+                       author_id=w.id, updated_by_id=w.id, status=status)
+            db.session.add(r)
+            db.session.flush()
+            return r
+
+        for i in range(6):  # 10/01–10/06 正式
+            r = rep(i, "closed")
+            db.session.add(AlarmSummaryRow(report_id=r.id, category="PI", item="8.3", device_name="PI-01", description="queue high"))
+            if i >= 3:
+                db.session.add(IssueRecord(report_id=r.id, issue_type="Net", description="RTU comms", jira="J-1"))
+            if i == 5:
+                db.session.add(AlarmSummaryRow(report_id=r.id, category="PI", item="9.9", device_name="OLD-01", description="gone"))
+        r = rep(6, "submitted")  # 10/07 待審核：PI-01 延續、OLD-01 解除、新增 UTM
+        for dev in ("PI-01", "UTM-01"):
+            db.session.add(AlarmSummaryRow(report_id=r.id, category="PI", item="8.3" if dev == "PI-01" else "6.1",
+                                           device_name=dev, description="queue high" if dev == "PI-01" else "tunnel"))
+        db.session.add(IssueRecord(report_id=r.id, issue_type="Net", description="RTU comms", jira="J-1"))
+        r = rep(7, "draft")  # 草稿不算
+        db.session.add(AlarmSummaryRow(report_id=r.id, category="PI", item="1.1", device_name="DRAFT-ONLY", description="x"))
+        db.session.commit()
+        data = warroom.build()
+        ev = {e.title: e for e in data["events"]}
+        assert data["latest"].status == "submitted" and "DRAFT-ONLY" not in ev
+        assert ev["PI-01"].days == 7 and ev["PI-01"].first == d0 and not ev["PI-01"].new
+        assert ev["UTM-01"].new and ev["UTM-01"].provisional
+        assert ev["Net"].days == 4 and ev["Net"].jira == "J-1"
+        assert [e.title for e in data["resolved"]] == ["OLD-01"]
+        assert data["counts"]["long"] == 0 and ev["PI-01"].level == 1  # 7 天：標橘（超過 7 天才紅）
+        off = warroom.build(official_only=True)
+        assert off["latest"].report_date == date(2026, 10, 6) and "UTM-01" not in {e.title for e in off["events"]}
+
+    html = alice.get("/")
+    assert "戰情室" in html and "PI-01" in html and "審核中，尚未核准" in html and "今日解除（1）" in html
+    assert "日報清單" in alice.get("/reports")
+    # 後台關掉「問題紀錄」、門檻改 2 / 5
+    root = _admin_browser(app)
+    root.get("/admin/settings/warroom")
+    form = {f"type_{t}": "1" for t in ("alarm", "check", "true_alarm", "onsite")}
+    form.update(warn_days="2", alert_days="5")
+    assert "已儲存戰情室設定" in root.post("/admin/settings/warroom", form)
+    with app.app_context():
+        data = warroom.build()
+        assert "issue" not in data["types"] and all(e.type != "issue" for e in data["events"])
+        assert data["counts"]["long"] == 1  # PI-01 7 天 > 5
+    assert "至少要保留一種" in root.post("/admin/settings/warroom", {"warn_days": "2", "alert_days": "5"})
