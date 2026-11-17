@@ -453,6 +453,11 @@ curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/ma
 curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash -s -- upgrade
 ```
 
+v4.43.0 起也可以在網頁升級：系統管理員到「系統設定 → 版本紀錄」，頁面列出 GitHub 上比目前新的版本與內容，按「升級到最新版」。
+網頁只寫一個要求檔，由主機上以 root 執行的 `dailyreport-upgrade.path` / `.service` 做與上面指令完全相同的升級，
+頁面顯示進度與記錄（服務重啟時自動等候再重新整理），每次升級記錄在稽核紀錄。要求檔內容不會被採用，升級來源固定為安裝時的 GitHub 分支。
+從 v4.43.0 以前的版本升級時，第一次仍需在主機執行上面的指令（安裝升級服務），之後就能用按鈕。
+
 安裝腳本（`scripts/dailyreport.sh install`）會：檢查作業系統、記憶體與磁碟 → 安裝 Python、nginx、SQLite、字型與相依套件 →
 時間同步（優先使用 Google 時間伺服器 `time.google.com`，原本的伺服器保留當備援；`--ntp <伺服器,…>` 改用公司時間伺服器，`--ntp none` 不變更）→
 建立系統帳號 `dailyreport` 與虛擬環境 → 產生 `.env`（隨機 `SECRET_KEY`）→ 建立本機緊急帳號 `sysadmin`（密碼只在結束時印一次，

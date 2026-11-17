@@ -11,8 +11,44 @@
     <li><strong>Y 功能</strong>：現有功能的新增、刪除、變更，Z 歸零。共 {{ counts.Y }} 次。</li>
     <li><strong>Z 修正</strong>：修正 BUG、錯誤、安全補丁。共 {{ counts.Z }} 次。</li>
   </ul>
-  <p class="hint">升級：<code class="wrap">curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash -s -- upgrade</code>
-    （「系統狀態」頁會提示 GitHub 上是否有新版）</p>
+</section>
+
+<section class="card upgrade-card" id="upgrade" data-status="{{ url_for('settings.upgrade_status') }}" data-current="{{ current }}">
+  <div class="row-between">
+    <h3>升級</h3>
+    {% if up_available and not up_to_date and remote %}
+    <form method="post" action="{{ url_for('settings.upgrade_now') }}" class="inline"
+          onsubmit="return confirm('升級到 GitHub 上的最新版？\n\n會先自動備份，再更新程式並重新啟動服務，約需 1–5 分鐘，期間網頁會短暫無法使用。\n請確認目前沒有人正在填寫或審核。')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" {{ 'disabled' if up_status.pending or up_status.state == 'running' }}>升級到最新版</button>
+    </form>
+    {% endif %}
+  </div>
+  {% if not remote %}
+  <p class="hint">無法連線到 GitHub 檢查新版（主機需要能連到 github.com）。</p>
+  {% elif up_to_date %}
+  <p><span class="badge approved">已是最新版</span> <span class="hint">GitHub main <code>{{ remote }}</code></span></p>
+  {% else %}
+  <p>GitHub 上有新版 <code>{{ remote }}</code>{% if new_rows %}，共 {{ new_rows|length }} 個版本{% endif %}：</p>
+  {% if new_rows %}
+  <ul class="upgrade-new">{% for r in new_rows %}<li><strong>{{ r.version }}</strong> <span class="vtype vtype-{{ r.type if r.type in ('X','Y','Z') else 'init' }}">{{ r.type }} {{ type_labels.get(r.type, '') }}</span>
+    <span class="hint">{{ r.date }}</span><br>{{ r.text }}</li>{% endfor %}</ul>
+  {% elif new_rows is none %}<p class="hint">（無法讀取新版的版本紀錄）</p>{% endif %}
+  {% if not up_available %}
+  <p class="flash">主機尚未安裝升級服務，這次請在主機執行：<code class="wrap">{{ up_cmd }}</code><br>升級到這一版以後，之後都可以直接按這裡的按鈕升級。</p>
+  {% endif %}
+  {% endif %}
+  <div class="upgrade-progress" {{ 'hidden' if not (up_status.pending or up_status.state) }}>
+    <p data-up-msg>
+      {% if up_status.pending %}已送出升級要求，等待主機開始…
+      {% elif up_status.state == 'running' %}升級中（{{ up_status.at }} 開始）…
+      {% elif up_status.state == 'done' %}上次升級：{{ up_status.at }} 完成，v{{ up_status.from }} → v{{ up_status.to }}
+      {% elif up_status.state == 'error' %}上次升級失敗（{{ up_status.at }}），請看下方記錄{% endif %}</p>
+    <details {{ 'open' if up_status.pending or up_status.state in ('running', 'error') }}><summary>升級記錄</summary>
+      <pre class="upgrade-log" data-up-log>{{ up_status.log }}</pre></details>
+  </div>
+  <p class="hint">按鈕與主機指令 <code>bootstrap.sh upgrade</code> 做的事完全相同：升級前自動備份 → 更新程式 → 安裝相依套件 → 重新啟動服務 → 健康檢查。
+    只有系統管理員可以升級，每次升級都記錄在稽核紀錄。</p>
 </section>
 <section class="card">
   <h3>全部版本（{{ rows|length }}）</h3>
@@ -31,4 +67,5 @@
     {% else %}<tr><td colspan="5" class="hint">找不到 CHANGELOG.md。</td></tr>{% endfor %}
   </table></div>
 </section>
+<script src="{{ url_for('static', filename='upgrade.js') }}" defer></script>
 {% endblock %}

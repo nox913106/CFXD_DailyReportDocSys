@@ -541,3 +541,8 @@ body.lb-open { overflow: hidden; }
 /* 收回送審 */
 .withdraw-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
 .withdraw-form input[type=text] { flex: 1 1 220px; min-width: 0; }
+
+/* 升級 */
+.upgrade-new { margin: 6px 0 10px; padding-left: 20px; }
+.upgrade-new li { margin-bottom: 6px; }
+.upgrade-log { max-height: 320px; overflow: auto; background: #0d1117; color: #c9d1d9; padding: 10px; border-radius: 6px; font-size: 12px; white-space: pre-wrap; }

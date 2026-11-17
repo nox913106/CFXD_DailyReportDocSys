@@ -354,16 +354,16 @@ def _system_checks(out):
               "" if ntp == "yes" else "主機管理員確認防火牆允許 UDP 123 對外連到 time.google.com（安裝與升級會自動設定）")
     ver = backup.version()
     if ver:
-        rc, remote = _run(["git", "-c", f"safe.directory={backup.app_dir()}", "-C", backup.app_dir(),
-                           "ls-remote", "origin", "refs/heads/main"], timeout=15)
-        latest = remote.split()[0] if rc == 0 and remote else ""
+        from . import upgrade
+
+        latest = upgrade.remote_head()
         if not latest:
             _item(out, g, "程式版本", "ok", f"{backup.display_version()}，無法連線檢查新版")
         elif latest == ver:
             _item(out, g, "程式版本", "ok", f"{backup.display_version()}，最新")
         else:
             _item(out, g, "程式版本", "warn", f"{backup.display_version()}，GitHub 上有新版 {latest[:7]}",
-                  f"在主機執行：curl -fsSL https://raw.githubusercontent.com/nox913106/CFXD_DailyReportDocSys/main/scripts/bootstrap.sh | sudo bash -s -- upgrade")
+                  "系統設定 → 版本紀錄：按「升級到最新版」" if upgrade.available() else f"在主機執行：{upgrade.UPGRADE_CMD}")
 
     g = "服務"
     rc, _ = _run(["systemctl", "--version"])

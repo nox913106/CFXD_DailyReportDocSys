@@ -1,0 +1,8 @@
+[Unit]
+Description=CFXD Daily Report: upgrade requested from the settings page
+
+[Path]
+PathExists=/opt/dailyreport/instance/upgrade_request/request.json
+
+[Install]
+WantedBy=paths.target

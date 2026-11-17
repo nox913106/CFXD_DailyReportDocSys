@@ -1,0 +1,8 @@
+[Unit]
+Description=CFXD Daily Report: upgrade to the latest version (requested from the settings page)
+
+[Service]
+Type=oneshot
+# 以 root 執行，與主機上的 bootstrap.sh upgrade 相同：升級前備份 → 更新程式 → 相依套件 → 重新啟動服務 → 健康檢查
+ExecStart=/bin/bash /opt/dailyreport/scripts/dailyreport.sh web-upgrade
+TimeoutStartSec=1800

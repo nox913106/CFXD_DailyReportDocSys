@@ -2903,3 +2903,46 @@ def test_db_quick_backup_schedule_and_restore(app, tmp_path):
         assert Report.query.count() == before + 1
         backup.restore(db_name)
         assert Report.query.count() == before
+
+
+def test_upgrade_button(app, tmp_path, monkeypatch):
+    """版本紀錄頁的「升級到最新版」：只寫要求檔（由主機 root 的 dailyreport-upgrade 執行），顯示新版內容與進度；
+    主機還沒有升級服務時改顯示主機指令；升級中不能重複按；記錄在稽核。"""
+    import json
+    import os
+
+    from app import upgrade
+    from app.models import AuditLog
+
+    app.config["UPGRADE_STATE_DIR"] = str(tmp_path / "state")
+    upgrade._cache.clear()
+    monkeypatch.setattr(upgrade, "remote_head", lambda: "f" * 40)
+    monkeypatch.setattr(upgrade, "new_versions", lambda cur: [{"version": "v99.0.0", "date": "2099-01-01", "type": "X", "text": "新架構"}])
+    b = _admin_browser(app)
+
+    monkeypatch.setattr(upgrade, "available", lambda: False)
+    html = b.get("/admin/settings/versions")
+    assert "v99.0.0" in html and "新架構" in html and "bootstrap.sh" in html and "升級到最新版</button>" not in html
+    assert "尚未安裝升級服務" in b.post("/admin/settings/upgrade")
+
+    monkeypatch.setattr(upgrade, "available", lambda: True)
+    assert "升級到最新版</button>" in b.get("/admin/settings/versions")
+    assert "已開始升級" in b.post("/admin/settings/upgrade")
+    req = os.path.join(app.instance_path, "upgrade_request", "request.json")
+    assert json.load(open(req))["by"]
+    assert "已經在升級中" in b.post("/admin/settings/upgrade")
+    with app.app_context():
+        assert AuditLog.query.filter_by(action="upgrade").count() == 1
+
+    # 主機開始執行（移除要求檔、寫入進度）→ 狀態 API 看得到進度與記錄
+    os.remove(req)
+    os.makedirs(tmp_path / "state")
+    (tmp_path / "state" / "status.json").write_text(json.dumps({"state": "running", "msg": "升級中", "from": "4.42.0", "to": "4.42.0", "at": "2026-11-17 10:00:00"}))
+    (tmp_path / "state" / "upgrade.log").write_text("\x1b[32m✓\x1b[0m 升級前備份\n")
+    s = b.c.get("/admin/settings/upgrade/status.json").get_json()
+    assert s["state"] == "running" and not s["pending"] and s["log"] == "✓ 升級前備份"
+    assert "已經在升級中" in b.post("/admin/settings/upgrade")
+    # 一般使用者不能升級
+    alice = Browser(app)
+    alice.login("alice")
+    assert alice.c.post("/admin/settings/upgrade", data={"csrf_token": alice.tok}).status_code == 403

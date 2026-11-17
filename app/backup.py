@@ -29,7 +29,7 @@ from . import db, sysconf
 
 NAME_RE = re.compile(r"^20\d{6}-\d{6}-[A-Za-z0-9]{4,12}$")
 DOWNLOADABLE = ("dailyreport.db", "instance.tar.gz")  # env 含 SECRET_KEY，不提供下載
-EXCLUDE_DIRS = {"pdf_cache", "tls_request"}
+EXCLUDE_DIRS = {"pdf_cache", "tls_request", "upgrade_request"}
 
 
 class BackupError(RuntimeError):

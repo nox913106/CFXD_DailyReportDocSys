@@ -35,6 +35,7 @@ APP_USER=dailyreport
 APP_GROUP=www-data
 ETC=/etc/dailyreport
 BACKUP_DIR="${DR_BACKUP_DIR:-/var/backups/dailyreport}"
+UPGRADE_STATE=/var/lib/dailyreport-upgrade  # 網頁「升級」按鈕的進度與記錄（root 寫入，網頁服務只能讀）
 VENV="$DIR/.venv"
 ENV_FILE="$DIR/.env"
 INSTANCE="$DIR/instance"
@@ -431,9 +432,11 @@ setup_systemd() {
     info "移除舊版備份排程（改在系統設定頁設定）"
   fi
   systemctl daemon-reload
-  systemctl enable -q "${SERVICES[@]}" dailyreport-tls.path
+  systemctl enable -q "${SERVICES[@]}" dailyreport-tls.path dailyreport-upgrade.path
   systemctl restart "${SERVICES[@]}"
   systemctl restart dailyreport-tls.path
+  # 網頁按鈕觸發的升級正在執行時不要重啟它自己的觸發器
+  [[ "${DR_WEB_UPGRADE:-}" == 1 ]] || systemctl restart dailyreport-upgrade.path
   info "網頁 $w 個 worker、OCR、AI、維護（備份 / 健康檢查）背景服務、HTTPS 憑證套用"
 }
 
@@ -620,6 +623,33 @@ cmd_restore() {
   systemctl start "${SERVICES[@]}"
   wait_healthy
   echo "${G}還原完成${N}"
+}
+
+# ---------------------------------------------------------------- 系統設定頁「升級」按鈕（dailyreport-upgrade.path 觸發）
+
+cmd_web_upgrade() {
+  need_root
+  load_conf
+  # 要求檔在網頁服務可寫的資料夾：只看「有沒有」，內容一律不採用；狀態與記錄寫在網頁服務不能寫入的 $UPGRADE_STATE
+  local req="$INSTANCE/upgrade_request/request.json" st="$UPGRADE_STATE" vb ok
+  [[ -e "$req" || -L "$req" ]] || return 0
+  rm -f "$req"  # 先移除：升級過程重啟服務時不會再觸發一次
+  install -d -o root -g "$APP_GROUP" -m 750 "$st"
+  vb="$(cat "$DIR/VERSION" 2>/dev/null || echo "?")"
+  upgrade_status() {  # upgrade_status running|done|error 訊息
+    STATE="$1" MSG="$2" FROM="$vb" TO="$(cat "$DIR/VERSION" 2>/dev/null || echo "?")" AT="$(date '+%Y-%m-%d %H:%M:%S')" python3 -c \
+      'import json, os; print(json.dumps({k.lower(): os.environ[k] for k in ("STATE", "MSG", "FROM", "TO", "AT")}, ensure_ascii=False))' \
+      > "$st/status.json.tmp"
+    chgrp "$APP_GROUP" "$st/status.json.tmp"
+    chmod 640 "$st/status.json.tmp"
+    mv -f "$st/status.json.tmp" "$st/status.json"
+  }
+  install -o root -g "$APP_GROUP" -m 640 /dev/null "$st/upgrade.log"
+  upgrade_status running "升級中"
+  ok=0
+  DR_WEB_UPGRADE=1 bash "$DIR/scripts/dailyreport.sh" upgrade >> "$st/upgrade.log" 2>&1 && ok=1
+  if [[ $ok == 1 ]]; then upgrade_status done "升級完成"; else upgrade_status error "升級失敗，詳見記錄"; fi
+  systemctl restart dailyreport-upgrade.path 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------- 系統設定頁上傳的 HTTPS 憑證（dailyreport-tls.path 觸發）
@@ -840,6 +870,7 @@ case "$cmd" in
   upgrade) cmd_upgrade "$@" ;;
   _post_upgrade) cmd_post_upgrade ;;
   apply-tls) cmd_apply_tls ;;
+  web-upgrade) cmd_web_upgrade ;;
   doctor|check) cmd_doctor ;;
   backup) cmd_backup "$@" ;;
   restore) cmd_restore "$@" ;;

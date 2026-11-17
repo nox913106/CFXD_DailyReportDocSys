@@ -64,8 +64,48 @@ def versions():
     rows = changelog()
     current = f"v{semver()}" if semver() else ""
     counts = {k: sum(1 for r in rows if r["type"] == k) for k in ("X", "Y", "Z")}
+    from . import upgrade as up
+
+    head = up.remote_head()
     return render_template("admin_versions.html", tab="versions", rows=rows, current=current,
-                           commit=(version() or "")[:7], counts=counts, type_labels=TYPE_LABELS)
+                           commit=(version() or "")[:7], counts=counts, type_labels=TYPE_LABELS,
+                           up_available=up.available(), up_status=up.status(), up_cmd=up.UPGRADE_CMD,
+                           remote=head[:7], up_to_date=bool(head) and head == (version() or ""),
+                           new_rows=up.new_versions(current) if head and head != (version() or "") else [])
+
+
+@bp.route("/upgrade", methods=["POST"])
+def upgrade_now():
+    """升級到 GitHub 上的最新版：寫入要求，由主機上以 root 執行的 dailyreport-upgrade 完成（與主機指令升級相同）。"""
+    from . import upgrade as up
+    from .backup import semver
+    from .models import Delivery, MaintJob
+
+    back = redirect(url_for("settings.versions"))
+    if not up.available():
+        flash("主機尚未安裝升級服務：請先在主機用指令升級一次，之後就能用這個按鈕。", "error")
+        return back
+    if up.busy():
+        flash("已經在升級中，請稍候。", "error")
+        return back
+    if Delivery.query.filter_by(state="running").count() or MaintJob.query.filter_by(status="running").count():
+        flash("正式 PDF / 發送或備份還原正在進行，完成後再升級。", "error")
+        return back
+    up.request(current_user)
+    _audit("upgrade", "系統", f"從 v{semver()} 升級到最新版")
+    db.session.commit()
+    flash("已開始升級：會先備份，再更新程式並重新啟動服務，約需 1–5 分鐘；期間網頁會短暫無法使用，這一頁會自動更新。", "success")
+    return back
+
+
+@bp.route("/upgrade/status.json")
+def upgrade_status():
+    from flask import jsonify
+
+    from . import upgrade as up
+    from .backup import semver
+
+    return jsonify(running_version=semver(), **up.status())
 
 
 @bp.route("/warroom", methods=["GET", "POST"])
