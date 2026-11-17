@@ -139,8 +139,12 @@ def _tar_filter(instance, root):
     return f
 
 
-def create(trigger="manual", user=None, prune=True):
-    """建立一份備份，回傳 (名稱, 大小 bytes)。"""
+DB_HOURS_CHOICES = (0, 1, 2, 3, 4, 6, 8, 12)
+
+
+def create(trigger="manual", user=None, prune=True, db_only=False):
+    """建立一份備份，回傳 (名稱, 大小 bytes)。
+    db_only：資料庫快速備份，只有資料庫（日報內容、狀態、帳號、設定），不含截圖與 PDF 等檔案；可直接還原。"""
     root = sysconf.backup_dir()
     err = check_dir(root)
     if err:
@@ -160,17 +164,19 @@ def create(trigger="manual", user=None, prune=True):
                 dst.close()
                 src.close()
                 instance = current_app.instance_path
-                with tarfile.open(os.path.join(dest, "instance.tar.gz"), "w:gz") as tar:
-                    tar.add(instance, arcname="instance", filter=_tar_filter(instance, root))
+                if not db_only:
+                    with tarfile.open(os.path.join(dest, "instance.tar.gz"), "w:gz") as tar:
+                        tar.add(instance, arcname="instance", filter=_tar_filter(instance, root))
                 env = os.path.join(app_dir(), ".env")
-                if sysconf.get("backup_include_env") and os.access(env, os.R_OK):
+                if not db_only and sysconf.get("backup_include_env") and os.access(env, os.R_OK):
                     shutil.copyfile(env, os.path.join(dest, "env"))
                 with open(os.path.join(dest, "VERSION"), "w") as fh:
                     fh.write(version() + "\n")
                 from .models import Report
 
                 meta = {"trigger": trigger, "by": user.username if user else "", "created_at": datetime.now().isoformat(),
-                        "version": version(), "app_version": semver(), "reports": Report.query.count()}
+                        "version": version(), "app_version": semver(), "reports": Report.query.count(),
+                        "kind": "db" if db_only else "full"}
                 with open(os.path.join(dest, "meta.json"), "w") as fh:
                     json.dump(meta, fh, ensure_ascii=False)
                 files = sorted(f for f in os.listdir(dest) if f != "SHA256SUMS")
@@ -183,7 +189,10 @@ def create(trigger="manual", user=None, prune=True):
         finally:
             os.umask(old)
         if prune:
-            _prune(root, int(sysconf.get("backup_keep") or 14), protect={name})
+            if db_only:
+                _prune(root, int(sysconf.get("backup_db_keep") or 48), protect={name}, kind="db")
+            else:
+                _prune(root, int(sysconf.get("backup_keep") or 14), protect={name}, kind="full")
         return name, _size(dest)
 
 
@@ -192,8 +201,15 @@ def _size(path):
                if os.path.isfile(os.path.join(path, f)))
 
 
-def _prune(root, keep, protect=()):
-    names = sorted(n for n in os.listdir(root) if NAME_RE.match(n) and os.path.isdir(os.path.join(root, n)))
+def kind_of(path):
+    """full = 完整備份（含檔案）；db = 資料庫快速備份。"""
+    return "full" if os.path.isfile(os.path.join(path, "instance.tar.gz")) else "db"
+
+
+def _prune(root, keep, protect=(), kind="full"):
+    """完整備份與資料庫快速備份各自保留最近 keep 份，互不影響。"""
+    names = sorted(n for n in os.listdir(root) if NAME_RE.match(n) and os.path.isdir(os.path.join(root, n))
+                   and kind_of(os.path.join(root, n)) == kind)
     for n in names[:-keep] if keep > 0 else []:
         if n not in protect:
             shutil.rmtree(os.path.join(root, n), ignore_errors=True)
@@ -231,7 +247,7 @@ def list_backups():
         except OSError:
             size, readable = 0, False
         out.append({"name": n, "time": datetime.strptime(n[:15], "%Y%m%d-%H%M%S"), "size": size, "meta": meta,
-                    "readable": readable, "has_env": os.path.exists(os.path.join(p, "env"))})
+                    "readable": readable, "has_env": os.path.exists(os.path.join(p, "env")), "kind": kind_of(p)})
     return out
 
 

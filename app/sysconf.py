@@ -40,6 +40,9 @@ DEFAULTS = {
     "backup_keep": 14,
     "backup_dir": "",  # 空白 = DEFAULT_BACKUP_DIR
     "backup_include_env": True,
+    # 資料庫快速備份：每幾小時備份一次資料庫（只有資料庫，很快、很小），0 = 關閉；縮短資料遺失範圍（RPO）
+    "backup_db_hours": 0,
+    "backup_db_keep": 48,
     # 健康檢查
     # 稽核紀錄保存天數（180–366）：維護服務每天清除超過的紀錄
     "audit_retention_days": 366,

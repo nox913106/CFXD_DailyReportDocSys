@@ -2853,3 +2853,53 @@ def test_withdraw_submission(app):
     boss.get(f"/reports/{rid}")
     assert "已核准" in boss.post(f"/reports/{rid}/review", {"action": "approve"})
     assert "只有待審核的日報可以收回" in alice.post(f"/reports/{rid}/withdraw")
+
+
+def test_db_quick_backup_schedule_and_restore(app, tmp_path):
+    """資料庫快速備份：後台設定每幾小時一次；只有資料庫、可還原；與每日完整備份各自保留。"""
+    import os
+    import time
+    from datetime import datetime, timedelta
+
+    from app import backup, db, maint, sysconf
+    from app.models import MaintJob, Report
+
+    app.instance_path = str(tmp_path / "instance")
+    os.makedirs(os.path.join(app.instance_path, "pdf_cache"))
+    b = _admin_browser(app)
+    assert "從選單選擇" in b.post("/admin/settings/backup/config", {
+        "backup_enabled": "1", "backup_time": "02:30", "backup_keep": "2", "backup_db_hours": "5", "backup_db_keep": "2"})
+    assert "已儲存備份設定" in b.post("/admin/settings/backup/config", {
+        "backup_enabled": "1", "backup_time": "02:30", "backup_keep": "2", "backup_db_hours": "2", "backup_db_keep": "2"})
+    html = b.get("/admin/settings/backup")
+    assert '<option value="2" selected>每 2 小時</option>' in html and "資料庫快速備份" in html
+
+    with app.app_context():
+        sysconf.put("backup_last_scheduled", datetime.now().isoformat())  # 今天的每日備份已做過
+        db.session.commit()
+        now = datetime.now()
+        assert maint.db_backup_due(now)
+        maint.tick(now)  # 排入並執行
+        job = MaintJob.query.order_by(MaintJob.id.desc()).first()
+        assert job.status == "done" and job.param == "db", job.message
+        assert not maint.db_backup_due(now + timedelta(hours=1)) and maint.db_backup_due(now + timedelta(hours=2))
+        items = backup.list_backups()
+        assert len(items) == 1 and items[0]["kind"] == "db" and items[0]["meta"]["kind"] == "db"
+        path = backup.path_of(items[0]["name"])
+        assert "instance.tar.gz" not in os.listdir(path) and "env" not in os.listdir(path)
+        backup.verify(path)
+        # 各自保留：快速備份保留 2 份、完整備份不受影響
+        backup.create("manual")
+        for _ in range(3):
+            time.sleep(1.1)
+            backup.create("scheduled", db_only=True)
+        kinds = [i["kind"] for i in backup.list_backups()]
+        assert kinds.count("db") == 2 and kinds.count("full") == 1
+        # 還原只有資料庫的備份
+        before = Report.query.count()
+        db_name = next(i["name"] for i in backup.list_backups() if i["kind"] == "db")
+    b.post("/reports/new", {"report_date": "2026-10-02"})
+    with app.app_context():
+        assert Report.query.count() == before + 1
+        backup.restore(db_name)
+        assert Report.query.count() == before

@@ -42,6 +42,30 @@ def backup_due(now=None):
     return last < at.isoformat()
 
 
+def db_backup_due(now=None):
+    """資料庫快速備份：距離上一次滿設定的小時數就做（0 = 關閉）。"""
+    now = now or datetime.now()
+    hours = int(sysconf.get("backup_db_hours") or 0)
+    if not hours:
+        return False
+    last = sysconf.get("backup_db_last") or ""
+    try:
+        return not last or now - datetime.fromisoformat(last) >= timedelta(hours=hours) - timedelta(minutes=1)
+    except ValueError:
+        return True
+
+
+def next_db_backup(now=None):
+    now = now or datetime.now()
+    hours = int(sysconf.get("backup_db_hours") or 0)
+    if not hours:
+        return None
+    try:
+        return max(now, datetime.fromisoformat(sysconf.get("backup_db_last")) + timedelta(hours=hours))
+    except (TypeError, ValueError):
+        return now
+
+
 def next_backup(now=None):
     now = now or datetime.now()
     at = scheduled_at(now)
@@ -109,7 +133,7 @@ def _run_job(job):
     user = db.session.get(User, job.requested_by_id) if job.requested_by_id else None
     try:
         if job.kind == "backup":
-            name, size = backup.create(job.trigger, user)
+            name, size = backup.create(job.trigger, user, db_only=job.param == "db")
             msg, ok = f"{name}（{size / 1e6:.1f} MB）", True
         elif job.kind == "restore":
             username = user.username if user else ""
@@ -185,6 +209,9 @@ def tick(now=None):
         sysconf.put("backup_last_scheduled", now.isoformat(timespec="seconds"))
         db.session.commit()
         enqueue("backup", trigger="scheduled")
+    elif db_backup_due(now) and enqueue("backup", trigger="scheduled", param="db"):
+        sysconf.put("backup_db_last", now.isoformat(timespec="seconds"))  # 排得進去才算；有工作在跑時下一輪再試
+        db.session.commit()
     job = MaintJob.query.filter_by(status="pending").order_by(MaintJob.id).first()
     if job:
         _run_job(job)

@@ -305,6 +305,9 @@ def _backup_checks(out):
         _item(out, g, "排程", "ok", f"每天 {sysconf.get('backup_time')}，保留 {sysconf.get('backup_keep')} 份（下次 {nxt:%m/%d %H:%M}）")
     else:
         _item(out, g, "排程", "warn", "自動備份未啟用", "系統設定 → 備份還原：啟用每日自動備份")
+    hours = int(sysconf.get("backup_db_hours") or 0)
+    _item(out, g, "資料庫快速備份", "ok", f"每 {hours} 小時，保留 {sysconf.get('backup_db_keep')} 份（最多遺失約 {hours} 小時的日報資料）"
+          if hours else "關閉（最多可能遺失約一天的日報資料；可在備份還原頁設定每幾小時備份一次資料庫）")
     last = backup.last_backup()
     if last:
         age = (datetime.now() - last["time"]).total_seconds() / 3600

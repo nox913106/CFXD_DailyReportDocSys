@@ -29,12 +29,22 @@
     <div class="form-grid">
       <label>每天幾點（24 小時制）<input name="backup_time" value="{{ b.backup_time }}" placeholder="02:30" pattern="[0-2][0-9]:[0-5][0-9]"></label>
       <label>保留最近幾份<input name="backup_keep" type="number" min="1" max="365" value="{{ b.backup_keep }}"></label>
+      <label>資料庫快速備份
+        <select name="backup_db_hours">
+          {% for h in db_hours_choices %}<option value="{{ h }}" {{ 'selected' if (b.backup_db_hours or 0)|int == h }}>{{ '關閉' if not h else '每 %d 小時'|format(h) }}</option>{% endfor %}
+        </select></label>
+      <label>快速備份保留幾份<input name="backup_db_keep" type="number" min="1" max="500" value="{{ b.backup_db_keep }}"></label>
       <label class="wide">備份位置（絕對路徑，可為已掛載的 NAS；空白 = {{ default_dir }}）
         <input name="backup_dir" value="{{ b.backup_dir or '' }}" placeholder="{{ default_dir }}"></label>
     </div>
     <p class="hint">目前位置：{{ root }}{% if next_run %}・下次自動備份 {{ next_run.strftime('%m/%d %H:%M') }}{% endif %}。
       備份在線上進行，不需要停止服務。內容：資料庫、截圖、CheckList 範本與字型、檢查結果.md{{ '、.env' if b.backup_include_env }}。
       備份與日報資料放在同一顆磁碟時，磁碟損壞會一起遺失，建議設定到 NAS。</p>
+    <p class="hint"><b>每日備份</b>是完整備份（資料庫 + 截圖、PDF 等檔案），按「保留最近幾份」保留。
+      <b>資料庫快速備份</b>只備份資料庫（日報內容、狀態、審核紀錄、帳號、設定），通常只有幾 MB、幾秒完成，
+      用來把「最多會遺失多少資料」從一天縮短到設定的小時數；截圖與 PDF 等檔案仍以每日完整備份為準。
+      兩種各自保留，互不刪除。{% if next_db %}下次資料庫快速備份 {{ next_db.strftime('%m/%d %H:%M') }}。{% endif %}
+      例：每 2 小時、保留 84 份 ≈ 一週。</p>
     <button type="submit">儲存</button>
   </form>
 </section>
@@ -47,11 +57,12 @@
     <tr>
       <td class="nw">{{ it.time.strftime('%Y-%m-%d %H:%M:%S') }}<br><span class="hint">{{ it.name }}</span></td>
       <td>{{ {'manual': '手動', 'scheduled': '排程', 'pre_restore': '還原前自動', 'cli': '主機指令'}.get(it.meta.trigger, it.meta.trigger) }}
-        {%- if it.meta.by %}・{{ it.meta.by }}{% endif %}</td>
+        {%- if it.meta.by %}・{{ it.meta.by }}{% endif %}
+        {% if it.kind == 'db' %}<br><span class="badge">僅資料庫</span>{% endif %}</td>
       <td class="nw">{{ '%.1f'|format(it.size / 1e6) }} MB</td>
       <td>{{ it.meta.reports if it.meta.reports is defined else '' }}</td>
       <td class="nw">{% if it.readable %}<a href="{{ url_for('settings.backup_download', name=it.name, fname='dailyreport.db') }}">資料庫</a>
-        · <a href="{{ url_for('settings.backup_download', name=it.name, fname='instance.tar.gz') }}">檔案</a>{% else %}<span class="hint">無法讀取</span>{% endif %}</td>
+        {% if it.kind == 'full' %}· <a href="{{ url_for('settings.backup_download', name=it.name, fname='instance.tar.gz') }}">檔案</a>{% endif %}{% else %}<span class="hint">無法讀取</span>{% endif %}</td>
       <td>
         {% if it.readable %}
         <form method="post" action="{{ url_for('settings.backup_restore', name=it.name) }}" class="inline"
@@ -73,7 +84,8 @@
     {% else %}<tr><td colspan="7" class="hint">還沒有備份。按右上角「立即備份」。</td></tr>{% endfor %}
   </table>
   <p class="hint">還原會把資料庫與檔案換成備份當時的內容（系統設定、帳號也一起），不需要停服務；設定檔 .env 不會被覆蓋。
-    下載的資料庫與檔案含全部日報資料，請妥善保管。</p>
+    下載的資料庫與檔案含全部日報資料，請妥善保管。
+    還原「僅資料庫」的備份時只換資料庫，主機上現有的截圖與 PDF 檔案保持不動。</p>
 </section>
 
 <section class="card">

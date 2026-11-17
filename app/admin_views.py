@@ -251,7 +251,9 @@ def backup():
     root = sysconf.backup_dir()
     return render_template("admin_backup.html", tab="backup", items=bk.list_backups(), jobs=jobs, busy=busy,
                            root=root, dir_error=bk.check_dir(root), next_run=maint.next_backup(),
+                           next_db=maint.next_db_backup(), db_hours_choices=bk.DB_HOURS_CHOICES,
                            b=sysconf.many(("backup_enabled", "backup_time", "backup_keep", "backup_dir",
+                                           "backup_db_hours", "backup_db_keep",
                                            "backup_include_env")),
                            default_dir=current_app.config.get("BACKUP_DIR") or sysconf.DEFAULT_BACKUP_DIR,
                            **_job_ctx())
@@ -276,7 +278,11 @@ def backup_config():
             return redirect(url_for("settings.backup"))
     new = {"backup_enabled": f.get("backup_enabled") == "1", "backup_time": t,
            "backup_keep": _int("backup_keep", 1, 365, 14), "backup_dir": d,
-           "backup_include_env": f.get("backup_include_env") == "1"}
+           "backup_include_env": f.get("backup_include_env") == "1",
+           "backup_db_hours": _int("backup_db_hours", 0, 12, 0), "backup_db_keep": _int("backup_db_keep", 1, 500, 48)}
+    if new["backup_db_hours"] not in bk.DB_HOURS_CHOICES:
+        flash("資料庫快速備份的間隔請從選單選擇。", "error")
+        return redirect(url_for("settings.backup"))
     old = sysconf.many(new)
     for k, v in new.items():
         sysconf.put(k, v, current_user)
