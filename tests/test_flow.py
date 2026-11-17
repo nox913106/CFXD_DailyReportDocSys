@@ -1392,6 +1392,19 @@ def test_admin_backup_restore_and_health(app, tmp_path):
         assert req.actor.username == "sysadmin" and req.target == name
         assert "保留" in AuditLog.query.filter_by(action="restore").one().detail
 
+    # 刪除備份也要本人帳密
+    with app.app_context():
+        pre_name = next(i["name"] for i in backup.list_backups() if i["meta"]["trigger"] == "pre_restore")
+    assert "請輸入您的帳號與密碼確認刪除備份" in b.post(f"/admin/settings/backup/{pre_name}/delete", {})
+    assert "帳號或密碼錯誤，未刪除備份" in b.post(f"/admin/settings/backup/{pre_name}/delete",
+                                         {"auth_username": "sysadmin", "auth_password": "wrong"})
+    with app.app_context():
+        assert os.path.isdir(backup.path_of(pre_name))
+        assert AuditLog.query.filter_by(action="backup_del_auth_fail").count() == 1
+    assert "已刪除備份" in b.post(f"/admin/settings/backup/{pre_name}/delete", ok)
+    with app.app_context():
+        assert pre_name not in [i["name"] for i in backup.list_backups()]
+
     # 損壞的備份不能還原
     with app.app_context():
         with open(os.path.join(backup.path_of(name), "dailyreport.db"), "ab") as fh:

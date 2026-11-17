@@ -353,12 +353,18 @@ def backup_restore(name):
 
 @bp.route("/backup/<name>/delete", methods=["POST"])
 def backup_delete(name):
+    from .auth import confirm_identity
+
+    err = confirm_identity("刪除備份", "backup_del_auth_fail")
+    if err:
+        flash(err, "error")
+        return redirect(url_for("settings.backup"))
     try:
         bk.delete(name)
     except bk.BackupError as e:
         flash(str(e), "error")
         return redirect(url_for("settings.backup"))
-    _audit("backup", name, "刪除備份")
+    _audit("backup", name, f"刪除備份（AD 身分確認通過；來源 {request.remote_addr or '?'}）")
     db.session.commit()
     flash(f"已刪除備份 {name}。", "success")
     return redirect(url_for("settings.backup"))
@@ -578,7 +584,7 @@ AUDIT_LABELS = {"delete_report": "刪除日報", "set_role": "變更角色", "se
                 "ai_provider_add": "新增 AI 服務", "ai_provider_edit": "修改 AI 服務", "ai_provider_delete": "刪除 AI 服務",
                 "sys_settings": "系統設定", "local_account": "本機緊急帳號", "backup": "備份", "restore": "還原",
                 "delegation": "代理權限", "checklist_items": "檢查項目", "import_report": "匯入歷史日報",
-                "delete_auth_fail": "刪除身分確認失敗", "restore_request": "要求還原", "restore_auth_fail": "還原身分確認失敗", "login_fail": "登入失敗",
+                "delete_auth_fail": "刪除身分確認失敗", "restore_request": "要求還原", "restore_auth_fail": "還原身分確認失敗", "backup_del_auth_fail": "刪除備份身分確認失敗", "login_fail": "登入失敗",
                 "audit_export": "匯出稽核紀錄", "sysinfo_export": "下載系統資訊", "upgrade": "升級程式", "images_export": "下載原始圖檔", "audit_retention": "稽核保存天數", "audit_purge": "清除過期稽核紀錄"}
 
 
