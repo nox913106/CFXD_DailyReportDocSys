@@ -528,10 +528,11 @@ body.lb-open { overflow: hidden; }
 .lb-title { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 13px; }
 .lb-title span { color: #bbb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lb-btn { background: none; border: 1px solid #555; color: #fff; border-radius: 6px; min-width: 40px; height: 36px; font-size: 15px; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; cursor: pointer; padding: 0 8px; }
-.lb-stage { flex: 1; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-.lb-stage img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: zoom-in; }
-.lb-stage.full { overflow: auto; display: block; }
-.lb-stage.full img { max-width: none; max-height: none; cursor: zoom-out; }
+.lb-stage { flex: 1; min-height: 0; overflow: auto; display: flex; cursor: grab; touch-action: pan-x pan-y; overscroll-behavior: contain; }
+.lb-stage.drag { cursor: grabbing; }
+.lb-stage img { margin: auto; flex: none; max-width: none; max-height: none; user-select: none; -webkit-user-drag: none; }
+.lb-zoom { display: inline-flex; gap: 4px; }
+.lb-btn.wide { min-width: 64px; font-variant-numeric: tabular-nums; }
 .lb-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 64px; border: none; border-radius: 8px; background: rgb(0 0 0 / .45); color: #fff; font-size: 30px; cursor: pointer; }
 .lb-nav.prev { left: 8px; } .lb-nav.next { right: 8px; }
 .lb-foot { text-align: center; font-size: 12px; color: #bbb; padding: 6px; background: #000; }

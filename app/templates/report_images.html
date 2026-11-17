@@ -11,7 +11,7 @@
 <section class="card">
   <h2>{{ report.doc_no }} 原始圖檔</h2>
   <p class="hint">{{ report.report_date }} · 共 {{ total }} 張，依 PDF 的順序排列。這裡是上傳時的原檔，沒有經過 PDF 的縮放與壓縮，可放大看細節。
-    點圖片全螢幕檢視（左右切換、點一下看原尺寸）；ZIP 依章節分資料夾，附清單（原始檔名、上傳者、時間、SHA-256）。</p>
+    點圖片全螢幕檢視（左右切換；滾輪、雙指或 ＋ − 放大，按住拖曳移動，雙擊在放大與符合畫面間切換）；ZIP 依章節分資料夾，附清單（原始檔名、上傳者、時間、SHA-256）。</p>
   {% if not total %}<p class="hint">這份日報沒有截圖或照片。</p>{% endif %}
 </section>
 {% for label, imgs in groups %}
@@ -42,7 +42,11 @@
   <header class="lb-bar">
     <button type="button" class="lb-btn" data-lb="close" aria-label="關閉">✕</button>
     <div class="lb-title"><strong data-lb-title></strong><span data-lb-name></span></div>
-    <button type="button" class="lb-btn" data-lb="zoom" title="原尺寸 / 符合畫面">1:1</button>
+    <span class="lb-zoom">
+      <button type="button" class="lb-btn" data-lb="out" aria-label="縮小" title="縮小">−</button>
+      <button type="button" class="lb-btn wide" data-lb="fit" title="符合畫面"><span data-lb-pct>100%</span></button>
+      <button type="button" class="lb-btn" data-lb="in" aria-label="放大" title="放大">＋</button>
+    </span>
     <a class="lb-btn" data-lb-download href="#" aria-label="下載原檔" title="下載原檔">⤓</a>
   </header>
   <div class="lb-stage" data-lb-stage><img alt="" data-lb-img></div>
