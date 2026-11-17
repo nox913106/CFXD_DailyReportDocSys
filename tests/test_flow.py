@@ -2769,7 +2769,8 @@ def test_original_images_after_close(app):
                  data={"kind": "onsite", "files": (io.BytesIO(photo), "機房.png")})
 
     # 撰寫中：日報頁有入口；檢視者看不到未結案的圖檔
-    assert "原始圖檔（2）" in alice.get(f"/reports/{rid}")
+    html = alice.get(f"/reports/{rid}")
+    assert "原始圖檔（2）" in html and "/static/style.css?v=" in html  # 靜態檔帶版本，升級後不會用到快取的舊 CSS
     assert vic.c.get(f"/reports/{rid}/images").status_code == 403
     html = alice.get(f"/reports/{rid}/images")
     assert html.index("現場照片") < html.index("4.1 ACC") and "veeam job.png" in html and "機房.png" in html

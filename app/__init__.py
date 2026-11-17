@@ -116,6 +116,14 @@ def create_app():
     app.register_blueprint(items_bp)
     app.register_blueprint(import_bp)
 
+    @app.url_defaults
+    def _static_version(endpoint, values):
+        """靜態檔網址加上 ?v=修改時間：升級後瀏覽器一定拿到新的 CSS / JS，不會用到快取的舊檔（nginx 快取 7 天）。"""
+        if endpoint == "static" and "v" not in values:
+            path = os.path.join(app.static_folder, values.get("filename", ""))
+            if os.path.isfile(path):
+                values["v"] = int(os.path.getmtime(path))
+
     @app.before_request
     def _viewer_only_archive():
         """訪客（guest）只能看歡迎頁；檢視者（viewer）只能看正式文件下載頁、已結案的正式 PDF 與原始圖檔。其餘一律禁止。"""
