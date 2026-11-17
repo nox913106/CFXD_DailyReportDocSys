@@ -94,6 +94,44 @@ def _alarm_key(row):
     return (_key(row.category), (row.item or "").strip(), _key(row.device_name), _key(row.description))
 
 
+def _pair_alarms(today, base):
+    """今天與基準日報的告警逐筆配對：(配對 [(今日, 基準)], 新增, 解除)。
+    1. 分類、項次、設備、說明都相同；
+    2. 剩下的同一設備（同項次優先）說明被改寫過（例如數量、時間、Tunnel 名稱變了）仍算同一筆延續，
+       依說明相似度配對，避免「改了說明」被當成一筆解除 + 一筆新增。"""
+    from difflib import SequenceMatcher
+
+    left, right, pairs = list(today), list(base), []
+    by_key = {}
+    for b in right:
+        by_key.setdefault(_alarm_key(b), []).append(b)
+    for a in list(left):
+        lst = by_key.get(_alarm_key(a))
+        if lst:
+            b = lst.pop(0)
+            pairs.append((a, b))
+            left.remove(a)
+            right.remove(b)
+
+    def sim(a, b):
+        return SequenceMatcher(None, _norm(a.description), _norm(b.description)).ratio()
+
+    cands = []
+    for a in left:
+        for b in right:
+            if _key(a.device_name) and _key(a.device_name) == _key(b.device_name):
+                same_item = (a.item or "").strip() == (b.item or "").strip()
+                score = sim(a, b) + (1 if same_item else 0)
+                if same_item or score >= 0.6:
+                    cands.append((score, id(a), id(b), a, b))
+    for _, _, _, a, b in sorted(cands, key=lambda c: -c[0]):
+        if a in left and b in right:
+            pairs.append((a, b))
+            left.remove(a)
+            right.remove(b)
+    return pairs, left, right
+
+
 def baseline_for(report):
     """比對基準：日期早於本日報、最近一份已核准的日報。"""
     return (
@@ -329,24 +367,20 @@ def _check_screenshot_clocks(r, report):
 
 
 def _compare(r, report, results, alarms, base):
-    T = {_alarm_key(a): a for a in alarms}
-    Y = {_alarm_key(a): a for a in base.alarm_rows}
-    for k, a in T.items():
-        b = Y.get(k)
-        if b is None:
-            r.new_alarms.append(a)
-            continue
+    pairs, new, cleared = _pair_alarms(alarms, list(base.alarm_rows))
+    for a, b in pairs:
         diff = {f: (getattr(b, f) or "", getattr(a, f) or "") for f in ("description", "reason", "false_alarm", "note")
                 if _norm(getattr(a, f)) != _norm(getattr(b, f))}
         if diff:
             r.changed_alarms.append((a, b, diff))
         r.continued += 1
-    r.cleared_alarms = [b for k, b in Y.items() if k not in T]
+    r.new_alarms, r.cleared_alarms = new, cleared
 
     if (report.alarm_new or 0) != len(r.new_alarms):
+        listed = "、".join(f"{x.device_name} {x.description}".strip() for x in r.new_alarms[:6])
         r.add("錯誤", "跨日比對", "New Alarm 數與實際新增的告警數不同", obj="New Alarm",
-              a=f"與 {base.report_date} 比對，實際新增 {len(r.new_alarms)} 項", b=f"填寫「{report.alarm_new or 0}」",
-              link="alarms")
+              a=f"與 {base.report_date} 比對，實際新增 {len(r.new_alarms)} 項" + (f"：{listed}" if listed else ""),
+              b=f"填寫「{report.alarm_new or 0}」", link="alarms")
     if (report.alarm_false or 0) == 0 and (report.alarm_known or 0) != r.continued:
         r.add("錯誤", "跨日比對", "Known Alarm 數與延續自前一份日報的告警數不同", obj="Known Alarm",
               a=f"延續 {r.continued} 項", b=f"填寫「{report.alarm_known or 0}」", link="alarms")

@@ -2800,3 +2800,29 @@ def test_original_images_after_close(app):
     # 檢視者：正式文件頁可用，其他頁面仍禁止
     assert vic.c.get(f"/reports/{rid}").status_code == 403
     assert vic.c.post(f"/reports/{rid}/images", headers={"X-CSRFToken": vic.tok}).status_code == 403
+
+
+def test_alarm_pairing_keeps_rewritten_descriptions_as_continued():
+    """跨日比對：同一設備的告警說明被改寫（數量、名稱變了）算延續 + 內容變更，不算一筆解除 + 一筆新增；
+    真正的新設備才算新增；同一個 key 有多筆時逐筆配對。"""
+    from types import SimpleNamespace as A
+
+    from app.checks import _pair_alarms
+
+    y = [A(category="Physical Devices", item="6.1", device_name="ONS-WAN-UTM-01", description="IPSec tunnel 3 down"),
+         A(category="Software", item="3.2", device_name="Veeam", description="2 jobs failed"),
+         A(category="PI", item="8.1", device_name="PI-01", description="Buffer queue high"),
+         A(category="PI", item="8.1", device_name="PI-01", description="Buffer queue high")]
+    t = [A(category="Physical Devices", item="6.1", device_name="ONS-WAN-UTM-01", description="IPSec tunnel 3, 7 down"),
+         A(category="Software", item="3.2", device_name="Veeam", description="3 jobs failed (Backup-SQL)"),
+         A(category="PI", item="8.1", device_name="PI-01", description="Buffer queue high"),
+         A(category="PI", item="8.1", device_name="PI-01", description="Buffer queue high"),
+         A(category="Virtual Machines", item="1.4", device_name="NEW-VM-09", description="CPU usage high")]
+    pairs, new, cleared = _pair_alarms(t, y)
+    assert len(pairs) == 4 and [a.device_name for a in new] == ["NEW-VM-09"] and cleared == []
+    assert {(a.description, b.description) for a, b in pairs} >= {("IPSec tunnel 3, 7 down", "IPSec tunnel 3 down"),
+                                                                  ("3 jobs failed (Backup-SQL)", "2 jobs failed")}
+    # 不同設備、說明也不像：一筆解除、一筆新增
+    pairs, new, cleared = _pair_alarms([A(category="PI", item="8.2", device_name="PI-02", description="Disk full")],
+                                       [A(category="PI", item="8.1", device_name="PI-01", description="Buffer queue high")])
+    assert not pairs and len(new) == 1 and len(cleared) == 1
