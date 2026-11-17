@@ -96,9 +96,10 @@ def _alarm_key(row):
 
 def _pair_alarms(today, base):
     """今天與基準日報的告警逐筆配對：(配對 [(今日, 基準)], 新增, 解除)。
-    1. 分類、項次、設備、說明都相同；
-    2. 剩下的同一設備（同項次優先）說明被改寫過（例如數量、時間、Tunnel 名稱變了）仍算同一筆延續，
-       依說明相似度配對，避免「改了說明」被當成一筆解除 + 一筆新增。"""
+    1. 分類、項次、設備、說明都相同（同一內容有多筆時逐筆配對）；
+    2. 剩下的只有「同一設備、說明幾乎相同」（打字差異、大小寫、標點、多一兩個字）才算同一筆延續。
+       說明是檢查子項目名稱（Syslog、IPSec Tunnel、SD WAN…），同一設備不同子項目一定是不同的告警，
+       例如同一台 UTM 今天多了 IPSec Tunnel、前一份的 Syslog 解除，必須算新增 + 解除，不能互相抵銷。"""
     from difflib import SequenceMatcher
 
     left, right, pairs = list(today), list(base), []
@@ -120,10 +121,10 @@ def _pair_alarms(today, base):
     for a in left:
         for b in right:
             if _key(a.device_name) and _key(a.device_name) == _key(b.device_name):
-                same_item = (a.item or "").strip() == (b.item or "").strip()
-                score = sim(a, b) + (1 if same_item else 0)
-                if same_item or score >= 0.6:
-                    cands.append((score, id(a), id(b), a, b))
+                score = sim(a, b)
+                if score >= 0.85:
+                    same_item = (a.item or "").strip() == (b.item or "").strip()
+                    cands.append((score + (1 if same_item else 0), id(a), id(b), a, b))
     for _, _, _, a, b in sorted(cands, key=lambda c: -c[0]):
         if a in left and b in right:
             pairs.append((a, b))

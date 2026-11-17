@@ -2803,26 +2803,23 @@ def test_original_images_after_close(app):
 
 
 def test_alarm_pairing_keeps_rewritten_descriptions_as_continued():
-    """跨日比對：同一設備的告警說明被改寫（數量、名稱變了）算延續 + 內容變更，不算一筆解除 + 一筆新增；
-    真正的新設備才算新增；同一個 key 有多筆時逐筆配對。"""
+    """跨日比對：同一內容多筆時逐筆配對；同一設備說明只有打字差異算延續；
+    同一設備、同項次但不同子項目（2026-11-17 實例：UTM 新增 IPSec Tunnel 告警）必須算新增，不能和別的告警抵銷。"""
     from types import SimpleNamespace as A
 
     from app.checks import _pair_alarms
 
-    y = [A(category="Physical Devices", item="6.1", device_name="ONS-WAN-UTM-01", description="IPSec tunnel 3 down"),
-         A(category="Software", item="3.2", device_name="Veeam", description="2 jobs failed"),
-         A(category="PI", item="8.1", device_name="PI-01", description="Buffer queue high"),
-         A(category="PI", item="8.1", device_name="PI-01", description="Buffer queue high")]
-    t = [A(category="Physical Devices", item="6.1", device_name="ONS-WAN-UTM-01", description="IPSec tunnel 3, 7 down"),
-         A(category="Software", item="3.2", device_name="Veeam", description="3 jobs failed (Backup-SQL)"),
-         A(category="PI", item="8.1", device_name="PI-01", description="Buffer queue high"),
-         A(category="PI", item="8.1", device_name="PI-01", description="Buffer queue high"),
-         A(category="Virtual Machines", item="1.4", device_name="NEW-VM-09", description="CPU usage high")]
+    def row(item, dev, desc, cat="Physical Devices"):
+        return A(category=cat, item=item, device_name=dev, description=desc)
+
+    y = [row("1.1", "ONS-STORE-01", "Remote Copy"), row("8.1", "ONS-WAN-UTM-01", "Syslog"),
+         row("15.1", "ONS-ZN-RADIOLINK-02", "Status Check"), row("15.1", "ONS-ZN-RADIOLINK-02", "Status Check")]
+    t = [row("1.1", "ONS-STORE-01", "Remote-Copy."), row("8.1", "ONS-WAN-UTM-01", "IPSec Tunnel"),
+         row("8.1", "ONS-WAN-UTM-01", "Syslog"), row("15.1", "ONS-ZN-RADIOLINK-02", "Status Check"),
+         row("15.1", "ONS-ZN-RADIOLINK-02", "Status Check"), row("10.1", "OM-WAN-UTM-01", "IPSec Tunnel")]
     pairs, new, cleared = _pair_alarms(t, y)
-    assert len(pairs) == 4 and [a.device_name for a in new] == ["NEW-VM-09"] and cleared == []
-    assert {(a.description, b.description) for a, b in pairs} >= {("IPSec tunnel 3, 7 down", "IPSec tunnel 3 down"),
-                                                                  ("3 jobs failed (Backup-SQL)", "2 jobs failed")}
-    # 不同設備、說明也不像：一筆解除、一筆新增
-    pairs, new, cleared = _pair_alarms([A(category="PI", item="8.2", device_name="PI-02", description="Disk full")],
-                                       [A(category="PI", item="8.1", device_name="PI-01", description="Buffer queue high")])
+    assert len(pairs) == 4 and cleared == []
+    assert [(a.device_name, a.description) for a in new] == [("ONS-WAN-UTM-01", "IPSec Tunnel"), ("OM-WAN-UTM-01", "IPSec Tunnel")]
+    # 同一設備同項次，前一份的 Syslog 解除、今天出現 IPSec Tunnel：一筆解除、一筆新增，不互相抵銷
+    pairs, new, cleared = _pair_alarms([row("8.1", "ONS-WAN-UTM-01", "IPSec Tunnel")], [row("8.1", "ONS-WAN-UTM-01", "Syslog")])
     assert not pairs and len(new) == 1 and len(cleared) == 1
