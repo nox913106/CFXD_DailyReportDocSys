@@ -411,6 +411,7 @@ class ApprovalDelegation(db.Model):
 
 
 REVIEW_ACTION_LABELS = {
+    "withdraw": "收回送審",
     "approve": "核准",
     "reject": "退回",
     "assign": "指派",

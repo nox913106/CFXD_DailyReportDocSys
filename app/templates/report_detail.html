@@ -78,6 +78,15 @@
 <div class="card no-print">
   核准人：<strong>{{ report.approver_name or '（未指定）' }}</strong>
   {% if not can_review %}<span class="hint">· 等待核准人{% if report.approver_id %}或其代簽人{% endif %}審核</span>{% endif %}
+  {% if can.withdraw %}
+  <form method="post" action="{{ url_for('views.withdraw', report_id=report.id) }}" class="withdraw-form"
+        onsubmit="return confirm('確定收回送審？日報會回到草稿，修改後需要重新送審。')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <span class="hint">送審後發現錯誤？核准前可以自己收回修改，不用等審核者退回。</span>
+    <input type="text" name="reason" maxlength="200" placeholder="收回原因（選填，會通知審核者）">
+    <button type="submit" class="secondary">收回送審</button>
+  </form>
+  {% endif %}
 </div>
 {% endif %}
 {% if shot_groups %}

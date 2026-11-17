@@ -2093,11 +2093,12 @@ def test_permission_matrix_matches_code(app):
         locked, failed = rep("closed", delivery_state="scheduled"), rep("closed", delivery_state="error")
 
         def check(label, u):
-            own = rep("submitted", author=u) if label == "審核自己撰寫或送審的日報" else None
+            own = rep("submitted", author=u) if label in ("審核自己撰寫或送審的日報", "收回自己撰寫或送審的日報（核准前，回到草稿修改後再送審）") else None
             if own is not None:
                 own.approver_id = fm.id if u.is_admin and u.role != "file_manager" else None
             return {
                 "新增、編輯（草稿 / 退回）、送審": lambda: bool(perm.can_create(u) and perm.can_edit(u, draft) and perm.can_submit(u, draft)),
+                "收回自己撰寫或送審的日報（核准前，回到草稿修改後再送審）": lambda: bool(perm.can_withdraw(u, own)) and not perm.can_withdraw(u, approved),
                 "截圖上傳（含批次上傳）": lambda: bool(perm.can_edit(u, draft)),
                 "線上預覽 PDF": lambda: u.role not in ("viewer", "guest"),
                 "指派撰寫人、核准人": lambda: bool(perm.can_assign(u, draft)),
@@ -2823,3 +2824,32 @@ def test_alarm_pairing_keeps_rewritten_descriptions_as_continued():
     # 同一設備同項次，前一份的 Syslog 解除、今天出現 IPSec Tunnel：一筆解除、一筆新增，不互相抵銷
     pairs, new, cleared = _pair_alarms([row("8.1", "ONS-WAN-UTM-01", "IPSec Tunnel")], [row("8.1", "ONS-WAN-UTM-01", "Syslog")])
     assert not pairs and len(new) == 1 and len(cleared) == 1
+
+
+def test_withdraw_submission(app):
+    """送審後、核准前，撰寫人可以自己收回成草稿修改再送審；別的一線不行；已核准不能收回；留紀錄並通知。"""
+    from app import db
+    from app.models import Report, ReviewLog
+
+    alice, bob, boss = Browser(app), Browser(app), Browser(app)
+    alice.login("alice")
+    bob.login("bob")
+    boss.login("boss")
+    set_role(app, "boss", "file_manager")
+    rid = submitted_report(app, alice, "2026-11-04")
+
+    html = alice.get(f"/reports/{rid}")
+    assert "收回送審</button>" in html
+    assert "收回送審</button>" not in bob.get(f"/reports/{rid}")
+    assert "只有撰寫人或送審人可以收回送審" in bob.post(f"/reports/{rid}/withdraw")
+    html = alice.post(f"/reports/{rid}/withdraw", {"reason": "截圖放錯章節"})
+    assert "已收回送審" in html
+    with app.app_context():
+        assert db.session.get(Report, rid).status == "draft"
+        log = ReviewLog.query.filter_by(report_id=rid, action="withdraw").one()
+        assert log.comment == "截圖放錯章節"
+    # 回到草稿可以修改、再送審；核准後不能收回
+    assert "已送出審核" in alice.post(f"/reports/{rid}/submit")
+    boss.get(f"/reports/{rid}")
+    assert "已核准" in boss.post(f"/reports/{rid}/review", {"action": "approve"})
+    assert "只有待審核的日報可以收回" in alice.post(f"/reports/{rid}/withdraw")

@@ -142,6 +142,19 @@ def can_submit(user, report):
     return Decision(user.is_admin or user.role in ("admin", "file_manager", "second_line", "first_line"))
 
 
+def can_withdraw(user, report):
+    """收回送審：核准前，撰寫人或送審人自己收回成草稿修改，不用等審核者退回。系統管理員、檔案管理員也可以代為收回。"""
+    if report.status != "submitted":
+        return Decision(False, None, "只有待審核的日報可以收回；已核准的日報請審核者「退回修正」。")
+    if user.is_admin or user.role == "file_manager":
+        return Decision(True, None, "")
+    if not can_create(user):
+        return Decision(False, None, "沒有撰寫日報的權限。")
+    if user.id in (report.author_id, report.submitted_by_id):
+        return Decision(True, None, "")
+    return Decision(False, None, "只有撰寫人或送審人可以收回送審。")
+
+
 def can_review(user, report):
     """核准 / 退件。"""
     if report.status != "submitted":
@@ -244,6 +257,7 @@ MATRIX_ROLES = (("sysadmin", "系統管理員"), ("file_manager", "檔案管理�
 PERMISSION_MATRIX = (
     ("日報", (
         ("新增、編輯（草稿 / 退回）、送審", "yyyynn"),
+        ("收回自己撰寫或送審的日報（核准前，回到草稿修改後再送審）", "yyyynn"),
         ("截圖上傳（含批次上傳）", "yyyynn"),
         ("線上預覽 PDF", "yyyynn"),
         ("指派撰寫人、核准人", "yydnnn"),

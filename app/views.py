@@ -244,6 +244,7 @@ def detail(report_id):
         can={
             "ai": _can_request_ai(u, report),
             "edit": perm.can_edit(u, report), "submit": perm.can_submit(u, report),
+            "withdraw": perm.can_withdraw(u, report),
             "delete": perm.can_delete(u, report),
             "close": perm.can_close(u, report), "return": perm.can_return(u, report),
             "cancel_close": perm.can_cancel_close(u, report), "retry": perm.can_retry_delivery(u, report),
@@ -282,6 +283,24 @@ def submit(report_id):
     teams.status_changed(report, old_status, "submit", current_user)
     db.session.commit()
     flash("已送出審核。", "success")
+    return redirect(url_for("views.detail", report_id=report.id))
+
+
+@bp.route("/reports/<int:report_id>/withdraw", methods=["POST"])
+def withdraw(report_id):
+    """收回送審：核准前撰寫人 / 送審人自己收回成草稿，修正後再送審，不必等審核者退回。"""
+    report = get_report(report_id)
+    d = perm.can_withdraw(current_user, report)
+    if not d:
+        flash(d.reason, "error")
+        return redirect(url_for("views.detail", report_id=report.id))
+    reason = (request.form.get("reason") or "").strip()[:500]
+    report.status = "draft"
+    report.updated_by_id = current_user.id
+    db.session.add(ReviewLog(report_id=report.id, action="withdraw", actor_id=current_user.id, comment=reason))
+    teams.status_changed(report, "submitted", "withdraw", current_user, comment=reason)
+    db.session.commit()
+    flash("已收回送審，日報回到草稿，修改後請再送審。", "success")
     return redirect(url_for("views.detail", report_id=report.id))
 
 

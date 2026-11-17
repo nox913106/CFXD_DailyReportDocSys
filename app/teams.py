@@ -257,7 +257,7 @@ def flush(limit=20):
 # ---------------------------------------------------------------- 日報狀態變更
 
 
-ACTIONS = {"create": "建立", "submit": "送審", "approve": "核准", "reject": "退回", "return": "退回修正",
+ACTIONS = {"create": "建立", "submit": "送審", "withdraw": "收回送審（回到草稿修改）", "approve": "核准", "reject": "退回", "return": "退回修正",
            "close": "結案（1 分鐘後寄出日報 Mail）", "close_cancel": "取消結案", "delete": "刪除",
            "retry": "重試發送"}
 

@@ -537,3 +537,7 @@ body.lb-open { overflow: hidden; }
 .lb-nav.prev { left: 8px; } .lb-nav.next { right: 8px; }
 .lb-foot { text-align: center; font-size: 12px; color: #bbb; padding: 6px; background: #000; }
 @media (max-width: 600px) { .gal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } .gal-grid img { height: 130px; } .lb-nav { display: none; } }
+
+/* 收回送審 */
+.withdraw-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.withdraw-form input[type=text] { flex: 1 1 220px; min-width: 0; }
