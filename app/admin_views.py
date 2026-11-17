@@ -370,14 +370,22 @@ def backup_delete(name):
     return redirect(url_for("settings.backup"))
 
 
-@bp.route("/backup/<name>/<fname>", methods=["GET"])
+@bp.route("/backup/<name>/<fname>", methods=["POST"])
 def backup_download(name, fname):
+    """下載備份（含全部日報資料）：要再輸入本人 AD 帳號密碼，成功與失敗都記在稽核紀錄。"""
+    from .auth import confirm_identity
+
     if fname not in bk.DOWNLOADABLE:
         abort(404)
     try:
         path = os.path.join(bk.path_of(name), fname)
     except bk.BackupError:
         abort(404)
+    err = confirm_identity("下載備份", "backup_dl_auth_fail")
+    if err:
+        flash(err, "error")
+        return redirect(url_for("settings.backup"))
+    how = f"（AD 身分確認通過；來源 {request.remote_addr or '?'}）"
     tree = os.path.join(os.path.dirname(path), "files")
     if fname == "instance.tar.gz" and not os.path.isfile(path) and os.path.isdir(tree):
         import tarfile
@@ -387,12 +395,12 @@ def backup_download(name, fname):
         with tarfile.open(fileobj=tmp, mode="w:gz") as tar:
             tar.add(tree, arcname="instance")
         tmp.seek(0)
-        _audit("backup", name, f"下載 {fname}")
+        _audit("backup", name, f"下載 {fname}{how}")
         db.session.commit()
         return send_file(tmp, as_attachment=True, download_name=f"dailyreport-{name}-{fname}", mimetype="application/gzip")
     if not os.path.isfile(path):
         abort(404)
-    _audit("backup", name, f"下載 {fname}")
+    _audit("backup", name, f"下載 {fname}{how}")
     db.session.commit()
     return send_file(path, as_attachment=True, download_name=f"dailyreport-{name}-{fname}")
 
@@ -584,7 +592,7 @@ AUDIT_LABELS = {"delete_report": "刪除日報", "set_role": "變更角色", "se
                 "ai_provider_add": "新增 AI 服務", "ai_provider_edit": "修改 AI 服務", "ai_provider_delete": "刪除 AI 服務",
                 "sys_settings": "系統設定", "local_account": "本機緊急帳號", "backup": "備份", "restore": "還原",
                 "delegation": "代理權限", "checklist_items": "檢查項目", "import_report": "匯入歷史日報",
-                "delete_auth_fail": "刪除身分確認失敗", "restore_request": "要求還原", "restore_auth_fail": "還原身分確認失敗", "backup_del_auth_fail": "刪除備份身分確認失敗", "login_fail": "登入失敗",
+                "delete_auth_fail": "刪除身分確認失敗", "restore_request": "要求還原", "restore_auth_fail": "還原身分確認失敗", "backup_del_auth_fail": "刪除備份身分確認失敗", "backup_dl_auth_fail": "下載備份身分確認失敗", "login_fail": "登入失敗",
                 "audit_export": "匯出稽核紀錄", "sysinfo_export": "下載系統資訊", "upgrade": "升級程式", "images_export": "下載原始圖檔", "audit_retention": "稽核保存天數", "audit_purge": "清除過期稽核紀錄"}
 
 

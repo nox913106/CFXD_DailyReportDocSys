@@ -1346,24 +1346,33 @@ def test_admin_backup_restore_and_health(app, tmp_path):
 
     html = b.get("/admin/settings/backup")
     assert name in html and "資料庫" in html
-    r = b.c.get(f"/admin/settings/backup/{name}/dailyreport.db")
+    # 下載備份要本人帳密（GET 不能下載）
+    ok = {"auth_username": "sysadmin", "auth_password": "a-very-long-pass"}
+    assert b.c.get(f"/admin/settings/backup/{name}/dailyreport.db").status_code == 405
+    assert "帳號或密碼錯誤，未下載備份" in b.post(f"/admin/settings/backup/{name}/dailyreport.db",
+                                         {"auth_username": "sysadmin", "auth_password": "wrong"})
+    r = b.c.post(f"/admin/settings/backup/{name}/dailyreport.db", data=dict(ok, csrf_token=b.tok))
     assert r.status_code == 200 and r.data[:15] == b"SQLite format 3"
     import io
     import tarfile
 
-    r = b.c.get(f"/admin/settings/backup/{name}/instance.tar.gz")  # 新格式下載時才打包
+    r = b.c.post(f"/admin/settings/backup/{name}/instance.tar.gz", data=dict(ok, csrf_token=b.tok))  # 新格式下載時才打包
     with tarfile.open(fileobj=io.BytesIO(r.data)) as t:
         names = t.getnames()
     assert "instance/fonts/a.ttf" in names and not any("pdf_cache" in n for n in names)
-    assert b.c.get(f"/admin/settings/backup/{name}/env").status_code == 404
-    assert b.c.get("/admin/settings/backup/../../etc/dailyreport.db").status_code == 404
+    assert b.c.post(f"/admin/settings/backup/{name}/env", data=dict(ok, csrf_token=b.tok)).status_code == 404
+    assert b.c.post("/admin/settings/backup/../../etc/dailyreport.db", data=dict(ok, csrf_token=b.tok)).status_code == 404
+    with app.app_context():
+        from app.models import AuditLog
+
+        assert AuditLog.query.filter_by(action="backup_dl_auth_fail").count() == 1
+        assert AuditLog.query.filter(AuditLog.detail.like("下載 dailyreport.db（AD 身分確認通過%")).count() == 1
 
     # 備份之後的變更，還原後消失；還原前會自動備份
     b.post(f"/reports/{rid}/delete", {"reason": "x"})
     rid2 = report_id_from(b.post("/reports/new", {"report_date": "2026-10-02"}))
     os.remove(os.path.join(app.instance_path, "fonts", "a.ttf"))
     # 還原要再輸入本人帳密：沒填、別人的帳號、錯的密碼都不會排入，失敗記在稽核紀錄
-    ok = {"auth_username": "sysadmin", "auth_password": "a-very-long-pass"}
     assert "請輸入您的帳號與密碼確認還原" in b.post(f"/admin/settings/backup/{name}/restore", {})
     assert "必須是目前登入的您本人" in b.post(f"/admin/settings/backup/{name}/restore",
                                          {"auth_username": "boss", "auth_password": "x"})

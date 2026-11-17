@@ -99,8 +99,12 @@
       <td class="nw">{{ '%.1f'|format(it.size / 1e6) }} MB
         {% if it.kind == 'incr' and it.meta.new_bytes is defined %}<br><span class="hint">新增 {{ '%.1f'|format(it.meta.new_bytes / 1e6) }} MB（{{ it.meta.files_copied }} 個檔案）</span>{% endif %}</td>
       <td>{{ it.meta.reports if it.meta.reports is defined else '' }}</td>
-      <td class="nw">{% if it.readable %}<a href="{{ url_for('settings.backup_download', name=it.name, fname='dailyreport.db') }}">資料庫</a>
-        {% if it.kind != 'db' %}· <a href="{{ url_for('settings.backup_download', name=it.name, fname='instance.tar.gz') }}">檔案</a>{% endif %}{% else %}<span class="hint">無法讀取</span>{% endif %}</td>
+      <td class="nw">{% if it.readable %}<button type="button" class="link" data-auth-op="download" data-what="資料庫"
+          data-url="{{ url_for('settings.backup_download', name=it.name, fname='dailyreport.db') }}"
+          data-when="{{ it.time.strftime('%Y-%m-%d %H:%M:%S') }}" data-name="{{ it.name }}">資料庫</button>
+        {% if it.kind != 'db' %}· <button type="button" class="link" data-auth-op="download" data-what="檔案"
+          data-url="{{ url_for('settings.backup_download', name=it.name, fname='instance.tar.gz') }}"
+          data-when="{{ it.time.strftime('%Y-%m-%d %H:%M:%S') }}" data-name="{{ it.name }}">檔案</button>{% endif %}{% else %}<span class="hint">無法讀取</span>{% endif %}</td>
       <td>
         {% if it.readable %}
         <button type="button" class="secondary small" data-auth-op="restore" data-url="{{ url_for('settings.backup_restore', name=it.name) }}"
@@ -127,6 +131,7 @@
     <p><span data-op-verb></span> <b data-op-when></b> 的備份（<code data-op-name></code>）。</p>
     <p class="hint" data-op="restore">之後新增或修改的日報、帳號、系統設定都會回到備份當時的狀態；還原前會自動再備份一次目前的資料。
       稽核紀錄會保留，不會被換回去。</p>
+    <p class="hint" data-op="download">下載的內容含全部日報資料，請妥善保管、用完刪除。</p>
     <p class="hint" data-op="delete">刪除後無法復原。其他備份不受影響（增量備份共用的檔案會保留給仍在使用的備份）。</p>
     <p class="hint">請輸入<b>您本人</b>的 AD 帳號與密碼確認（本機緊急帳號用本機密碼）。確認成功與失敗都記在稽核紀錄。</p>
     <div class="form-grid">
@@ -142,13 +147,15 @@
 <script>
 (function () {
   var dlg = document.getElementById('auth-dlg'), form = dlg.querySelector('form');
-  var OPS = {restore: ['還原備份', '還原到', '確認還原'], delete: ['刪除備份', '刪除', '確認刪除']};
+  var OPS = {restore: ['還原備份', '還原到', '確認還原'], delete: ['刪除備份', '刪除', '確認刪除'],
+             download: ['下載備份', '下載', '確認下載']};
   document.querySelectorAll('[data-auth-op]').forEach(function (b) {
     b.addEventListener('click', function () {
       var op = b.dataset.authOp, t = OPS[op];
       form.action = b.dataset.url;
       dlg.querySelector('[data-op-title]').textContent = t[0];
-      dlg.querySelector('[data-op-verb]').textContent = t[1];
+      dlg.querySelector('[data-op-verb]').textContent = t[1] + (b.dataset.what ? '「' + b.dataset.what + '」' : '');
+      form.dataset.op = op;
       dlg.querySelector('[data-op-submit]').textContent = t[2];
       dlg.querySelector('[data-op-when]').textContent = b.dataset.when;
       dlg.querySelector('[data-op-name]').textContent = b.dataset.name;
@@ -159,6 +166,10 @@
     });
   });
   dlg.querySelector('[data-op-cancel]').addEventListener('click', function () { dlg.close(); });
+  // 下載成功時頁面不會換頁：送出後關閉視窗、清掉密碼（失敗時頁面會重新載入並顯示原因）
+  form.addEventListener('submit', function () {
+    if (form.dataset.op === 'download') setTimeout(function () { form.querySelector('[name=auth_password]').value = ''; dlg.close(); }, 300);
+  });
 })();
 </script>
 
