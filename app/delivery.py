@@ -184,7 +184,11 @@ def _step_pdf(d):
     rel = os.path.join("final_pdf", f"{r.report_date:%Y}", f"{r.report_date:%m}", name)
     full = os.path.join(current_app.instance_path, rel)
     os.makedirs(os.path.dirname(full), exist_ok=True)
-    data, stamp = render_official(r)
+    from .pdf.render_proc import render_lock, trim
+
+    with render_lock():  # 與預覽共用：全系統一次只產生一份 PDF
+        data, stamp = render_official(r)
+    trim()
     tmp = full + ".part"
     with open(tmp, "wb") as fh:
         fh.write(data)

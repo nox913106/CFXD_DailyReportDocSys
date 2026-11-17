@@ -231,17 +231,23 @@ def build_pdf(report):
     """預覽用 PDF bytes（有快取，每頁有浮水印）。正式 PDF 只在結案後由發送流程產生一次並存檔。"""
     cache_dir = os.path.join(current_app.instance_path, "pdf_cache")
     os.makedirs(cache_dir, exist_ok=True)
+    from .render_proc import preview_to_file, render_lock
+
     path = os.path.join(cache_dir, f"{report.id}_{cache_key(report)}.pdf")
-    if os.path.exists(path):
-        with open(path, "rb") as f:
-            return f.read()
-    data = render_pdf(report, preview=True)
-    for old in os.listdir(cache_dir):
-        if old.startswith(f"{report.id}_"):
-            os.remove(os.path.join(cache_dir, old))
-    with open(path, "wb") as f:
-        f.write(data)
-    return data
+    if not os.path.exists(path):
+        with render_lock():  # 一次只產生一份；排隊等到時可能別人已經產生好了
+            if not os.path.exists(path):
+                if current_app.config.get("PDF_SUBPROCESS", not current_app.config.get("TESTING")):
+                    preview_to_file(report.id, path)  # 子程序產生，記憶體用完即還給系統
+                else:
+                    data = render_pdf(report, preview=True)
+                    with open(path, "wb") as f:
+                        f.write(data)
+                for old in os.listdir(cache_dir):
+                    if old.startswith(f"{report.id}_") and os.path.join(cache_dir, old) != path:
+                        os.remove(os.path.join(cache_dir, old))
+    with open(path, "rb") as f:
+        return f.read()
 
 
 def render_official(report):

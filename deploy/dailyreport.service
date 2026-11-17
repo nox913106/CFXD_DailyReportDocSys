@@ -7,8 +7,8 @@ User=dailyreport
 Group=www-data
 WorkingDirectory=/opt/dailyreport
 EnvironmentFile=/opt/dailyreport/.env
-# PDF 產生約需 20 秒，逾時放寬到 180 秒
-ExecStart=/opt/dailyreport/.venv/bin/gunicorn --workers 3 --timeout 180 --bind 127.0.0.1:8000 wsgi:app
+# PDF 產生約需 20 秒（全系統一次一份，其他人排隊），逾時放寬到 180 秒；worker 處理 300 個請求後換新，釋放累積的記憶體
+ExecStart=/opt/dailyreport/.venv/bin/gunicorn --workers 3 --timeout 180 --max-requests 300 --max-requests-jitter 60 --bind 127.0.0.1:8000 wsgi:app
 Restart=on-failure
 
 [Install]
