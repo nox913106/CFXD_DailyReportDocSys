@@ -1362,8 +1362,16 @@ def test_admin_backup_restore_and_health(app, tmp_path):
     b.post(f"/reports/{rid}/delete", {"reason": "x"})
     rid2 = report_id_from(b.post("/reports/new", {"report_date": "2026-10-02"}))
     os.remove(os.path.join(app.instance_path, "fonts", "a.ttf"))
-    assert "請輸入備份日期" in b.post(f"/admin/settings/backup/{name}/restore", {"confirm": "x"})
-    assert "已排入還原" in b.post(f"/admin/settings/backup/{name}/restore", {"confirm": name[:8]})
+    # 還原要再輸入本人帳密：沒填、別人的帳號、錯的密碼都不會排入，失敗記在稽核紀錄
+    ok = {"auth_username": "sysadmin", "auth_password": "a-very-long-pass"}
+    assert "請輸入您的帳號與密碼確認還原" in b.post(f"/admin/settings/backup/{name}/restore", {})
+    assert "必須是目前登入的您本人" in b.post(f"/admin/settings/backup/{name}/restore",
+                                         {"auth_username": "boss", "auth_password": "x"})
+    assert "帳號或密碼錯誤，未還原" in b.post(f"/admin/settings/backup/{name}/restore",
+                                        {"auth_username": "sysadmin", "auth_password": "wrong"})
+    with app.app_context():
+        assert MaintJob.query.filter_by(kind="restore").count() == 0
+    assert "已排入還原" in b.post(f"/admin/settings/backup/{name}/restore", dict(ok, auth_username="DOMAIN\\SysAdmin"))
     with app.app_context():
         maint.tick()
         job = MaintJob.query.order_by(MaintJob.id.desc()).first()
@@ -1374,13 +1382,21 @@ def test_admin_backup_restore_and_health(app, tmp_path):
         triggers = sorted(i["meta"]["trigger"] for i in backup.list_backups())
         assert triggers == ["manual", "pre_restore"]
     assert "已還原" in b.get("/admin/settings/backup")
-    assert "還原" in b.get("/admin/users")  # 稽核紀錄
+    with app.app_context():
+        from app.models import AuditLog
+
+        # 還原把資料庫換回備份當時，但比備份新的稽核紀錄（身分確認失敗、要求還原）會搬回來
+        acts = [a.action for a in AuditLog.query.order_by(AuditLog.id)]
+        assert acts.count("restore_auth_fail") == 2 and "restore_request" in acts and acts[-1] == "restore", acts
+        req = AuditLog.query.filter_by(action="restore_request").one()
+        assert req.actor.username == "sysadmin" and req.target == name
+        assert "保留" in AuditLog.query.filter_by(action="restore").one().detail
 
     # 損壞的備份不能還原
     with app.app_context():
         with open(os.path.join(backup.path_of(name), "dailyreport.db"), "ab") as fh:
             fh.write(b"x")
-    assert "檢查碼不符" in b.post(f"/admin/settings/backup/{name}/restore", {"confirm": name[:8]})
+    assert "檢查碼不符" in b.post(f"/admin/settings/backup/{name}/restore", ok)
 
     # 排程：到時間才做、同一天只做一次、保留份數
     from datetime import datetime

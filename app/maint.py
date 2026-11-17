@@ -9,6 +9,7 @@
 """
 
 import logging
+import os
 import time
 from datetime import datetime, timedelta
 
@@ -196,6 +197,33 @@ def worker_alive():
     return bool(hb) and datetime.fromisoformat(hb) > datetime.now() - timedelta(seconds=HEARTBEAT_SECONDS * 3)
 
 
+def _audit_since(name):
+    """還原會把稽核紀錄一起換回備份當時：先記下目前資料庫中比備份新的紀錄（含要求還原、身分確認失敗），還原後再寫回。"""
+    import sqlite3
+
+    from . import backup
+    from .models import AuditLog
+
+    with sqlite3.connect(f"file:{os.path.join(backup.path_of(name), 'dailyreport.db')}?mode=ro", uri=True) as con:
+        try:
+            last = con.execute("SELECT MAX(id) FROM audit_log").fetchone()[0] or 0
+        except sqlite3.Error:
+            last = 0
+    return [{"action": a.action, "actor": a.actor.username if a.actor else "", "target": a.target or "",
+             "detail": a.detail or "", "created_at": a.created_at}
+            for a in AuditLog.query.filter(AuditLog.id > last).order_by(AuditLog.id)]
+
+
+def _put_back(rows):
+    from .models import AuditLog, User
+
+    for r in rows:
+        actor = User.query.filter_by(username=r["actor"]).first() if r["actor"] else None
+        detail = r["detail"] if actor or not r["actor"] else f"（操作者 {r['actor']}，備份中沒有這個帳號）{r['detail']}"
+        db.session.add(AuditLog(action=r["action"], actor_id=actor.id if actor else None, target=r["target"],
+                                detail=detail, created_at=r["created_at"]))
+
+
 def _run_job(job):
     from . import backup
     from .models import AuditLog, MaintJob, User
@@ -214,6 +242,7 @@ def _run_job(job):
             msg, ok = f"{name}（{size / 1e6:.1f} MB）", True
         elif job.kind == "restore":
             username = user.username if user else ""
+            newer = _audit_since(job.param)
             pre = backup.restore(job.param, user)
             # 資料庫已換成備份當時的內容：這筆工作與稽核紀錄要重新寫入
             msg, ok = f"已還原 {job.param}；還原前的資料已備份為 {pre}", True
@@ -225,8 +254,9 @@ def _run_job(job):
                 synchronize_session=False)
             job = MaintJob(**info)
             db.session.add(job)
+            _put_back(newer)
             db.session.add(AuditLog(action="restore", actor_id=info["requested_by_id"], target=info["param"],
-                                    detail=f"還原前備份 {pre}"))
+                                    detail=f"還原前備份 {pre}；還原後保留 {len(newer)} 筆比備份新的稽核紀錄"))
         else:
             raise RuntimeError(f"不認得的工作 {job.kind}")
     except Exception as e:  # 失敗原因顯示在設定頁

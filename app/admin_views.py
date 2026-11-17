@@ -334,13 +334,19 @@ def backup_restore(name):
     except bk.BackupError as e:
         flash(f"不能還原：{e}", "error")
         return redirect(url_for("settings.backup"))
-    if request.form.get("confirm", "").strip() != name[:8]:
-        flash(f"請輸入備份日期 {name[:8]} 確認還原。", "error")
+    from .auth import confirm_identity
+
+    err = confirm_identity("還原", "restore_auth_fail")
+    if err:
+        flash(err, "error")
         return redirect(url_for("settings.backup"))
     job = maint.enqueue("restore", current_user, param=name)
     if job is None:
         flash("已有備份或還原工作在進行，請稍候。", "error")
     else:
+        # 這筆紀錄比備份新：還原後由維護服務搬回（見 maint._audit_since）
+        _audit("restore_request", name, f"AD 身分確認通過，排入還原；來源 {request.remote_addr or '?'}")
+        db.session.commit()
         flash(f"已排入還原 {name}。還原前會自動備份目前的資料；完成後請重新整理頁面。", "success")
     return redirect(url_for("settings.backup"))
 
@@ -572,7 +578,7 @@ AUDIT_LABELS = {"delete_report": "刪除日報", "set_role": "變更角色", "se
                 "ai_provider_add": "新增 AI 服務", "ai_provider_edit": "修改 AI 服務", "ai_provider_delete": "刪除 AI 服務",
                 "sys_settings": "系統設定", "local_account": "本機緊急帳號", "backup": "備份", "restore": "還原",
                 "delegation": "代理權限", "checklist_items": "檢查項目", "import_report": "匯入歷史日報",
-                "delete_auth_fail": "刪除身分確認失敗", "login_fail": "登入失敗",
+                "delete_auth_fail": "刪除身分確認失敗", "restore_request": "要求還原", "restore_auth_fail": "還原身分確認失敗", "login_fail": "登入失敗",
                 "audit_export": "匯出稽核紀錄", "sysinfo_export": "下載系統資訊", "upgrade": "升級程式", "images_export": "下載原始圖檔", "audit_retention": "稽核保存天數", "audit_purge": "清除過期稽核紀錄"}
 
 

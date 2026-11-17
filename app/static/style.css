@@ -550,3 +550,8 @@ body.lb-open { overflow: hidden; }
 /* 備份設定 */
 .backup-form fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: 0 0 12px; }
 .backup-form legend { font-weight: 700; padding: 0 6px; }
+
+dialog.confirm-dlg { border: 1px solid #d1d5db; border-radius: 10px; padding: 20px 24px; width: min(520px, calc(100vw - 32px)); }
+dialog.confirm-dlg::backdrop { background: rgba(15, 23, 42, .45); }
+dialog.confirm-dlg h3 { margin-top: 0; }
+dialog.confirm-dlg .actions { display: flex; gap: 8px; margin-top: 12px; }

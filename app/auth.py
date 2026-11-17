@@ -197,6 +197,28 @@ def verify_password(username, password):
     return user if ad_authenticate(username, password) else None
 
 
+def confirm_identity(what, fail_action):
+    """高風險操作前再次確認身分：表單的 auth_username 必須是目前登入者本人，auth_password 用 AD 驗證
+    （本機緊急帳號用本機密碼）。通過回傳 None；失敗回傳錯誤訊息，並寫入稽核紀錄（fail_action）。"""
+    from flask_login import current_user
+
+    from .models import AuditLog
+
+    name = (request.form.get("auth_username") or "").strip()
+    if not name or not request.form.get("auth_password"):
+        return f"請輸入您的帳號與密碼確認{what}。"
+    if clean_username(name) != current_user.username:
+        err = f"帳號必須是目前登入的您本人（{current_user.username}）。"
+    elif verify_password(name, request.form.get("auth_password")) is None:
+        err = "帳號或密碼錯誤，" + ("未刪除任何檔案。" if what == "刪除" else f"未{what}。")
+    else:
+        return None
+    db.session.add(AuditLog(action=fail_action, actor_id=current_user.id, target=name[:128],
+                            detail=f"{what}的身分確認失敗：{err}；來源 {request.remote_addr or '?'}"[:500]))
+    db.session.commit()
+    return err
+
+
 def _next_url(default=None):
     next_url = request.args.get("next", "")
     # 只允許站內相對路徑，避免開放式重新導向

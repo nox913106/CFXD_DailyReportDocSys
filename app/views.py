@@ -507,26 +507,12 @@ def _set_aside_final_pdf(report):
 
 
 def _reauth():
-    """刪除正式文件前再次確認身分：表單的帳號必須是目前登入者本人，密碼用 AD（本機帳號用本機密碼）驗證，
-    角色必須是檔案管理員以上。回傳錯誤訊息，通過時回傳 None。失敗寫入稽核紀錄。"""
-    from .auth import verify_password
+    """刪除正式文件前再次確認身分（本人 AD 帳密），角色必須是檔案管理員以上。回傳錯誤訊息，通過時回傳 None。"""
+    from .auth import confirm_identity
 
-    name = (request.form.get("auth_username") or "").strip()
-    norm = name.split("\\")[-1].split("@")[0].lower()
     if not perm.can_delete_official(current_user):
         return "只有檔案管理員、系統管理員可以刪除正式文件。"
-    if not name or not request.form.get("auth_password"):
-        return "請輸入您的帳號與密碼確認刪除。"
-    if norm != current_user.username:
-        err = f"帳號必須是目前登入的您本人（{current_user.username}）。"
-    elif verify_password(name, request.form.get("auth_password")) is None:
-        err = "帳號或密碼錯誤，未刪除任何檔案。"
-    else:
-        return None
-    db.session.add(AuditLog(action="delete_auth_fail", actor_id=current_user.id, target=name[:128],
-                            detail="刪除正式文件的身分確認失敗：" + err))
-    db.session.commit()
-    return err
+    return confirm_identity("刪除", "delete_auth_fail")
 
 
 def _remove_report(report, note=""):
