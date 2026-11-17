@@ -241,6 +241,7 @@ def _snapshot(instance, root, dest, base, stats):
     回傳 [(sha256, 相對路徑)]；沿用的檔案直接用前一份記錄的檢查碼。"""
     root_real = os.path.realpath(root)
     prev = _read_sums(base) if base else {}
+    os.makedirs(os.path.join(dest, "files"), exist_ok=True)  # 沒有任何檔案也要有，才看得出是含檔案的備份
     out = []
     for dirpath, dirnames, filenames in os.walk(instance):
         rel_dir = os.path.relpath(dirpath, instance)

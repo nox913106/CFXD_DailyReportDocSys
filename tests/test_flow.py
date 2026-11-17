@@ -1404,6 +1404,33 @@ def test_admin_backup_restore_and_health(app, tmp_path):
     # 刪除備份也要本人帳密
     with app.app_context():
         pre_name = next(i["name"] for i in backup.list_backups() if i["meta"]["trigger"] == "pre_restore")
+
+    # 複選下載：一個 ZIP、每份一個資料夾；要本人帳密；有一個名稱不對整批拒絕
+    import zipfile
+
+    two = {"names": [name, pre_name]}
+    assert "請先勾選備份" in b.post("/admin/settings/backup-bulk/download", {})
+    assert "找不到備份" in b.post("/admin/settings/backup-bulk/delete", dict(ok, names=[pre_name, "20990101-000000-xxxx"]))
+    with app.app_context():
+        assert os.path.isdir(backup.path_of(pre_name))
+    assert "帳號或密碼錯誤，未下載備份" in b.post("/admin/settings/backup-bulk/download",
+                                         dict(two, auth_username="sysadmin", auth_password="wrong"))
+    r = b.c.post("/admin/settings/backup-bulk/download", data=dict(ok, csrf_token=b.tok, what="all", **two))
+    assert r.status_code == 200 and r.mimetype == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(r.data)) as z:
+        zn = set(z.namelist())
+        assert {f"{name}/dailyreport.db", f"{name}/instance.tar.gz", f"{pre_name}/dailyreport.db",
+                f"{pre_name}/instance.tar.gz"} <= zn
+        assert z.read(f"{name}/dailyreport.db")[:15] == b"SQLite format 3"
+        with tarfile.open(fileobj=io.BytesIO(z.read(f"{name}/instance.tar.gz"))) as t:
+            assert "instance/fonts/a.ttf" in t.getnames()
+    r = b.c.post("/admin/settings/backup-bulk/download", data=dict(ok, csrf_token=b.tok, what="db", **two))
+    with zipfile.ZipFile(io.BytesIO(r.data)) as z:
+        assert sorted(z.namelist()) == sorted([f"{name}/dailyreport.db", f"{pre_name}/dailyreport.db"])
+    with app.app_context():
+        assert AuditLog.query.filter(AuditLog.detail.like("批次下載%")).count() == 4
+    html = b.get("/admin/settings/backup")
+    assert "data-sel-all" in html and "下載資料庫與檔案" in html
     assert "請輸入您的帳號與密碼確認刪除備份" in b.post(f"/admin/settings/backup/{pre_name}/delete", {})
     assert "帳號或密碼錯誤，未刪除備份" in b.post(f"/admin/settings/backup/{pre_name}/delete",
                                          {"auth_username": "sysadmin", "auth_password": "wrong"})
@@ -2976,6 +3003,15 @@ def test_full_and_incremental_backups(app, tmp_path):
         maint.tick()
         job = MaintJob.query.order_by(MaintJob.id.desc()).first()
         assert job.status == "done" and job.param == "incr", job.message
+        names = [i["name"] for i in backup.list_backups()]
+    # 複選刪除：要本人帳密，通過後一次刪掉勾選的，沒勾的保留
+    ok = {"auth_username": "sysadmin", "auth_password": "a-very-long-pass"}
+    b.get("/admin/settings/backup")
+    assert "帳號或密碼錯誤，未刪除備份" in b.post("/admin/settings/backup-bulk/delete",
+                                         {"names": names[:2], "auth_username": "sysadmin", "auth_password": "x"})
+    assert "已刪除 2 份備份" in b.post("/admin/settings/backup-bulk/delete", dict(ok, names=names[:2]))
+    with app.app_context():
+        assert [i["name"] for i in backup.list_backups()] == names[2:]
 
 
 def test_upgrade_button(app, tmp_path, monkeypatch):

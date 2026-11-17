@@ -351,58 +351,151 @@ def backup_restore(name):
     return redirect(url_for("settings.backup"))
 
 
-@bp.route("/backup/<name>/delete", methods=["POST"])
-def backup_delete(name):
+def _confirmed(what, fail_action):
+    """本人 AD 帳密確認；通過回傳稽核紀錄後綴，失敗 flash 原因並回傳 None。"""
     from .auth import confirm_identity
 
-    err = confirm_identity("刪除備份", "backup_del_auth_fail")
+    err = confirm_identity(what, fail_action)
     if err:
         flash(err, "error")
+        return None
+    return f"（AD 身分確認通過；來源 {request.remote_addr or '?'}）"
+
+
+def _selected():
+    """複選的備份名稱（去重、保持順序）；任何一個不存在或名稱不正確就整批拒絕（BackupError）。"""
+    names = list(dict.fromkeys(n.strip() for n in request.form.getlist("names") if n.strip()))
+    if not names:
+        raise bk.BackupError("請先勾選備份。")
+    for n in names:
+        bk.path_of(n)
+    return names
+
+
+def _do_delete(names, how, batch=False):
+    for n in names:
+        bk.delete(n)
+        _audit("backup", n, ("批次" if batch else "") + "刪除備份" + how)
+    db.session.commit()
+
+
+@bp.route("/backup/<name>/delete", methods=["POST"])
+def backup_delete(name):
+    how = _confirmed("刪除備份", "backup_del_auth_fail")
+    if how is None:
         return redirect(url_for("settings.backup"))
     try:
-        bk.delete(name)
+        bk.path_of(name)
+        _do_delete([name], how)
     except bk.BackupError as e:
         flash(str(e), "error")
         return redirect(url_for("settings.backup"))
-    _audit("backup", name, f"刪除備份（AD 身分確認通過；來源 {request.remote_addr or '?'}）")
-    db.session.commit()
     flash(f"已刪除備份 {name}。", "success")
     return redirect(url_for("settings.backup"))
+
+
+@bp.route("/backup-bulk/delete", methods=["POST"])
+def backup_bulk_delete():
+    try:
+        names = _selected()
+    except bk.BackupError as e:
+        flash(str(e), "error")
+        return redirect(url_for("settings.backup"))
+    how = _confirmed("刪除備份", "backup_del_auth_fail")
+    if how is None:
+        return redirect(url_for("settings.backup"))
+    _do_delete(names, how, batch=True)
+    flash(f"已刪除 {len(names)} 份備份：{'、'.join(names)}。", "success")
+    return redirect(url_for("settings.backup"))
+
+
+def _files_targz(folder, workdir):
+    """備份的檔案部分（tar.gz）：舊格式直接用 instance.tar.gz；新格式（files/ 資料夾）在 workdir 即時打包，
+    格式與舊版相同。沒有檔案（僅資料庫的備份）回傳 None。"""
+    import tarfile
+
+    old = os.path.join(folder, "instance.tar.gz")
+    if os.path.isfile(old):
+        return old
+    tree = os.path.join(folder, "files")
+    if not os.path.isdir(tree):
+        return None
+    out = os.path.join(workdir, os.path.basename(folder) + "-instance.tar.gz")
+    with tarfile.open(out, "w:gz") as tar:
+        tar.add(tree, arcname="instance")
+    return out
 
 
 @bp.route("/backup/<name>/<fname>", methods=["POST"])
 def backup_download(name, fname):
     """下載備份（含全部日報資料）：要再輸入本人 AD 帳號密碼，成功與失敗都記在稽核紀錄。"""
-    from .auth import confirm_identity
+    import tempfile
 
     if fname not in bk.DOWNLOADABLE:
         abort(404)
     try:
-        path = os.path.join(bk.path_of(name), fname)
+        folder = bk.path_of(name)
     except bk.BackupError:
         abort(404)
-    err = confirm_identity("下載備份", "backup_dl_auth_fail")
-    if err:
-        flash(err, "error")
+    how = _confirmed("下載備份", "backup_dl_auth_fail")
+    if how is None:
         return redirect(url_for("settings.backup"))
-    how = f"（AD 身分確認通過；來源 {request.remote_addr or '?'}）"
-    tree = os.path.join(os.path.dirname(path), "files")
-    if fname == "instance.tar.gz" and not os.path.isfile(path) and os.path.isdir(tree):
-        import tarfile
-        import tempfile
-
-        tmp = tempfile.TemporaryFile()  # 新格式（files/ 資料夾）：下載時才打包，格式與舊版 instance.tar.gz 相同
-        with tarfile.open(fileobj=tmp, mode="w:gz") as tar:
-            tar.add(tree, arcname="instance")
-        tmp.seek(0)
+    if fname == "dailyreport.db":
+        path = os.path.join(folder, fname)
+        if not os.path.isfile(path):
+            abort(404)
         _audit("backup", name, f"下載 {fname}{how}")
         db.session.commit()
-        return send_file(tmp, as_attachment=True, download_name=f"dailyreport-{name}-{fname}", mimetype="application/gzip")
-    if not os.path.isfile(path):
-        abort(404)
+        return send_file(path, as_attachment=True, download_name=f"dailyreport-{name}-{fname}")
+    with tempfile.TemporaryDirectory() as work:
+        path = _files_targz(folder, work)
+        if path is None:
+            abort(404)
+        tmp = tempfile.TemporaryFile()
+        with open(path, "rb") as fh:
+            shutil.copyfileobj(fh, tmp)
+    tmp.seek(0)
     _audit("backup", name, f"下載 {fname}{how}")
     db.session.commit()
-    return send_file(path, as_attachment=True, download_name=f"dailyreport-{name}-{fname}")
+    return send_file(tmp, as_attachment=True, download_name=f"dailyreport-{name}-{fname}", mimetype="application/gzip")
+
+
+@bp.route("/backup-bulk/download", methods=["POST"])
+def backup_bulk_download():
+    """複選下載：一個 ZIP，每份備份一個資料夾（dailyreport.db；選「資料庫與檔案」時另含 instance.tar.gz）。"""
+    import tempfile
+    import zipfile
+
+    try:
+        names = _selected()
+    except bk.BackupError as e:
+        flash(str(e), "error")
+        return redirect(url_for("settings.backup"))
+    with_files = request.form.get("what") == "all"
+    how = _confirmed("下載備份", "backup_dl_auth_fail")
+    if how is None:
+        return redirect(url_for("settings.backup"))
+    tmp = tempfile.TemporaryFile()
+    with tempfile.TemporaryDirectory() as work, zipfile.ZipFile(tmp, "w", allowZip64=True) as zf:
+        for n in names:
+            folder = bk.path_of(n)
+            got = []
+            dbf = os.path.join(folder, "dailyreport.db")
+            if os.path.isfile(dbf):
+                zf.write(dbf, f"{n}/dailyreport.db", compress_type=zipfile.ZIP_DEFLATED)
+                got.append("dailyreport.db")
+            if with_files:
+                tgz = _files_targz(folder, work)
+                if tgz:
+                    zf.write(tgz, f"{n}/instance.tar.gz", compress_type=zipfile.ZIP_STORED)  # 已壓縮
+                    got.append("instance.tar.gz")
+                    if tgz.startswith(work):
+                        os.remove(tgz)
+            _audit("backup", n, f"批次下載 {'、'.join(got) or '（無檔案）'}{how}")
+    tmp.seek(0)
+    db.session.commit()
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return send_file(tmp, as_attachment=True, download_name=f"dailyreport-backups-{stamp}.zip", mimetype="application/zip")
 
 
 # ---------------------------------------------------------------- PDF 與上傳

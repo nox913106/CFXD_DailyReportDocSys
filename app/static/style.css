@@ -555,3 +555,5 @@ dialog.confirm-dlg { border: 1px solid #d1d5db; border-radius: 10px; padding: 20
 dialog.confirm-dlg::backdrop { background: rgba(15, 23, 42, .45); }
 dialog.confirm-dlg h3 { margin-top: 0; }
 dialog.confirm-dlg .actions { display: flex; gap: 8px; margin-top: 12px; }
+.bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 10px; }
+dialog.confirm-dlg .op-list { max-height: 180px; overflow: auto; margin: 4px 0 8px; padding-left: 20px; font-size: 14px; }

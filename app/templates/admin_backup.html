@@ -88,10 +88,23 @@
 
 <section class="card">
   <h3>備份（{{ items|length }} 份）</h3>
+  {% if items %}
+  <div class="bulk-bar" data-bulk-bar>
+    <span>已選 <b data-sel-count>0</b> 份</span>
+    <button type="button" class="secondary small" data-auth-op="bulk-download" data-what="db"
+            data-url="{{ url_for('settings.backup_bulk_download') }}" disabled>下載資料庫</button>
+    <button type="button" class="secondary small" data-auth-op="bulk-download" data-what="all"
+            data-url="{{ url_for('settings.backup_bulk_download') }}" disabled>下載資料庫與檔案</button>
+    <button type="button" class="danger small" data-auth-op="bulk-delete"
+            data-url="{{ url_for('settings.backup_bulk_delete') }}" disabled>刪除</button>
+  </div>
+  {% endif %}
   <table class="list">
-    <tr><th>時間</th><th>來源</th><th>大小</th><th>日報數</th><th>下載</th><th>還原</th><th></th></tr>
+    <tr><th><input type="checkbox" data-sel-all title="全選" aria-label="全選"></th><th>時間</th><th>來源</th><th>大小</th><th>日報數</th><th>下載</th><th>還原</th><th></th></tr>
     {% for it in items %}
     <tr>
+      <td><input type="checkbox" data-sel value="{{ it.name }}" data-when="{{ it.time.strftime('%Y-%m-%d %H:%M:%S') }}"
+                 aria-label="選取 {{ it.name }}"></td>
       <td class="nw">{{ it.time.strftime('%Y-%m-%d %H:%M:%S') }}<br><span class="hint">{{ it.name }}</span></td>
       <td>{{ {'manual': '手動', 'scheduled': '排程', 'pre_restore': '還原前自動', 'cli': '主機指令'}.get(it.meta.trigger, it.meta.trigger) }}
         {%- if it.meta.by %}・{{ it.meta.by }}{% endif %}
@@ -116,7 +129,7 @@
                 data-when="{{ it.time.strftime('%Y-%m-%d %H:%M:%S') }}" data-name="{{ it.name }}">刪除</button>
       </td>
     </tr>
-    {% else %}<tr><td colspan="7" class="hint">還沒有備份。按右上角「立即備份」。</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="8" class="hint">還沒有備份。按右上角「立即備份」。</td></tr>{% endfor %}
   </table>
   <p class="hint">還原會把資料庫與檔案換成備份當時的內容（系統設定、帳號也一起），不需要停服務；設定檔 .env 不會被覆蓋。
     下載的資料庫與檔案含全部日報資料，請妥善保管。
@@ -128,11 +141,15 @@
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <h3 data-op-title></h3>
-    <p><span data-op-verb></span> <b data-op-when></b> 的備份（<code data-op-name></code>）。</p>
+    <p data-op-one><span data-op-verb></span> <b data-op-when></b> 的備份（<code data-op-name></code>）。</p>
+    <div data-op-many hidden><p><span data-op-many-verb></span>以下 <b data-op-count></b> 份備份：</p>
+      <ul class="op-list" data-op-list></ul></div>
+    <div data-op-inputs></div>
     <p class="hint" data-op="restore">之後新增或修改的日報、帳號、系統設定都會回到備份當時的狀態；還原前會自動再備份一次目前的資料。
       稽核紀錄會保留，不會被換回去。</p>
-    <p class="hint" data-op="download">下載的內容含全部日報資料，請妥善保管、用完刪除。</p>
-    <p class="hint" data-op="delete">刪除後無法復原。其他備份不受影響（增量備份共用的檔案會保留給仍在使用的備份）。</p>
+    <p class="hint" data-op="download bulk-download">下載的內容含全部日報資料，請妥善保管、用完刪除。</p>
+    <p class="hint" data-op="bulk-download">多份備份會打包成一個 ZIP，每份備份一個資料夾。</p>
+    <p class="hint" data-op="delete bulk-delete">刪除後無法復原。其他備份不受影響（增量備份共用的檔案會保留給仍在使用的備份）。</p>
     <p class="hint">請輸入<b>您本人</b>的 AD 帳號與密碼確認（本機緊急帳號用本機密碼）。確認成功與失敗都記在稽核紀錄。</p>
     <div class="form-grid">
       <label>帳號<input name="auth_username" autocomplete="username" placeholder="{{ current_user.username }}" required></label>
@@ -148,18 +165,53 @@
 (function () {
   var dlg = document.getElementById('auth-dlg'), form = dlg.querySelector('form');
   var OPS = {restore: ['還原備份', '還原到', '確認還原'], delete: ['刪除備份', '刪除', '確認刪除'],
-             download: ['下載備份', '下載', '確認下載']};
+             download: ['下載備份', '下載', '確認下載'],
+             'bulk-download': ['下載備份', '下載', '確認下載'], 'bulk-delete': ['刪除備份', '刪除', '確認刪除']};
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('[data-sel]'));
+  var all = document.querySelector('[data-sel-all]');
+  function checked() { return boxes.filter(function (c) { return c.checked; }); }
+  function sync() {
+    var n = checked().length, cnt = document.querySelector('[data-sel-count]');
+    if (cnt) cnt.textContent = n;
+    document.querySelectorAll('[data-auth-op^=bulk]').forEach(function (b) { b.disabled = !n; });
+    if (all) { all.checked = n && n === boxes.length; all.indeterminate = n > 0 && n < boxes.length; }
+  }
+  boxes.forEach(function (c) { c.addEventListener('change', sync); });
+  if (all) all.addEventListener('change', function () { boxes.forEach(function (c) { c.checked = all.checked; }); sync(); });
+  sync();
+
+  function hidden(name, value) {
+    var i = document.createElement('input'); i.type = 'hidden'; i.name = name; i.value = value; return i;
+  }
   document.querySelectorAll('[data-auth-op]').forEach(function (b) {
     b.addEventListener('click', function () {
-      var op = b.dataset.authOp, t = OPS[op];
+      var op = b.dataset.authOp, t = OPS[op], bulk = op.indexOf('bulk') === 0;
+      var sel = checked(), inputs = dlg.querySelector('[data-op-inputs]');
+      if (bulk && !sel.length) return;
       form.action = b.dataset.url;
-      dlg.querySelector('[data-op-title]').textContent = t[0];
-      dlg.querySelector('[data-op-verb]').textContent = t[1] + (b.dataset.what ? '「' + b.dataset.what + '」' : '');
       form.dataset.op = op;
-      dlg.querySelector('[data-op-submit]').textContent = t[2];
-      dlg.querySelector('[data-op-when]').textContent = b.dataset.when;
-      dlg.querySelector('[data-op-name]').textContent = b.dataset.name;
-      dlg.querySelectorAll('[data-op]').forEach(function (p) { p.hidden = p.dataset.op !== op; });
+      inputs.innerHTML = '';
+      dlg.querySelector('[data-op-title]').textContent = t[0];
+      dlg.querySelector('[data-op-submit]').textContent = bulk ? t[2] + '（' + sel.length + ' 份）' : t[2];
+      var what = op === 'bulk-download' ? (b.dataset.what === 'all' ? '「資料庫與檔案」' : '「資料庫」')
+                 : (b.dataset.what ? '「' + b.dataset.what + '」' : '');
+      dlg.querySelector('[data-op-one]').hidden = bulk;
+      dlg.querySelector('[data-op-many]').hidden = !bulk;
+      if (bulk) {
+        dlg.querySelector('[data-op-many-verb]').textContent = t[1] + what;
+        dlg.querySelector('[data-op-count]').textContent = sel.length;
+        var ul = dlg.querySelector('[data-op-list]'); ul.innerHTML = '';
+        sel.forEach(function (c) {
+          var li = document.createElement('li'); li.textContent = c.dataset.when + '（' + c.value + '）'; ul.appendChild(li);
+          inputs.appendChild(hidden('names', c.value));
+        });
+        if (op === 'bulk-download') inputs.appendChild(hidden('what', b.dataset.what));
+      } else {
+        dlg.querySelector('[data-op-verb]').textContent = t[1] + what;
+        dlg.querySelector('[data-op-when]').textContent = b.dataset.when;
+        dlg.querySelector('[data-op-name]').textContent = b.dataset.name;
+      }
+      dlg.querySelectorAll('[data-op]').forEach(function (p) { p.hidden = p.dataset.op.split(' ').indexOf(op) < 0; });
       form.querySelector('[name=auth_password]').value = '';
       dlg.showModal();
       form.querySelector('[name=auth_username]').focus();
@@ -168,7 +220,7 @@
   dlg.querySelector('[data-op-cancel]').addEventListener('click', function () { dlg.close(); });
   // 下載成功時頁面不會換頁：送出後關閉視窗、清掉密碼（失敗時頁面會重新載入並顯示原因）
   form.addEventListener('submit', function () {
-    if (form.dataset.op === 'download') setTimeout(function () { form.querySelector('[name=auth_password]').value = ''; dlg.close(); }, 300);
+    if (/download/.test(form.dataset.op)) setTimeout(function () { form.querySelector('[name=auth_password]').value = ''; dlg.close(); }, 300);
   });
 })();
 </script>
