@@ -546,3 +546,7 @@ body.lb-open { overflow: hidden; }
 .upgrade-new { margin: 6px 0 10px; padding-left: 20px; }
 .upgrade-new li { margin-bottom: 6px; }
 .upgrade-log { max-height: 320px; overflow: auto; background: #0d1117; color: #c9d1d9; padding: 10px; border-radius: 6px; font-size: 12px; white-space: pre-wrap; }
+
+/* 備份設定 */
+.backup-form fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: 0 0 12px; }
+.backup-form legend { font-weight: 700; padding: 0 6px; }

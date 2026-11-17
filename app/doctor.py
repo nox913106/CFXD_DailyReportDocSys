@@ -302,12 +302,14 @@ def _backup_checks(out):
     _item(out, g, "備份位置", "ok", f"{root}（可寫入；空間見「儲存空間」）")
     nxt = maint.next_backup()
     if nxt:
-        _item(out, g, "排程", "ok", f"每天 {sysconf.get('backup_time')}，保留 {sysconf.get('backup_keep')} 份（下次 {nxt:%m/%d %H:%M}）")
+        _item(out, g, "排程", "ok", f"{maint.schedule_text()}（下次完整備份 {nxt:%m/%d %H:%M}）")
     else:
         _item(out, g, "排程", "warn", "自動備份未啟用", "系統設定 → 備份還原：啟用每日自動備份")
-    hours = int(sysconf.get("backup_db_hours") or 0)
-    _item(out, g, "資料庫快速備份", "ok", f"每 {hours} 小時，保留 {sysconf.get('backup_db_keep')} 份（最多遺失約 {hours} 小時的日報資料）"
-          if hours else "關閉（最多可能遺失約一天的日報資料；可在備份還原頁設定每幾小時備份一次資料庫）")
+    mode = maint.incr_mode()
+    span = {"hours": f"約 {maint.incr_hours()} 小時", "daily": "約一天"}.get(mode)
+    if not span:
+        span = {"daily": "約一天", "weekly": "約一週", "monthly": "約一個月"}.get(sysconf.get("backup_full_freq") or "daily", "約一天")
+    _item(out, g, "資料遺失範圍", "ok", f"主機損壞時最多可能遺失{span}的資料（依最近一次備份）")
     last = backup.last_backup()
     if last:
         age = (datetime.now() - last["time"]).total_seconds() / 3600

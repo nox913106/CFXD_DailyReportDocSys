@@ -19,51 +19,53 @@ POLL_SECONDS = 10
 HEARTBEAT_SECONDS = 60
 
 
-def scheduled_at(now=None):
-    """今天的排程時間（datetime），設定格式錯誤時回傳 None。"""
-    now = now or datetime.now()
+WEEKDAYS = ("一", "二", "三", "四", "五", "六", "日")
+
+
+def _hm(value):
     try:
-        h, m = (int(x) for x in str(sysconf.get("backup_time")).split(":"))
-        return now.replace(hour=h, minute=m, second=0, microsecond=0)
+        h, m = (int(x) for x in str(value).split(":"))
+        return h, m
     except (TypeError, ValueError):
         return None
+
+
+def scheduled_at(now=None):
+    """今天的完整備份時間（datetime），設定格式錯誤時回傳 None。"""
+    now = now or datetime.now()
+    hm = _hm(sysconf.get("backup_time"))
+    return now.replace(hour=hm[0], minute=hm[1], second=0, microsecond=0) if hm else None
+
+
+def _full_day(d):
+    freq = sysconf.get("backup_full_freq") or "daily"
+    if freq == "weekly":
+        return d.weekday() == int(sysconf.get("backup_full_weekday") or 0)
+    if freq == "monthly":
+        return d.day == int(sysconf.get("backup_full_monthday") or 1)
+    return True
+
+
+def _last_full_slot(now):
+    at = scheduled_at(now)
+    if at is None:
+        return None
+    if now < at:
+        at -= timedelta(days=1)
+    for _ in range(40):
+        if _full_day(at):
+            return at
+        at -= timedelta(days=1)
+    return None
 
 
 def backup_due(now=None):
+    """完整備份：依頻率（每天 / 每週某天 / 每月某日）的時間到了、而且那一次還沒做。"""
     now = now or datetime.now()
     if not sysconf.get("backup_enabled"):
         return False
-    at = scheduled_at(now)
-    if at is None:
-        return False
-    if now < at:
-        at -= timedelta(days=1)  # 還沒到今天的時間：看昨天那一次有沒有做
-    last = sysconf.get("backup_last_scheduled") or ""
-    return last < at.isoformat()
-
-
-def db_backup_due(now=None):
-    """資料庫快速備份：距離上一次滿設定的小時數就做（0 = 關閉）。"""
-    now = now or datetime.now()
-    hours = int(sysconf.get("backup_db_hours") or 0)
-    if not hours:
-        return False
-    last = sysconf.get("backup_db_last") or ""
-    try:
-        return not last or now - datetime.fromisoformat(last) >= timedelta(hours=hours) - timedelta(minutes=1)
-    except ValueError:
-        return True
-
-
-def next_db_backup(now=None):
-    now = now or datetime.now()
-    hours = int(sysconf.get("backup_db_hours") or 0)
-    if not hours:
-        return None
-    try:
-        return max(now, datetime.fromisoformat(sysconf.get("backup_db_last")) + timedelta(hours=hours))
-    except (TypeError, ValueError):
-        return now
+    slot = _last_full_slot(now)
+    return slot is not None and (sysconf.get("backup_last_scheduled") or "") < slot.isoformat()
 
 
 def next_backup(now=None):
@@ -71,7 +73,79 @@ def next_backup(now=None):
     at = scheduled_at(now)
     if at is None or not sysconf.get("backup_enabled"):
         return None
-    return at if at > now else at + timedelta(days=1)
+    if at <= now:
+        at += timedelta(days=1)
+    for _ in range(40):
+        if _full_day(at):
+            return at
+        at += timedelta(days=1)
+    return None
+
+
+def incr_mode():
+    mode = sysconf.get("backup_incr_mode") or "off"
+    if mode == "off" and int(sysconf.get("backup_db_hours") or 0):
+        return "hours"  # v4.42.0 設過「資料庫快速備份」：沿用為每幾小時增量
+    return mode
+
+
+def incr_hours():
+    if (sysconf.get("backup_incr_mode") or "off") == "off" and int(sysconf.get("backup_db_hours") or 0):
+        return int(sysconf.get("backup_db_hours"))
+    return int(sysconf.get("backup_incr_hours") or 6)
+
+
+def _incr_last():
+    try:
+        return datetime.fromisoformat(sysconf.get("backup_incr_last") or sysconf.get("backup_db_last") or "")
+    except ValueError:
+        return None
+
+
+def incr_due(now=None):
+    """增量備份：每天固定時間，或每幾小時一次。"""
+    now = now or datetime.now()
+    mode, last = incr_mode(), _incr_last()
+    if mode == "hours":
+        return last is None or now - last >= timedelta(hours=incr_hours()) - timedelta(minutes=1)
+    if mode == "daily":
+        hm = _hm(sysconf.get("backup_incr_time"))
+        if not hm:
+            return False
+        at = now.replace(hour=hm[0], minute=hm[1], second=0, microsecond=0)
+        if now < at:
+            at -= timedelta(days=1)
+        return last is None or last < at
+    return False
+
+
+def next_incr(now=None):
+    now = now or datetime.now()
+    mode, last = incr_mode(), _incr_last()
+    if mode == "hours":
+        return max(now, last + timedelta(hours=incr_hours())) if last else now
+    if mode == "daily":
+        hm = _hm(sysconf.get("backup_incr_time"))
+        if not hm:
+            return None
+        at = now.replace(hour=hm[0], minute=hm[1], second=0, microsecond=0)
+        return at if at > now else at + timedelta(days=1)
+    return None
+
+
+def schedule_text():
+    """健康檢查與設定頁用的排程說明。"""
+    freq = sysconf.get("backup_full_freq") or "daily"
+    t = sysconf.get("backup_time")
+    full = {"daily": f"每天 {t}", "weekly": f"每週{WEEKDAYS[int(sysconf.get('backup_full_weekday') or 0)]} {t}",
+            "monthly": f"每月 {sysconf.get('backup_full_monthday')} 日 {t}"}.get(freq, t)
+    full = f"完整備份 {full}，保留 {sysconf.get('backup_keep')} 份" if sysconf.get("backup_enabled") else "完整備份未啟用"
+    mode = incr_mode()
+    incr = {"off": "增量備份關閉", "daily": f"增量備份每天 {sysconf.get('backup_incr_time')}",
+            "hours": f"增量備份每 {incr_hours()} 小時"}.get(mode, "")
+    if mode != "off":
+        incr += f"，保留 {sysconf.get('backup_incr_keep')} 份"
+    return f"{full}；{incr}"
 
 
 def request_health():
@@ -133,7 +207,10 @@ def _run_job(job):
     user = db.session.get(User, job.requested_by_id) if job.requested_by_id else None
     try:
         if job.kind == "backup":
-            name, size = backup.create(job.trigger, user, db_only=job.param == "db")
+            if job.param == "db":
+                name, size = backup.create(job.trigger, user, db_only=True)
+            else:
+                name, size = backup.create(job.trigger, user, mode="incr" if job.param == "incr" else "full")
             msg, ok = f"{name}（{size / 1e6:.1f} MB）", True
         elif job.kind == "restore":
             username = user.username if user else ""
@@ -209,8 +286,11 @@ def tick(now=None):
         sysconf.put("backup_last_scheduled", now.isoformat(timespec="seconds"))
         db.session.commit()
         enqueue("backup", trigger="scheduled")
-    elif db_backup_due(now) and enqueue("backup", trigger="scheduled", param="db"):
-        sysconf.put("backup_db_last", now.isoformat(timespec="seconds"))  # 排得進去才算；有工作在跑時下一輪再試
+        if incr_due(now):  # 同一時間只做完整備份，這一次的增量就不用了
+            sysconf.put("backup_incr_last", now.isoformat(timespec="seconds"))
+            db.session.commit()
+    elif incr_due(now) and enqueue("backup", trigger="scheduled", param="incr"):
+        sysconf.put("backup_incr_last", now.isoformat(timespec="seconds"))  # 排得進去才算；有工作在跑時下一輪再試
         db.session.commit()
     job = MaintJob.query.filter_by(status="pending").order_by(MaintJob.id).first()
     if job:

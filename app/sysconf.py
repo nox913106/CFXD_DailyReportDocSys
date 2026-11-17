@@ -40,9 +40,16 @@ DEFAULTS = {
     "backup_keep": 14,
     "backup_dir": "",  # 空白 = DEFAULT_BACKUP_DIR
     "backup_include_env": True,
-    # 資料庫快速備份：每幾小時備份一次資料庫（只有資料庫，很快、很小），0 = 關閉；縮短資料遺失範圍（RPO）
-    "backup_db_hours": 0,
-    "backup_db_keep": 48,
+    # 完整備份：頻率 daily / weekly / monthly，時間是 backup_time，保留 backup_keep 份
+    "backup_full_freq": "daily",
+    "backup_full_weekday": 6,  # 0 = 星期一 … 6 = 星期日
+    "backup_full_monthday": 1,
+    # 增量備份（與前一份相同的檔案共用空間）：off / daily（每天 backup_incr_time）/ hours（每 backup_incr_hours 小時）
+    "backup_incr_mode": "off",
+    "backup_incr_time": "12:30",
+    "backup_incr_hours": 6,
+    "backup_incr_keep": 14,
+    "backup_db_hours": 0,  # v4.42.0 的資料庫快速備份；已改為增量備份，設定過的會沿用為「每幾小時增量」
     # 健康檢查
     # 稽核紀錄保存天數（180–366）：維護服務每天清除超過的紀錄
     "audit_retention_days": 366,

@@ -251,20 +251,33 @@ def backup():
     root = sysconf.backup_dir()
     return render_template("admin_backup.html", tab="backup", items=bk.list_backups(), jobs=jobs, busy=busy,
                            root=root, dir_error=bk.check_dir(root), next_run=maint.next_backup(),
-                           next_db=maint.next_db_backup(), db_hours_choices=bk.DB_HOURS_CHOICES,
+                           next_incr=maint.next_incr(), incr_mode=maint.incr_mode(), incr_hours=maint.incr_hours(),
+                           hours_choices=INCR_HOURS, weekdays=maint.WEEKDAYS, schedule=maint.schedule_text(),
+                           usage=bk.disk_usage(root) if not bk.check_dir(root) else None,
                            b=sysconf.many(("backup_enabled", "backup_time", "backup_keep", "backup_dir",
-                                           "backup_db_hours", "backup_db_keep",
-                                           "backup_include_env")),
+                                           "backup_full_freq", "backup_full_weekday", "backup_full_monthday",
+                                           "backup_incr_time", "backup_incr_keep", "backup_include_env")),
                            default_dir=current_app.config.get("BACKUP_DIR") or sysconf.DEFAULT_BACKUP_DIR,
                            **_job_ctx())
+
+
+INCR_HOURS = (1, 2, 3, 4, 6, 8, 12)
+HM_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
 @bp.route("/backup/config", methods=["POST"])
 def backup_config():
     f = request.form
     t = f.get("backup_time", "02:30").strip()
-    if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", t):
+    ti = f.get("backup_incr_time", "12:30").strip() or "12:30"
+    if not HM_RE.match(t) or not HM_RE.match(ti):
         flash("備份時間格式為 HH:MM，例如 02:30。", "error")
+        return redirect(url_for("settings.backup"))
+    freq = f.get("backup_full_freq", "daily")
+    mode = f.get("backup_incr_mode", "off")
+    hours = _int("backup_incr_hours", 1, 12, 6)
+    if freq not in ("daily", "weekly", "monthly") or mode not in ("off", "daily", "hours") or hours not in INCR_HOURS:
+        flash("備份頻率請從選單選擇。", "error")
         return redirect(url_for("settings.backup"))
     d = f.get("backup_dir", "").strip().rstrip("/")
     if d:
@@ -279,16 +292,19 @@ def backup_config():
     new = {"backup_enabled": f.get("backup_enabled") == "1", "backup_time": t,
            "backup_keep": _int("backup_keep", 1, 365, 14), "backup_dir": d,
            "backup_include_env": f.get("backup_include_env") == "1",
-           "backup_db_hours": _int("backup_db_hours", 0, 12, 0), "backup_db_keep": _int("backup_db_keep", 1, 500, 48)}
-    if new["backup_db_hours"] not in bk.DB_HOURS_CHOICES:
-        flash("資料庫快速備份的間隔請從選單選擇。", "error")
-        return redirect(url_for("settings.backup"))
+           "backup_full_freq": freq, "backup_full_weekday": _int("backup_full_weekday", 0, 6, 6),
+           "backup_full_monthday": _int("backup_full_monthday", 1, 28, 1),
+           "backup_incr_mode": mode, "backup_incr_time": ti, "backup_incr_hours": hours,
+           "backup_incr_keep": _int("backup_incr_keep", 1, 500, 14), "backup_db_hours": 0}
     old = sysconf.many(new)
     for k, v in new.items():
         sysconf.put(k, v, current_user)
-    if t != old["backup_time"]:
-        # 改了時間：今天新的時間如果已經過了，不要立刻補做
-        sysconf.put("backup_last_scheduled", datetime.now().isoformat(timespec="seconds"), current_user)
+    now = datetime.now().isoformat(timespec="seconds")
+    if any(new[k] != old[k] for k in ("backup_time", "backup_full_freq", "backup_full_weekday", "backup_full_monthday")):
+        # 改了排程：新排程這一次的時間如果已經過了，不要立刻補做
+        sysconf.put("backup_last_scheduled", now, current_user)
+    if any(new[k] != old[k] for k in ("backup_incr_mode", "backup_incr_time", "backup_incr_hours")):
+        sysconf.put("backup_incr_last", now, current_user)
     changed = [k for k in new if new[k] != old[k]]
     if changed:
         _audit("sys_settings", "備份", "、".join(f"{k}={new[k]}" for k in changed))
@@ -299,13 +315,15 @@ def backup_config():
 
 @bp.route("/backup/now", methods=["POST"])
 def backup_now():
-    job = maint.enqueue("backup", current_user)
+    mode = "incr" if request.form.get("mode") == "incr" else "full"
+    job = maint.enqueue("backup", current_user, param="incr" if mode == "incr" else "")
     if job is None:
         flash("已有備份或還原工作在進行，請稍候。", "error")
     else:
-        _audit("backup", "立即備份")
+        label = "增量備份" if mode == "incr" else "完整備份"
+        _audit("backup", f"立即{label}")
         db.session.commit()
-        flash("已排入備份，通常在一分鐘內完成。", "success")
+        flash(f"已排入{label}，通常在一分鐘內完成。", "success")
     return redirect(url_for("settings.backup"))
 
 
@@ -348,6 +366,18 @@ def backup_download(name, fname):
         path = os.path.join(bk.path_of(name), fname)
     except bk.BackupError:
         abort(404)
+    tree = os.path.join(os.path.dirname(path), "files")
+    if fname == "instance.tar.gz" and not os.path.isfile(path) and os.path.isdir(tree):
+        import tarfile
+        import tempfile
+
+        tmp = tempfile.TemporaryFile()  # 新格式（files/ 資料夾）：下載時才打包，格式與舊版 instance.tar.gz 相同
+        with tarfile.open(fileobj=tmp, mode="w:gz") as tar:
+            tar.add(tree, arcname="instance")
+        tmp.seek(0)
+        _audit("backup", name, f"下載 {fname}")
+        db.session.commit()
+        return send_file(tmp, as_attachment=True, download_name=f"dailyreport-{name}-{fname}", mimetype="application/gzip")
     if not os.path.isfile(path):
         abort(404)
     _audit("backup", name, f"下載 {fname}")

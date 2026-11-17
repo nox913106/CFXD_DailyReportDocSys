@@ -1327,7 +1327,7 @@ def test_admin_backup_restore_and_health(app, tmp_path):
         "backup_dir": os.path.join(app.instance_path, "bk"), "backup_time": "02:30", "backup_keep": "3"})
     assert "已儲存備份設定" in b.post("/admin/settings/backup/config", {
         "backup_enabled": "1", "backup_time": "02:30", "backup_keep": "2", "backup_dir": "", "backup_include_env": "1"})
-    assert "已排入備份" in b.post("/admin/settings/backup/now")
+    assert "已排入完整備份" in b.post("/admin/settings/backup/now")
     assert "已有備份或還原工作" in b.post("/admin/settings/backup/now")
     with app.app_context():
         maint.tick()
@@ -1339,17 +1339,22 @@ def test_admin_backup_restore_and_health(app, tmp_path):
         path = backup.path_of(name)
         # dailyreport.sh restore 用 sha256sum -c 驗證：格式必須相容
         assert subprocess.run(["sha256sum", "-c", "--quiet", "SHA256SUMS"], cwd=path).returncode == 0
-        assert {"dailyreport.db", "instance.tar.gz", "VERSION", "meta.json", "SHA256SUMS"} <= set(os.listdir(path))
-        import tarfile
-
-        with tarfile.open(os.path.join(path, "instance.tar.gz")) as t:
-            names = t.getnames()
-        assert "instance/fonts/a.ttf" in names and not any("pdf_cache" in n for n in names)
+        assert {"dailyreport.db", "files", "VERSION", "meta.json", "SHA256SUMS"} <= set(os.listdir(path))
+        assert os.path.isfile(os.path.join(path, "files", "fonts", "a.ttf"))
+        assert not os.path.exists(os.path.join(path, "files", "pdf_cache"))
+        assert "./files/fonts/a.ttf" in open(os.path.join(path, "SHA256SUMS")).read()
 
     html = b.get("/admin/settings/backup")
     assert name in html and "資料庫" in html
     r = b.c.get(f"/admin/settings/backup/{name}/dailyreport.db")
     assert r.status_code == 200 and r.data[:15] == b"SQLite format 3"
+    import io
+    import tarfile
+
+    r = b.c.get(f"/admin/settings/backup/{name}/instance.tar.gz")  # 新格式下載時才打包
+    with tarfile.open(fileobj=io.BytesIO(r.data)) as t:
+        names = t.getnames()
+    assert "instance/fonts/a.ttf" in names and not any("pdf_cache" in n for n in names)
     assert b.c.get(f"/admin/settings/backup/{name}/env").status_code == 404
     assert b.c.get("/admin/settings/backup/../../etc/dailyreport.db").status_code == 404
 
@@ -2855,8 +2860,9 @@ def test_withdraw_submission(app):
     assert "只有待審核的日報可以收回" in alice.post(f"/reports/{rid}/withdraw")
 
 
-def test_db_quick_backup_schedule_and_restore(app, tmp_path):
-    """資料庫快速備份：後台設定每幾小時一次；只有資料庫、可還原；與每日完整備份各自保留。"""
+def test_full_and_incremental_backups(app, tmp_path):
+    """後台設定完整 / 增量備份的方式與排程。增量備份只複製新增或變更的檔案，其餘與前一份共用（硬連結）；
+    每一份都能單獨還原，刪掉被沿用的那份也不影響；兩種各自保留份數。"""
     import os
     import time
     from datetime import datetime, timedelta
@@ -2865,44 +2871,73 @@ def test_db_quick_backup_schedule_and_restore(app, tmp_path):
     from app.models import MaintJob, Report
 
     app.instance_path = str(tmp_path / "instance")
+    up = os.path.join(app.instance_path, "uploads", "1")
+    os.makedirs(up)
     os.makedirs(os.path.join(app.instance_path, "pdf_cache"))
+    with open(os.path.join(up, "a.png"), "wb") as fh:
+        fh.write(b"A" * 5000)
     b = _admin_browser(app)
     assert "從選單選擇" in b.post("/admin/settings/backup/config", {
-        "backup_enabled": "1", "backup_time": "02:30", "backup_keep": "2", "backup_db_hours": "5", "backup_db_keep": "2"})
+        "backup_enabled": "1", "backup_time": "02:30", "backup_keep": "2", "backup_full_freq": "yearly"})
     assert "已儲存備份設定" in b.post("/admin/settings/backup/config", {
-        "backup_enabled": "1", "backup_time": "02:30", "backup_keep": "2", "backup_db_hours": "2", "backup_db_keep": "2"})
+        "backup_enabled": "1", "backup_full_freq": "weekly", "backup_full_weekday": "6", "backup_time": "02:30",
+        "backup_keep": "2", "backup_incr_mode": "hours", "backup_incr_hours": "6", "backup_incr_time": "12:30",
+        "backup_incr_keep": "2"})
     html = b.get("/admin/settings/backup")
-    assert '<option value="2" selected>每 2 小時</option>' in html and "資料庫快速備份" in html
+    assert "完整備份 每週日 02:30，保留 2 份；增量備份每 6 小時，保留 2 份" in html and "立即增量備份" in html
 
     with app.app_context():
-        sysconf.put("backup_last_scheduled", datetime.now().isoformat())  # 今天的每日備份已做過
+        # 排程：完整備份每週日；增量每 6 小時
+        sun, mon = datetime(2026, 11, 15, 2, 31), datetime(2026, 11, 16, 2, 31)
+        sysconf.put("backup_last_scheduled", "2026-11-08T02:31:00")
+        sysconf.put("backup_incr_last", "")
         db.session.commit()
-        now = datetime.now()
-        assert maint.db_backup_due(now)
-        maint.tick(now)  # 排入並執行
-        job = MaintJob.query.order_by(MaintJob.id.desc()).first()
-        assert job.status == "done" and job.param == "db", job.message
-        assert not maint.db_backup_due(now + timedelta(hours=1)) and maint.db_backup_due(now + timedelta(hours=2))
-        items = backup.list_backups()
-        assert len(items) == 1 and items[0]["kind"] == "db" and items[0]["meta"]["kind"] == "db"
-        path = backup.path_of(items[0]["name"])
-        assert "instance.tar.gz" not in os.listdir(path) and "env" not in os.listdir(path)
-        backup.verify(path)
-        # 各自保留：快速備份保留 2 份、完整備份不受影響
-        backup.create("manual")
-        for _ in range(3):
-            time.sleep(1.1)
-            backup.create("scheduled", db_only=True)
-        kinds = [i["kind"] for i in backup.list_backups()]
-        assert kinds.count("db") == 2 and kinds.count("full") == 1
-        # 還原只有資料庫的備份
+        assert maint.backup_due(sun) and not maint.backup_due(datetime(2026, 11, 14, 23, 0))
+        sysconf.put("backup_last_scheduled", sun.isoformat())
+        db.session.commit()
+        assert not maint.backup_due(mon) and maint.next_backup(mon) == datetime(2026, 11, 22, 2, 30)
+        assert maint.incr_due(mon)
+        sysconf.put("backup_incr_last", mon.isoformat())
+        db.session.commit()
+        assert not maint.incr_due(mon + timedelta(hours=5)) and maint.incr_due(mon + timedelta(hours=6))
+
+        full, _ = backup.create("manual")
+        with open(os.path.join(up, "b.png"), "wb") as fh:
+            fh.write(b"B" * 7000)
+        time.sleep(1.1)
+        incr, _ = backup.create("scheduled", mode="incr")
+        items = {i["name"]: i for i in backup.list_backups()}
+        assert items[full]["kind"] == "full" and items[incr]["kind"] == "incr"
+        m = items[incr]["meta"]
+        assert m["base"] == full and m["files_copied"] == 1 and m["files_linked"] == 1 and m["new_bytes"] == 7000
+        fa, ia = (os.path.join(backup.path_of(n), "files", "uploads", "1", "a.png") for n in (full, incr))
+        assert os.stat(fa).st_ino == os.stat(ia).st_ino  # 共用同一份
+        # 刪掉被沿用的完整備份，增量備份仍完整、可驗證
+        backup.delete(full)
+        backup.verify(backup.path_of(incr))
+        assert open(ia, "rb").read() == b"A" * 5000
+        # 還原增量備份：檔案回到當時（複製回來，不是硬連結）
+        os.remove(os.path.join(up, "a.png"))
         before = Report.query.count()
-        db_name = next(i["name"] for i in backup.list_backups() if i["kind"] == "db")
     b.post("/reports/new", {"report_date": "2026-10-02"})
     with app.app_context():
-        assert Report.query.count() == before + 1
-        backup.restore(db_name)
+        backup.restore(incr)
         assert Report.query.count() == before
+        restored = os.path.join(up, "a.png")
+        assert open(restored, "rb").read() == b"A" * 5000 and os.stat(restored).st_ino != os.stat(ia).st_ino
+        # 增量各自保留份數（還原前的保險備份也算增量）
+        for _ in range(3):
+            time.sleep(1.1)
+            backup.create("scheduled", mode="incr")
+        kinds = [i["kind"] for i in backup.list_backups()]
+        assert kinds.count("incr") == 2
+        # 排程工作：增量備份排入並執行
+        sysconf.put("backup_last_scheduled", datetime.now().isoformat())
+        sysconf.put("backup_incr_last", "")
+        db.session.commit()
+        maint.tick()
+        job = MaintJob.query.order_by(MaintJob.id.desc()).first()
+        assert job.status == "done" and job.param == "incr", job.message
 
 
 def test_upgrade_button(app, tmp_path, monkeypatch):

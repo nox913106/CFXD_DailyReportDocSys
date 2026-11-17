@@ -2,8 +2,11 @@
 
 格式與 scripts/dailyreport.sh backup 相同，兩邊產生的備份可以互相還原：
     <備份位置>/<YYYYmmdd-HHMMSS-xxxx>/
-        dailyreport.db      SQLite 線上備份（不需停服務）
-        instance.tar.gz     截圖、範本、字型、檢查結果.md（不含 PDF 快取與資料庫）
+        dailyreport.db      SQLite 線上備份（不需停服務），每份都是完整的資料庫
+        files/              截圖、正式 PDF、範本、字型、檢查結果.md（instance 資料夾，不含 PDF 快取與資料庫）
+                            完整備份：全部重新複製；增量備份：和前一份相同的檔案用硬連結共用磁碟空間，
+                            只有新增或變更的檔案佔空間。每一份都可以單獨還原，刪掉任何一份都不影響其他份。
+        instance.tar.gz     v4.44.0 以前的格式（files/ 的壓縮檔），仍可還原
         env                 .env（含 SECRET_KEY；AI 金鑰以它加密，換主機還原時需要）
         VERSION             程式版本（git commit）
         meta.json           誰、何時、手動或排程
@@ -142,9 +145,15 @@ def _tar_filter(instance, root):
 DB_HOURS_CHOICES = (0, 1, 2, 3, 4, 6, 8, 12)
 
 
-def create(trigger="manual", user=None, prune=True, db_only=False):
+MODES = ("full", "incr")
+
+
+def create(trigger="manual", user=None, prune=True, db_only=False, mode="full"):
     """建立一份備份，回傳 (名稱, 大小 bytes)。
-    db_only：資料庫快速備份，只有資料庫（日報內容、狀態、帳號、設定），不含截圖與 PDF 等檔案；可直接還原。"""
+    mode：full 完整備份（檔案全部複製）/ incr 增量備份（沿用前一份相同的檔案，只複製新增或變更的）。
+    db_only：v4.42.0 的資料庫快速備份（只有資料庫），保留給舊資料與指令使用。"""
+    if mode not in MODES:
+        raise BackupError("備份方式不正確")
     root = sysconf.backup_dir()
     err = check_dir(root)
     if err:
@@ -164,9 +173,11 @@ def create(trigger="manual", user=None, prune=True, db_only=False):
                 dst.close()
                 src.close()
                 instance = current_app.instance_path
+                sums, stats = [], {"apparent": 0, "new": 0, "copied": 0, "linked": 0, "base": ""}
                 if not db_only:
-                    with tarfile.open(os.path.join(dest, "instance.tar.gz"), "w:gz") as tar:
-                        tar.add(instance, arcname="instance", filter=_tar_filter(instance, root))
+                    base = _latest_tree(root, exclude=name) if mode == "incr" else None
+                    stats["base"] = os.path.basename(base) if base else ""
+                    sums = _snapshot(instance, root, dest, base, stats)
                 env = os.path.join(app_dir(), ".env")
                 if not db_only and sysconf.get("backup_include_env") and os.access(env, os.R_OK):
                     shutil.copyfile(env, os.path.join(dest, "env"))
@@ -174,42 +185,153 @@ def create(trigger="manual", user=None, prune=True, db_only=False):
                     fh.write(version() + "\n")
                 from .models import Report
 
+                kind = "db" if db_only else ("incr" if stats["base"] else "full")
                 meta = {"trigger": trigger, "by": user.username if user else "", "created_at": datetime.now().isoformat(),
                         "version": version(), "app_version": semver(), "reports": Report.query.count(),
-                        "kind": "db" if db_only else "full"}
+                        "kind": kind, "requested": "db" if db_only else mode, "base": stats["base"],
+                        "files_copied": stats["copied"], "files_linked": stats["linked"], "files_bytes": stats["apparent"],
+                        "new_bytes": stats["new"]}
                 with open(os.path.join(dest, "meta.json"), "w") as fh:
                     json.dump(meta, fh, ensure_ascii=False)
-                files = sorted(f for f in os.listdir(dest) if f != "SHA256SUMS")
+                files = sorted(f for f in os.listdir(dest) if f != "SHA256SUMS" and os.path.isfile(os.path.join(dest, f)))
                 with open(os.path.join(dest, "SHA256SUMS"), "w") as fh:
                     for f in files:
                         fh.write(f"{_sha256(os.path.join(dest, f))}  ./{f}\n")
+                    for digest, rel in sums:
+                        fh.write(f"{digest}  ./files/{rel}\n")
             except Exception:
                 shutil.rmtree(dest, ignore_errors=True)
                 raise
         finally:
             os.umask(old)
         if prune:
-            if db_only:
-                _prune(root, int(sysconf.get("backup_db_keep") or 48), protect={name}, kind="db")
-            else:
+            if kind == "full":
                 _prune(root, int(sysconf.get("backup_keep") or 14), protect={name}, kind="full")
+            else:
+                _prune(root, int(sysconf.get("backup_incr_keep") or 14), protect={name}, kind="incr")
         return name, _size(dest)
 
 
+def _read_sums(path):
+    out = {}
+    try:
+        with open(os.path.join(path, "SHA256SUMS")) as fh:
+            for line in fh:
+                digest, _, f = line.rstrip("\n").partition("  ")
+                out[f.removeprefix("./")] = digest
+    except OSError:
+        pass
+    return out
+
+
+def _latest_tree(root, exclude=""):
+    """最近一份有 files/ 的備份（增量備份的基準）。"""
+    names = sorted((n for n in os.listdir(root) if NAME_RE.match(n) and n != exclude
+                    and os.path.isdir(os.path.join(root, n, "files"))), reverse=True)
+    return os.path.join(root, names[0]) if names else None
+
+
+def _skip(rel):
+    top = rel.split("/", 1)[0]
+    return top in EXCLUDE_DIRS or bool(re.search(r"\.db(-wal|-shm|-journal)?$", rel)) or rel.endswith(".lock")
+
+
+def _snapshot(instance, root, dest, base, stats):
+    """instance 資料夾 → dest/files/。base（前一份備份）裡大小、修改時間相同的檔案改用硬連結，不重複佔空間。
+    回傳 [(sha256, 相對路徑)]；沿用的檔案直接用前一份記錄的檢查碼。"""
+    root_real = os.path.realpath(root)
+    prev = _read_sums(base) if base else {}
+    out = []
+    for dirpath, dirnames, filenames in os.walk(instance):
+        rel_dir = os.path.relpath(dirpath, instance)
+        keep = []
+        for d in sorted(dirnames):
+            full = os.path.join(dirpath, d)
+            rel = os.path.normpath(os.path.join(rel_dir, d))
+            real = os.path.realpath(full)
+            if os.path.islink(full) or _skip(rel) or real == root_real or real.startswith(root_real + os.sep):
+                continue  # 備份位置在 instance 底下時不要備份自己
+            keep.append(d)
+        dirnames[:] = keep
+        for fn in sorted(filenames):
+            src = os.path.join(dirpath, fn)
+            rel = os.path.normpath(os.path.join(rel_dir, fn))
+            if os.path.islink(src) or not os.path.isfile(src) or _skip(rel):
+                continue
+            dst = os.path.join(dest, "files", rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            st = os.stat(src)
+            stats["apparent"] += st.st_size
+            old = os.path.join(base, "files", rel) if base else None
+            digest = prev.get(f"files/{rel}")
+            if old and digest and os.path.isfile(old) and not os.path.islink(old):
+                ost = os.stat(old)
+                if ost.st_size == st.st_size and int(ost.st_mtime) == int(st.st_mtime):
+                    try:
+                        os.link(old, dst)
+                        stats["linked"] += 1
+                        out.append((digest, rel))
+                        continue
+                    except OSError:  # 檔案系統不支援硬連結：改為複製
+                        pass
+            h = hashlib.sha256()
+            with open(src, "rb") as fi, open(dst, "wb") as fo:
+                for chunk in iter(lambda: fi.read(1 << 20), b""):
+                    h.update(chunk)
+                    fo.write(chunk)
+            shutil.copystat(src, dst)
+            stats["copied"] += 1
+            stats["new"] += st.st_size
+            out.append((h.hexdigest(), rel))
+    return out
+
+
 def _size(path):
-    return sum(os.path.getsize(os.path.join(path, f)) for f in os.listdir(path)
-               if os.path.isfile(os.path.join(path, f)))
+    """備份的完整大小（含 files/；硬連結共用的檔案也算進去）。"""
+    total = 0
+    for dirpath, _, filenames in os.walk(path):
+        for f in filenames:
+            try:
+                total += os.path.getsize(os.path.join(dirpath, f))
+            except OSError:
+                pass
+    return total
+
+
+def disk_usage(root):
+    """備份位置實際佔用的磁碟空間（硬連結共用的檔案只算一次）。"""
+    seen, total = set(), 0
+    for dirpath, _, filenames in os.walk(root):
+        for f in filenames:
+            try:
+                st = os.lstat(os.path.join(dirpath, f))
+            except OSError:
+                continue
+            if (st.st_dev, st.st_ino) not in seen:
+                seen.add((st.st_dev, st.st_ino))
+                total += st.st_blocks * 512
+    return total
 
 
 def kind_of(path):
-    """full = 完整備份（含檔案）；db = 資料庫快速備份。"""
-    return "full" if os.path.isfile(os.path.join(path, "instance.tar.gz")) else "db"
+    """full = 完整備份；incr = 增量備份；db = v4.42.0 的資料庫快速備份（保留份數與增量備份一起算）。"""
+    try:
+        with open(os.path.join(path, "meta.json")) as fh:
+            k = json.load(fh).get("kind")
+        if k in ("full", "incr", "db"):
+            return k
+    except (OSError, ValueError):
+        pass
+    if os.path.isfile(os.path.join(path, "instance.tar.gz")) or os.path.isdir(os.path.join(path, "files")):
+        return "full"
+    return "db"
 
 
 def _prune(root, keep, protect=(), kind="full"):
-    """完整備份與資料庫快速備份各自保留最近 keep 份，互不影響。"""
+    """完整備份、增量備份各自保留最近 keep 份。增量備份用硬連結共用檔案，刪掉任何一份都不影響其他份。"""
+    group = ("full",) if kind == "full" else ("incr", "db")
     names = sorted(n for n in os.listdir(root) if NAME_RE.match(n) and os.path.isdir(os.path.join(root, n))
-                   and kind_of(os.path.join(root, n)) == kind)
+                   and kind_of(os.path.join(root, n)) in group)
     for n in names[:-keep] if keep > 0 else []:
         if n not in protect:
             shutil.rmtree(os.path.join(root, n), ignore_errors=True)
@@ -242,7 +364,8 @@ def list_backups():
         except (OSError, ValueError):
             meta = {"trigger": "cli"}  # dailyreport.sh 指令產生的備份
         try:
-            size = _size(p)
+            size = meta["files_bytes"] + os.path.getsize(os.path.join(p, "dailyreport.db")) \
+                if "files_bytes" in meta and os.path.isfile(os.path.join(p, "dailyreport.db")) else _size(p)
             readable = os.access(os.path.join(p, "dailyreport.db"), os.R_OK)
         except OSError:
             size, readable = 0, False
@@ -259,7 +382,8 @@ def verify(path):
         for line in fh:
             digest, _, f = line.strip().partition("  ")
             f = f.removeprefix("./")
-            if "/" in f or not f:
+            parts = f.split("/")
+            if not f or f.startswith("/") or ".." in parts or ("/" in f and parts[0] != "files"):
                 raise BackupError("SHA256SUMS 格式不正確")
             fp = os.path.join(path, f)
             if not os.path.isfile(fp) or _sha256(fp) != digest:
@@ -280,7 +404,7 @@ def restore(name, user=None):
     with sqlite3.connect(f"file:{os.path.join(src_dir, 'dailyreport.db')}?mode=ro", uri=True) as chk:
         if chk.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise BackupError("備份中的資料庫損壞")
-    pre, _ = create("pre_restore", user, prune=False)
+    pre, _ = create("pre_restore", user, prune=False, mode="incr")
     root = sysconf.backup_dir()
     with _lock(root):
         db.session.remove()
@@ -294,7 +418,20 @@ def restore(name, user=None):
             src.close()
         instance = current_app.instance_path
         tgz = os.path.join(src_dir, "instance.tar.gz")
-        if os.path.isfile(tgz):
+        tree = os.path.join(src_dir, "files")
+        if os.path.isdir(tree):
+            for dirpath, _, filenames in os.walk(tree):
+                for fn in filenames:
+                    src = os.path.join(dirpath, fn)
+                    rel = os.path.relpath(src, tree)
+                    if os.path.islink(src) or _skip(rel):
+                        continue
+                    dst = os.path.join(instance, rel)
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    tmp = dst + ".restore-tmp"
+                    shutil.copy2(src, tmp)  # 一定複製，不可用硬連結（之後改 instance 的檔案不能改到備份）
+                    os.replace(tmp, dst)
+        elif os.path.isfile(tgz):
             with tarfile.open(tgz, "r:gz") as tar:
                 members = [m for m in tar.getmembers()
                            if m.name.startswith("instance/") and not re.search(r"\.db(-wal|-shm)?$", m.name)]

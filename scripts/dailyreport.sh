@@ -594,10 +594,8 @@ cmd_backup() {  # 與系統設定頁的「立即備份」相同（同一個位�
   [[ -n "$name" && -d "$dest" ]] || die "備份失敗：$out"
   if [[ -f "$ETC/install.conf" ]]; then
     install -o "$APP_USER" -m 600 "$ETC/install.conf" "$dest/install.conf"
-    tmp="$(mktemp)"
-    (cd "$dest" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\n' | sort | sed 's#^#./#' | xargs sha256sum) > "$tmp"
-    install -o "$APP_USER" -m 600 "$tmp" "$dest/SHA256SUMS"
-    rm -f "$tmp"
+    # 只補上 install.conf 這一行（files/ 底下的檢查碼保留原樣）
+    (cd "$dest" && sha256sum ./install.conf) >> "$dest/SHA256SUMS"
   fi
   [[ $quiet == 1 ]] || { echo "${G}備份完成${N}：$dest（$(du -sh "$dest" | cut -f1)）"; info "還原：系統設定 → 備份還原；網頁無法開啟時 sudo bash $DIR/scripts/dailyreport.sh restore $dest"; }
 }
@@ -616,7 +614,11 @@ cmd_restore() {
   local db; db="$(db_path)"
   rm -f "$db-wal" "$db-shm"
   install -o "$APP_USER" -g "$APP_GROUP" -m 640 "$src/dailyreport.db" "$db"
-  tar -C "$DIR" -xzf "$src/instance.tar.gz"
+  if [[ -d "$src/files" ]]; then
+    cp -r --preserve=timestamps "$src/files/." "$INSTANCE/"  # 複製（不可用硬連結），v4.44.0 起的格式
+  elif [[ -f "$src/instance.tar.gz" ]]; then
+    tar -C "$DIR" -xzf "$src/instance.tar.gz"
+  fi
   chown -R "$APP_USER:$APP_GROUP" "$INSTANCE"
   rm -rf "${INSTANCE:?}/pdf_cache/"*
   info "設定檔 .env 未變更（備份中的設定檔在 $src/env）"

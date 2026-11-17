@@ -14,40 +14,77 @@
 <section class="card">
   <div class="row-between">
     <h3>備份設定</h3>
-    <form method="post" action="{{ url_for('settings.backup_now') }}" class="inline">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button type="submit" {{ 'disabled' if busy }}>立即備份</button>
-    </form>
-  </div>
-  <form method="post" action="{{ url_for('settings.backup_config') }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="checks-col">
-      <label class="inline"><input type="checkbox" name="backup_enabled" value="1" {{ 'checked' if b.backup_enabled }}> 每日自動備份</label>
-      <label class="inline"><input type="checkbox" name="backup_include_env" value="1" {{ 'checked' if b.backup_include_env }}>
-        包含設定檔 .env（含 SECRET_KEY；換主機還原時 AI 金鑰才能解密）</label>
+    <div class="actions">
+      <form method="post" action="{{ url_for('settings.backup_now') }}" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" name="mode" value="incr" class="secondary" {{ 'disabled' if busy }}>立即增量備份</button>
+        <button type="submit" name="mode" value="full" {{ 'disabled' if busy }}>立即完整備份</button>
+      </form>
     </div>
+  </div>
+  <p class="hint">目前排程：{{ schedule }}。{% if next_run %}下次完整備份 {{ next_run.strftime('%m/%d %H:%M') }}{% endif %}{% if next_incr %}・下次增量備份 {{ next_incr.strftime('%m/%d %H:%M') }}{% endif %}
+    {% if usage is not none %}・備份共佔用 {{ '%.1f'|format(usage / 1e6) }} MB（共用的檔案只算一次）{% endif %}</p>
+  <form method="post" action="{{ url_for('settings.backup_config') }}" class="backup-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <fieldset>
+      <legend>完整備份</legend>
+      <label class="inline"><input type="checkbox" name="backup_enabled" value="1" {{ 'checked' if b.backup_enabled }}> 啟用自動完整備份</label>
+      <div class="form-grid">
+        <label>頻率
+          <select name="backup_full_freq" data-freq>
+            {% for v, t in [('daily', '每天'), ('weekly', '每週'), ('monthly', '每月')] %}<option value="{{ v }}" {{ 'selected' if b.backup_full_freq == v }}>{{ t }}</option>{% endfor %}
+          </select></label>
+        <label data-show="weekly">星期
+          <select name="backup_full_weekday">
+            {% for w in weekdays %}<option value="{{ loop.index0 }}" {{ 'selected' if (b.backup_full_weekday|int) == loop.index0 }}>星期{{ w }}</option>{% endfor %}
+          </select></label>
+        <label data-show="monthly">每月幾號（1–28）<input name="backup_full_monthday" type="number" min="1" max="28" value="{{ b.backup_full_monthday }}"></label>
+        <label>時間（24 小時制）<input name="backup_time" value="{{ b.backup_time }}" placeholder="02:30" pattern="[0-2][0-9]:[0-5][0-9]"></label>
+        <label>保留最近幾份<input name="backup_keep" type="number" min="1" max="365" value="{{ b.backup_keep }}"></label>
+      </div>
+      <p class="hint">資料庫與全部檔案（截圖、正式 PDF、範本、字型、檢查結果.md）都重新完整複製一份，不依賴其他備份。</p>
+    </fieldset>
+    <fieldset>
+      <legend>增量備份</legend>
+      <div class="form-grid">
+        <label>方式
+          <select name="backup_incr_mode" data-incr>
+            {% for v, t in [('off', '關閉'), ('daily', '每天固定時間'), ('hours', '每幾小時')] %}<option value="{{ v }}" {{ 'selected' if incr_mode == v }}>{{ t }}</option>{% endfor %}
+          </select></label>
+        <label data-show-incr="daily">時間（24 小時制）<input name="backup_incr_time" value="{{ b.backup_incr_time }}" placeholder="12:30" pattern="[0-2][0-9]:[0-5][0-9]"></label>
+        <label data-show-incr="hours">間隔
+          <select name="backup_incr_hours">
+            {% for h in hours_choices %}<option value="{{ h }}" {{ 'selected' if incr_hours == h }}>每 {{ h }} 小時</option>{% endfor %}
+          </select></label>
+        <label>保留最近幾份<input name="backup_incr_keep" type="number" min="1" max="500" value="{{ b.backup_incr_keep }}"></label>
+      </div>
+      <p class="hint">資料庫每次完整備份（很小）；檔案只複製新增或變更的，沒變動的與前一份共用磁碟空間（硬連結）。
+        每一份增量備份都能單獨還原，刪掉任何一份（包括它沿用的那份）都不影響其他份。與完整備份同一時間時只做完整備份。</p>
+    </fieldset>
     <div class="form-grid">
-      <label>每天幾點（24 小時制）<input name="backup_time" value="{{ b.backup_time }}" placeholder="02:30" pattern="[0-2][0-9]:[0-5][0-9]"></label>
-      <label>保留最近幾份<input name="backup_keep" type="number" min="1" max="365" value="{{ b.backup_keep }}"></label>
-      <label>資料庫快速備份
-        <select name="backup_db_hours">
-          {% for h in db_hours_choices %}<option value="{{ h }}" {{ 'selected' if (b.backup_db_hours or 0)|int == h }}>{{ '關閉' if not h else '每 %d 小時'|format(h) }}</option>{% endfor %}
-        </select></label>
-      <label>快速備份保留幾份<input name="backup_db_keep" type="number" min="1" max="500" value="{{ b.backup_db_keep }}"></label>
       <label class="wide">備份位置（絕對路徑，可為已掛載的 NAS；空白 = {{ default_dir }}）
         <input name="backup_dir" value="{{ b.backup_dir or '' }}" placeholder="{{ default_dir }}"></label>
     </div>
-    <p class="hint">目前位置：{{ root }}{% if next_run %}・下次自動備份 {{ next_run.strftime('%m/%d %H:%M') }}{% endif %}。
-      備份在線上進行，不需要停止服務。內容：資料庫、截圖、CheckList 範本與字型、檢查結果.md{{ '、.env' if b.backup_include_env }}。
+    <label class="inline"><input type="checkbox" name="backup_include_env" value="1" {{ 'checked' if b.backup_include_env }}>
+      完整備份包含設定檔 .env（含 SECRET_KEY；換主機還原時 AI 金鑰才能解密）</label>
+    <p class="hint">目前位置：{{ root }}。備份在線上進行，不需要停止服務。
+      建議：每週完整備份 + 每天（或每幾小時）增量備份。增量備份需要備份位置支援硬連結（本機磁碟、NFS 可以；部分 SMB 共享不支援時會自動改為完整複製）。
       備份與日報資料放在同一顆磁碟時，磁碟損壞會一起遺失，建議設定到 NAS。</p>
-    <p class="hint"><b>每日備份</b>是完整備份（資料庫 + 截圖、PDF 等檔案），按「保留最近幾份」保留。
-      <b>資料庫快速備份</b>只備份資料庫（日報內容、狀態、審核紀錄、帳號、設定），通常只有幾 MB、幾秒完成，
-      用來把「最多會遺失多少資料」從一天縮短到設定的小時數；截圖與 PDF 等檔案仍以每日完整備份為準。
-      兩種各自保留，互不刪除。{% if next_db %}下次資料庫快速備份 {{ next_db.strftime('%m/%d %H:%M') }}。{% endif %}
-      例：每 2 小時、保留 84 份 ≈ 一週。</p>
     <button type="submit">儲存</button>
   </form>
 </section>
+<script>
+(function () {
+  function sync() {
+    var f = document.querySelector('[data-freq]').value, m = document.querySelector('[data-incr]').value;
+    document.querySelectorAll('[data-show]').forEach(function (el) { el.hidden = el.dataset.show !== f; });
+    document.querySelectorAll('[data-show-incr]').forEach(function (el) { el.hidden = el.dataset.showIncr !== m; });
+  }
+  document.querySelector('[data-freq]').addEventListener('change', sync);
+  document.querySelector('[data-incr]').addEventListener('change', sync);
+  sync();
+})();
+</script>
 
 <section class="card">
   <h3>備份（{{ items|length }} 份）</h3>
@@ -58,11 +95,12 @@
       <td class="nw">{{ it.time.strftime('%Y-%m-%d %H:%M:%S') }}<br><span class="hint">{{ it.name }}</span></td>
       <td>{{ {'manual': '手動', 'scheduled': '排程', 'pre_restore': '還原前自動', 'cli': '主機指令'}.get(it.meta.trigger, it.meta.trigger) }}
         {%- if it.meta.by %}・{{ it.meta.by }}{% endif %}
-        {% if it.kind == 'db' %}<br><span class="badge">僅資料庫</span>{% endif %}</td>
-      <td class="nw">{{ '%.1f'|format(it.size / 1e6) }} MB</td>
+        <br>{% if it.kind == 'incr' %}<span class="badge submitted" title="沿用 {{ it.meta.base }}">增量</span>{% elif it.kind == 'db' %}<span class="badge">僅資料庫</span>{% else %}<span class="badge approved">完整</span>{% endif %}</td>
+      <td class="nw">{{ '%.1f'|format(it.size / 1e6) }} MB
+        {% if it.kind == 'incr' and it.meta.new_bytes is defined %}<br><span class="hint">新增 {{ '%.1f'|format(it.meta.new_bytes / 1e6) }} MB（{{ it.meta.files_copied }} 個檔案）</span>{% endif %}</td>
       <td>{{ it.meta.reports if it.meta.reports is defined else '' }}</td>
       <td class="nw">{% if it.readable %}<a href="{{ url_for('settings.backup_download', name=it.name, fname='dailyreport.db') }}">資料庫</a>
-        {% if it.kind == 'full' %}· <a href="{{ url_for('settings.backup_download', name=it.name, fname='instance.tar.gz') }}">檔案</a>{% endif %}{% else %}<span class="hint">無法讀取</span>{% endif %}</td>
+        {% if it.kind != 'db' %}· <a href="{{ url_for('settings.backup_download', name=it.name, fname='instance.tar.gz') }}">檔案</a>{% endif %}{% else %}<span class="hint">無法讀取</span>{% endif %}</td>
       <td>
         {% if it.readable %}
         <form method="post" action="{{ url_for('settings.backup_restore', name=it.name) }}" class="inline"
@@ -85,7 +123,8 @@
   </table>
   <p class="hint">還原會把資料庫與檔案換成備份當時的內容（系統設定、帳號也一起），不需要停服務；設定檔 .env 不會被覆蓋。
     下載的資料庫與檔案含全部日報資料，請妥善保管。
-    還原「僅資料庫」的備份時只換資料庫，主機上現有的截圖與 PDF 檔案保持不動。</p>
+    增量與完整備份的還原方式相同，都會還原當時完整的資料；「僅資料庫」（v4.42.0 的快速備份）只換資料庫，主機上現有的檔案保持不動。
+    大小是這份備份的完整大小；增量備份另外列出實際新增佔用的空間。</p>
 </section>
 
 <section class="card">
