@@ -19,6 +19,8 @@
     </form>
     {% endif %}
     {% set fin = report.delivery if report.delivery and report.delivery.pdf_md5 else None %}
+    {% set n_img = report.images|selectattr('kind', 'in', ['onsite', 'alarm', 'screenshot'])|list|length %}
+    {% if n_img %}<a class="button secondary desk-only" href="{{ url_for('views.report_images', report_id=report.id) }}">原始圖檔（{{ n_img }}）</a>{% endif %}
     {% if fin %}
     <a class="button desk-only" href="{{ url_for('views.final_pdf', report_id=report.id, download=1) }}">下載正式 PDF</a>
     {% elif report.imported and report.original_xlsx %}
@@ -49,6 +51,7 @@
   {% elif has_preview %}
   <a class="button m-big" href="{{ url_for('views.pdf_view', report_id=report.id) }}">檢視 PDF 預覽</a>
   {% elif report.status == 'closed' %}<p class="hint">正式 PDF 產生中。</p>{% endif %}
+  {% if n_img %}<a class="button secondary m-big" href="{{ url_for('views.report_images', report_id=report.id) }}">原始圖檔（{{ n_img }} 張）</a>{% endif %}
 </section>
 {% if fin %}
 <div class="card no-print">正式 PDF：<strong>{{ fin.pdf_name }}</strong>（{{ '%.1f'|format(fin.pdf_size / 1e6) }} MB）

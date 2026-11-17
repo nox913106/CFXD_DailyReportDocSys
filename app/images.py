@@ -121,7 +121,14 @@ def upload(report_id):
 
 @bp.route("/<int:image_id>")
 def show(report_id, image_id):
+    """圖檔原檔（逐位元不變）。?download=1 以原始檔名下載。檢視者只能看已結案日報的圖檔。"""
+    report = get_report(report_id)
+    if current_user.role == "viewer" and report.status != "closed":
+        abort(403)
     img = ReportImage.query.filter_by(id=image_id, report_id=report_id).first_or_404()
+    if request.args.get("download"):
+        name = os.path.basename(img.original_name or "") or img.filename
+        return send_from_directory(_report_dir(report_id), img.filename, as_attachment=True, download_name=name, max_age=0)
     return send_from_directory(_report_dir(report_id), img.filename, max_age=86400)
 
 

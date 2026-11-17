@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ report.doc_no }} 原始圖檔 - CFXD{% endblock %}
+{% block content %}
+<div class="report-head">
+  <div><a href="{{ back }}">← 返回</a> <span class="badge {{ report.status }}">{{ report.status_label }}</span></div>
+  <div class="actions">
+    {% if final %}<a class="button secondary" href="{{ url_for('views.pdf_view', report_id=report.id, kind='final', back=request.full_path) }}">檢視正式 PDF</a>{% endif %}
+    {% if total %}<a class="button" href="{{ url_for('views.report_images_zip', report_id=report.id) }}">全部下載（ZIP，{{ '%.1f'|format(total_size / 1e6) }} MB）</a>{% endif %}
+  </div>
+</div>
+<section class="card">
+  <h2>{{ report.doc_no }} 原始圖檔</h2>
+  <p class="hint">{{ report.report_date }} · 共 {{ total }} 張，依 PDF 的順序排列。這裡是上傳時的原檔，沒有經過 PDF 的縮放與壓縮，可放大看細節。
+    點圖片全螢幕檢視（左右切換、點一下看原尺寸）；ZIP 依章節分資料夾，附清單（原始檔名、上傳者、時間、SHA-256）。</p>
+  {% if not total %}<p class="hint">這份日報沒有截圖或照片。</p>{% endif %}
+</section>
+{% for label, imgs in groups %}
+<section class="card gal-sec" id="g{{ loop.index }}">
+  <h3>{{ label }} <span class="hint">{{ imgs|length }} 張</span></h3>
+  <div class="gal-grid">
+    {% for img in imgs %}{% set rec = ocr_clock(img) if img.kind == 'screenshot' else None %}
+    {% set u = users.get(img.uploaded_by_id) %}
+    <figure>
+      <a href="{{ url_for('images.show', report_id=report.id, image_id=img.id) }}" class="gal-open"
+         data-title="{{ label }} · {{ loop.index }} / {{ imgs|length }}" data-name="{{ img.original_name }}"
+         data-download="{{ url_for('images.show', report_id=report.id, image_id=img.id, download=1) }}">
+        <img src="{{ url_for('images.show', report_id=report.id, image_id=img.id) }}" loading="lazy" alt="{{ img.original_name }}"></a>
+      <figcaption>
+        <b>{{ loop.index }}.</b> {{ img.original_name or img.filename }}
+        <span class="hint">{% if sizes[img.id] %}{{ '%.0f'|format(sizes[img.id] / 1024) }} KB · {% else %}<b style="color:var(--err)">原檔遺失</b> · {% endif %}{% if u %}{{ u.name }} · {% endif %}{{ img.created_at.strftime('%m-%d %H:%M') if img.created_at }}</span>
+        {% if rec and (rec.time or rec.dates) %}<span class="hint">截圖時間 {{ (rec.dates or [''])[0] }} {{ rec.time }}</span>{% endif %}
+        <span class="hint gal-sha" title="SHA-256">{{ (img.sha256 or '')[:16] }}{% if img.sha256 %}…{% endif %}</span>
+        <a href="{{ url_for('images.show', report_id=report.id, image_id=img.id, download=1) }}">下載原檔</a>
+      </figcaption>
+    </figure>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+
+<div class="lb" id="lb" hidden role="dialog" aria-modal="true" aria-label="圖片檢視">
+  <header class="lb-bar">
+    <button type="button" class="lb-btn" data-lb="close" aria-label="關閉">✕</button>
+    <div class="lb-title"><strong data-lb-title></strong><span data-lb-name></span></div>
+    <button type="button" class="lb-btn" data-lb="zoom" title="原尺寸 / 符合畫面">1:1</button>
+    <a class="lb-btn" data-lb-download href="#" aria-label="下載原檔" title="下載原檔">⤓</a>
+  </header>
+  <div class="lb-stage" data-lb-stage><img alt="" data-lb-img></div>
+  <button type="button" class="lb-nav prev" data-lb="prev" aria-label="上一張">‹</button>
+  <button type="button" class="lb-nav next" data-lb="next" aria-label="下一張">›</button>
+  <footer class="lb-foot" data-lb-count></footer>
+</div>
+<script src="{{ url_for('static', filename='gallery.js') }}" defer></script>
+{% endblock %}

@@ -936,6 +936,8 @@ def pdf_view(report_id):
     final = request.args.get("kind") == "final" or bool(d and d.pdf_md5)
     if final and not (d and d.pdf_md5):
         abort(404)
+    if current_user.role == "viewer" and not (final and report.status == "closed"):
+        abort(403)
     if final:
         src, download, label = (url_for("views.final_pdf", report_id=report.id),
                                 url_for("views.final_pdf", report_id=report.id, download=1), "正式 PDF")
@@ -944,7 +946,7 @@ def pdf_view(report_id):
                                 url_for("views.pdf", report_id=report.id, download=1), "預覽")
     back = request.args.get("back", "")
     if not back.startswith("/") or back.startswith("//"):
-        back = url_for("views.detail", report_id=report.id)
+        back = url_for("views.archive") if current_user.role == "viewer" else url_for("views.detail", report_id=report.id)
     return render_template("pdf_view.html", report=report, src=src, download=download, label=label, back=back)
 
 
@@ -977,5 +979,135 @@ def archive():
             abort(400)
         nxt = date(first.year + first.month // 12, first.month % 12 + 1, 1)
         q = q.filter(Report.report_date >= first, Report.report_date < nxt)
-    return render_template("archive.html", reports=q.limit(400).all(), month=month)
+    reports = q.limit(400).all()
+    counts = dict(db.session.query(ReportImage.report_id, db.func.count(ReportImage.id))
+                  .filter(ReportImage.report_id.in_([r.id for r in reports]),
+                          ReportImage.kind.in_(("onsite", "alarm", "screenshot")))
+                  .group_by(ReportImage.report_id).all()) if reports else {}
+    return render_template("archive.html", reports=reports, month=month, img_counts=counts)
 
+
+
+# ---------------------------------------------------------------- 原始圖檔（PDF 裡的截圖與照片原檔）
+
+IMAGE_KIND_LABELS = {"onsite": "現場照片", "alarm": "告警照片"}
+
+
+def _image_access(report):
+    """看得到這份日報的人都能調閱圖檔；檢視者（viewer）只能看已結案的正式文件。"""
+    if current_user.role == "viewer" and report.status != "closed":
+        abort(403)
+
+
+def _image_groups(report):
+    """依 PDF 的順序分組：封面的現場照片、告警照片，再來是各截圖章節。[(標題, [ReportImage])]"""
+    from .models import ScreenshotSection
+
+    imgs = sorted((i for i in report.images if i.kind in ("onsite", "alarm", "screenshot")), key=lambda i: (i.order, i.id))
+    groups = [(label, [i for i in imgs if i.kind == kind]) for kind, label in IMAGE_KIND_LABELS.items()]
+    shots = {}
+    for i in imgs:
+        if i.kind == "screenshot":
+            shots.setdefault(i.section_id, []).append(i)
+    for s in ScreenshotSection.query.order_by(ScreenshotSection.order):
+        if s.id in shots:
+            groups.append((f"{s.code} {s.title}", shots.pop(s.id)))
+    if shots:
+        groups.append(("其他截圖", [i for lst in shots.values() for i in lst]))
+    return [(label, lst) for label, lst in groups if lst]
+
+
+def _image_file(img):
+    return os.path.join(current_app.config["UPLOAD_DIR"], str(img.report_id), img.filename)
+
+
+def _fill_sha256(imgs):
+    """沒有指紋的圖檔補上 SHA-256（結案後檔案不會再變，用來核對下載的原檔）。"""
+    import hashlib
+
+    changed = False
+    for img in imgs:
+        path = _image_file(img)
+        if not img.sha256 and os.path.isfile(path):
+            h = hashlib.sha256()
+            with open(path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            img.sha256 = h.hexdigest()
+            changed = True
+    if changed:
+        db.session.commit()
+
+
+@bp.route("/reports/<int:report_id>/images")
+def report_images(report_id):
+    """原始圖檔：PDF 裡每一張截圖、照片的原檔，可放大檢視、個別下載或整份打包。"""
+    report = get_report(report_id)
+    _image_access(report)
+    groups = _image_groups(report)
+    imgs = [i for _, lst in groups for i in lst]
+    _fill_sha256(imgs)
+    sizes = {i.id: (os.path.getsize(_image_file(i)) if os.path.isfile(_image_file(i)) else None) for i in imgs}
+    users = {u.id: u for u in User.query.filter(User.id.in_({i.uploaded_by_id for i in imgs if i.uploaded_by_id}))}
+    back = request.args.get("back", "")
+    if not back.startswith("/") or back.startswith("//"):
+        back = url_for("views.archive") if current_user.role == "viewer" else url_for("views.detail", report_id=report.id)
+    return render_template("report_images.html", report=report, groups=groups, sizes=sizes, users=users,
+                           total=len(imgs), total_size=sum(s or 0 for s in sizes.values()), back=back,
+                           final=bool(report.delivery and report.delivery.pdf_md5))
+
+
+def _zip_name(n, img):
+    import re
+
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", os.path.basename(img.original_name or "")) or img.filename
+    stem, ext = os.path.splitext(name)
+    real_ext = os.path.splitext(img.filename)[1]
+    return f"{n:02d}_{stem}{ext if ext.lower() == real_ext.lower() else real_ext}"
+
+
+@bp.route("/reports/<int:report_id>/images.zip")
+def report_images_zip(report_id):
+    """整份日報的原始圖檔打包下載：依章節分資料夾，附清單（原始檔名、上傳者、時間、SHA-256、辨識到的系統時間）。"""
+    import csv
+    import io
+    import re
+    import tempfile
+    import zipfile
+
+    from flask import send_file
+
+    from . import ocr
+
+    report = get_report(report_id)
+    _image_access(report)
+    groups = _image_groups(report)
+    imgs = [i for _, lst in groups for i in lst]
+    if not imgs:
+        abort(404)
+    _fill_sha256(imgs)
+    users = {u.id: u.name for u in User.query.filter(User.id.in_({i.uploaded_by_id for i in imgs if i.uploaded_by_id}))}
+    tmp = tempfile.TemporaryFile()
+    manifest = io.StringIO()
+    w = csv.writer(manifest)
+    w.writerow(["資料夾", "檔案", "原始檔名", "上傳者", "上傳時間", "截圖系統時間", "SHA-256"])
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as z:  # 圖片本身已壓縮，不再壓
+        for gi, (label, lst) in enumerate(groups, 1):
+            folder = f"{gi:02d} " + re.sub(r'[\\/:*?"<>|]', "_", label)
+            for n, img in enumerate(lst, 1):
+                path = _image_file(img)
+                if not os.path.isfile(path):
+                    continue
+                name = _zip_name(n, img)
+                z.write(path, f"{folder}/{name}")
+                rec = ocr.clock_of(img) or {}
+                clock = " ".join(x for x in ((rec.get("dates") or [""])[0], rec.get("time") or "") if x)
+                w.writerow([folder, name, img.original_name, users.get(img.uploaded_by_id, ""),
+                            img.created_at.strftime("%Y-%m-%d %H:%M:%S") if img.created_at else "", clock, img.sha256 or ""])
+        z.writestr("清單.csv", "﻿" + manifest.getvalue())
+    tmp.seek(0)
+    db.session.add(AuditLog(action="images_export", actor_id=current_user.id, target=report.doc_no[:128],
+                            detail=f"下載原始圖檔 {len(imgs)} 張"))
+    db.session.commit()
+    return send_file(tmp, mimetype="application/zip", as_attachment=True, max_age=0,
+                     download_name=f"{report.doc_no}_原始圖檔.zip")

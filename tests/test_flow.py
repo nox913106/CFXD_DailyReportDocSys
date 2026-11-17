@@ -2113,6 +2113,7 @@ def test_permission_matrix_matches_code(app):
                 "刪除已結案的正式文件（可複選；需再輸入本人帳號密碼）": lambda: bool(perm.can_delete(u, failed)),
                 "授權二線管理員代理": lambda: bool(perm.can_manage_delegations(u)),
                 "下載已結案的正式 PDF": lambda: u.role != "guest",
+                "調閱已結案日報的原始圖檔（截圖、照片原檔，可整份打包下載）": lambda: u.role != "guest",
                 "調整角色、指派系統管理員": lambda: perm.can_manage_users(u),
                 "本機緊急帳號（新增、改密碼、停用）": lambda: perm.can_manage_users(u),
                 "系統設定（AD、備份還原、健康檢查、PDF 範本、HTTPS、發送與通知、AI）": lambda: perm.can_manage_settings(u),
@@ -2741,3 +2742,60 @@ def test_checklist_flags_and_warroom_states(app):
         assert data["counts"]["unreported"] == 1 and data["counts"]["reported"] == 1 and data["counts"]["known"] == 2
     html = boss.get("/")
     assert "已知狀態，不列入異常（2）" in html and "已通報" in html and "≥2" in html
+
+
+def test_original_images_after_close(app):
+    """結案後可調閱 PDF 裡的原始圖檔：依 PDF 順序列出、原檔逐位元相同、以原始檔名下載、整份打包 ZIP（附清單、記稽核）；
+    檢視者只能看已結案的日報。"""
+    import hashlib
+    import io
+    import zipfile
+
+    from app import db
+    from app.models import AuditLog, Report, ScreenshotSection
+
+    alice, vic = Browser(app), Browser(app)
+    alice.login("alice")
+    vic.login("vic")
+    set_role(app, "vic", "viewer")
+    with app.app_context():
+        sec = {s.code: s.id for s in ScreenshotSection.query.all()}
+    rid = report_id_from(alice.post("/reports/new", {"report_date": "2026-11-04"}))
+    shot, photo = _png(3), _png(4)
+    hdr = {"X-CSRFToken": alice.tok}
+    alice.c.post(f"/reports/{rid}/images", headers=hdr, content_type="multipart/form-data",
+                 data={"kind": "screenshot", "section_id": str(sec["4.1"]), "files": (io.BytesIO(shot), "veeam job.png")})
+    alice.c.post(f"/reports/{rid}/images", headers=hdr, content_type="multipart/form-data",
+                 data={"kind": "onsite", "files": (io.BytesIO(photo), "機房.png")})
+
+    # 撰寫中：日報頁有入口；檢視者看不到未結案的圖檔
+    assert "原始圖檔（2）" in alice.get(f"/reports/{rid}")
+    assert vic.c.get(f"/reports/{rid}/images").status_code == 403
+    html = alice.get(f"/reports/{rid}/images")
+    assert html.index("現場照片") < html.index("4.1 ACC") and "veeam job.png" in html and "機房.png" in html
+    img_id = int(html.split(f"/reports/{rid}/images/")[1].split('"')[0].split("?")[0])
+    assert vic.c.get(f"/reports/{rid}/images/{img_id}").status_code == 403
+
+    with app.app_context():
+        db.session.get(Report, rid).status = "closed"
+        db.session.commit()
+    # 結案後：原檔逐位元相同、SHA-256 顯示、原始檔名下載
+    html = vic.get(f"/reports/{rid}/images")
+    assert hashlib.sha256(photo).hexdigest()[:16] in html and hashlib.sha256(shot).hexdigest()[:16] in html
+    r = vic.c.get(f"/reports/{rid}/images/{img_id}?download=1")
+    assert r.status_code == 200 and r.data in (shot, photo) and "attachment" in r.headers["Content-Disposition"]
+    # ZIP：依 PDF 順序分資料夾、原始檔名、附清單；記錄在稽核
+    r = vic.c.get(f"/reports/{rid}/images.zip")
+    assert r.status_code == 200 and r.mimetype == "application/zip"
+    z = zipfile.ZipFile(io.BytesIO(r.data))
+    names = z.namelist()
+    assert "01 現場照片/01_機房.png" in names
+    assert any(n.startswith("02 4.1") and n.endswith("/01_veeam job.png") for n in names), names
+    assert z.read("01 現場照片/01_機房.png") == photo
+    manifest = z.read("清單.csv").decode("utf-8-sig")
+    assert "veeam job.png" in manifest and hashlib.sha256(shot).hexdigest() in manifest
+    with app.app_context():
+        assert AuditLog.query.filter_by(action="images_export").count() == 1
+    # 檢視者：正式文件頁可用，其他頁面仍禁止
+    assert vic.c.get(f"/reports/{rid}").status_code == 403
+    assert vic.c.post(f"/reports/{rid}/images", headers={"X-CSRFToken": vic.tok}).status_code == 403

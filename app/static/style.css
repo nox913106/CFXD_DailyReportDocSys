@@ -512,3 +512,27 @@ body.pdfv-body { margin: 0; background: #525659; height: 100vh; height: 100dvh; 
 .wr-state.known { color: #6b4b00; border-color: #f0c36d; background: #fff7e6; }
 .wr-events > li.st-reported { background: #fbfcff; }
 .wr-known summary { cursor: pointer; }
+
+/* 原始圖檔 */
+.gal-sec h3 .hint { font-weight: normal; margin-left: 6px; }
+.gal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.gal-grid figure { margin: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--card); display: flex; flex-direction: column; }
+.gal-grid img { display: block; width: 100%; height: 180px; object-fit: contain; background: #f6f8fa; cursor: zoom-in; }
+.gal-grid figcaption { font-size: 13px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; word-break: break-all; }
+.gal-grid figcaption .hint { font-size: 12px; }
+.gal-sha { font-family: ui-monospace, Consolas, monospace; }
+body.lb-open { overflow: hidden; }
+.lb { position: fixed; inset: 0; z-index: 1000; background: #111; color: #fff; display: flex; flex-direction: column; }
+.lb[hidden] { display: none; }
+.lb-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #000; }
+.lb-title { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 13px; }
+.lb-title span { color: #bbb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-btn { background: none; border: 1px solid #555; color: #fff; border-radius: 6px; min-width: 40px; height: 36px; font-size: 15px; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; cursor: pointer; padding: 0 8px; }
+.lb-stage { flex: 1; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.lb-stage img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: zoom-in; }
+.lb-stage.full { overflow: auto; display: block; }
+.lb-stage.full img { max-width: none; max-height: none; cursor: zoom-out; }
+.lb-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 64px; border: none; border-radius: 8px; background: rgb(0 0 0 / .45); color: #fff; font-size: 30px; cursor: pointer; }
+.lb-nav.prev { left: 8px; } .lb-nav.next { right: 8px; }
+.lb-foot { text-align: center; font-size: 12px; color: #bbb; padding: 6px; background: #000; }
+@media (max-width: 600px) { .gal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } .gal-grid img { height: 130px; } .lb-nav { display: none; } }

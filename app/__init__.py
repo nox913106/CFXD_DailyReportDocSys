@@ -118,7 +118,7 @@ def create_app():
 
     @app.before_request
     def _viewer_only_archive():
-        """訪客（guest）只能看歡迎頁；檢視者（viewer）只能看正式文件下載頁、下載已結案的正式 PDF。其餘一律禁止。"""
+        """訪客（guest）只能看歡迎頁；檢視者（viewer）只能看正式文件下載頁、已結案的正式 PDF 與原始圖檔。其餘一律禁止。"""
         from flask import abort, redirect, url_for
         from flask_login import current_user
 
@@ -131,7 +131,8 @@ def create_app():
             if request.method == "GET":
                 return redirect(url_for("views.welcome"))
             abort(403)
-        if ep in ("static", "views.archive", "views.final_pdf", "views.warroom") or ep.startswith("auth."):
+        if ep in ("static", "views.archive", "views.final_pdf", "views.warroom", "views.pdf_view", "views.report_images",
+                  "views.report_images_zip", "images.show") or ep.startswith("auth."):
             return None
         if ep == "views.index":
             return redirect(url_for("views.warroom"))
